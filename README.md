@@ -38,6 +38,19 @@ Improve the application translations [using Weblate](https://hosted.weblate.org/
 
 [<img src="https://hosted.weblate.org/widget/unexpected-keyboard/multi-auto.svg" alt="État de la traduction" />](https://hosted.weblate.org/engage/unexpected-keyboard/)
 
+## 中文全拼与豆包语音
+
+本分支在豆包语音输入的基础上提供 **26 键中文全拼**。常规文本框默认使用
+中文，从 **Ctrl 键向左上角滑动**即可切换中英。拼音和候选共用紧凑的一行，
+空闲时隐藏；候选可以横向滚动并继续加载。支持声母简拼、全拼混输、常见
+模糊音和错序、邻键、多按字母的容错候选，如 `zg`、`zongguo`、`zhognguo`
+都能选出「中国」。空格选择首选，回车原样输入拼音，`v` 输入 `ü`，`m` 键左下角是隔音符号
+`'`。密码与数字输入框保持直接输入，电子邮件和网址默认使用英文。
+
+中文输入使用 AOSP 拼音解码器和雾凇拼音的 **545,441 条字词及读音**，
+词库随 APK 提供，支持整句、分词选字、后续词联想和本地用户词库。
+来源、许可证、使用说明和验证记录见 [中文全拼说明](doc/Chinese-Pinyin.md)。
+
 ## Contributing
 
 For instructions on building the application, see

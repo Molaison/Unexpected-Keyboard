@@ -8,8 +8,35 @@ The application uses Gradle and can be used with Android Studio, but using
 Android Studio is not required. The build dependencies are:
 - OpenJDK 17
 - Android SDK: build tools, platform `36`
+- Android NDK `27.2.12479018` (also used for the offline pinyin decoder)
 
 Python 3 is required to update generated files but not to build the app.
+The generation tasks call `python3` explicitly.
+
+The pinyin dictionary is checked in. To run the real native decoder and
+composition tests on Linux, install g++ and run:
+
+```sh
+bash test/native/run-pinyin-tests.sh
+```
+
+The Android input smoke test uses real keyboard-window touch events and real
+text, password, email and numeric editors on a disposable emulator:
+
+```sh
+./gradlew assembleDebug assembleDebugAndroidTest
+ANDROID_HOME=/path/to/android-sdk bash tools/run-pinyin-instrumentation.sh emulator-5580
+```
+
+It restores the previously selected IME, records its result under
+`build/validation/instrumentation.log`, and saves a keyboard screenshot beside
+the log. The editor fixture exists only in debug builds and is not exported.
+
+For Android cold-start diagnosis after installing both APKs, the same runner
+accepts `-e benchmark true` with `adb shell am instrument -w -r`. This measures
+dictionary opening, correction initialization, and real per-key queries without
+touch events. The normal touch test remains the acceptance gate; a timing run
+does not verify editor interactions.
 
 Make sure the Git submodules are initialized and point to the right revision:
 

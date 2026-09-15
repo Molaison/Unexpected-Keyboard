@@ -39,6 +39,7 @@ jobs:
 
     - name: Run tests
       run: |
+        bash test/native/run-pinyin-tests.sh
         gradle checkKeyboardLayouts testDebugUnitTest
         # Warn about outdated generated files.
         if ! git diff --quiet; then

@@ -10,6 +10,7 @@ import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
 import java.util.Iterator;
 import juloo.keyboard2.suggestions.Suggestions;
+import juloo.keyboard2.pinyin.PinyinInput;
 
 public final class KeyEventHandler
   implements Config.IKeyEventHandler,
@@ -19,6 +20,7 @@ public final class KeyEventHandler
   IReceiver _recv;
   Autocapitalisation _autocap;
   Suggestions _suggestions;
+  PinyinInput _pinyin;
   CurrentlyTypedWord _typedword;
   /** State of the system modifiers. It is updated whether a modifier is down
       or up and a corresponding key event is sent. */
@@ -36,7 +38,7 @@ public final class KeyEventHandler
   LastAction _last_action = null;
   LastAction _next_last_action = null;
 
-  public KeyEventHandler(IReceiver recv, Suggestions sg)
+  public KeyEventHandler(IReceiver recv, Suggestions sg, PinyinInput pinyin)
   {
     _recv = recv;
     Handler handler = recv.getHandler();
@@ -44,6 +46,7 @@ public final class KeyEventHandler
         this.new Autocapitalisation_callback());
     _mods = Pointers.Modifiers.EMPTY;
     _suggestions = sg;
+    _pinyin = pinyin;
     _typedword = new CurrentlyTypedWord(handler, this);
   }
 
@@ -58,6 +61,11 @@ public final class KeyEventHandler
       conf.editor_config.should_move_cursor_force_fallback;
     _space_bar_auto_complete = conf.space_bar_auto_complete;
     _last_action = null;
+    if (_pinyin.isChinese())
+    {
+      _autocap.stop();
+      _recv.set_shift_state(false, false);
+    }
   }
 
   /** Selection has been updated. */
@@ -77,6 +85,7 @@ public final class KeyEventHandler
     if (key.getKind() == KeyValue.Kind.Event
         && key.getEvent() == KeyValue.Event.SWITCH_VOICE_TYPING_CHOOSER)
     {
+      _pinyin.finish();
       _recv.handle_event_key(KeyValue.Event.SWITCH_VOICE_TYPING_CHOOSER);
       return;
     }
@@ -89,6 +98,8 @@ public final class KeyEventHandler
           case CTRL:
           case ALT:
           case META:
+            _recv.beforeManualInput();
+            _pinyin.finish();
             _autocap.stop();
             break;
         }
@@ -97,6 +108,8 @@ public final class KeyEventHandler
         _autocap.stop();
         break;
       case Slider:
+        _recv.beforeManualInput();
+        _pinyin.finish();
         // Don't wait for the next key_up and move the cursor right away. This
         // is called after the trigger distance have been travelled.
         handle_slider(key.getSlider(), key.getSliderRepeat(), true);
@@ -114,6 +127,12 @@ public final class KeyEventHandler
     _next_last_action = LastAction.OTHER;
     Pointers.Modifiers old_mods = _mods;
     update_meta_state(mods);
+    boolean voiceEvent = key.getKind() == KeyValue.Kind.Event
+      && (key.getEvent() == KeyValue.Event.SWITCH_VOICE_TYPING
+          || key.getEvent() == KeyValue.Event.SWITCH_VOICE_TYPING_CHOOSER
+          || key.getEvent() == KeyValue.Event.STOP_VOICE_TYPING_HOLD);
+    if (!voiceEvent) _recv.beforeManualInput();
+    if (!_pinyin.handleKey(key, _meta_state))
     switch (key.getKind())
     {
       case Char: send_text(String.valueOf(key.getChar())); break;
@@ -162,13 +181,13 @@ public final class KeyEventHandler
   @Override
   public void currently_typed_word(String word)
   {
-    _suggestions.currently_typed_word(word);
+    if (!_pinyin.isChinese()) _suggestions.currently_typed_word(word);
   }
 
   public void ime_subtype_changed()
   {
     // Refresh the suggestions immediately after dictionary changed.
-    _suggestions.currently_typed_word(_typedword.get());
+    if (!_pinyin.isChinese()) _suggestions.currently_typed_word(_typedword.get());
   }
 
   /** Update [_mods] to be consistent with the [mods], sending key events if
@@ -265,6 +284,8 @@ public final class KeyEventHandler
 
   void send_text(String text)
   {
+    _recv.beforeManualInput();
+    _pinyin.finish();
     InputConnection conn = _recv.getCurrentInputConnection();
     if (conn == null)
       return;
@@ -352,6 +373,9 @@ public final class KeyEventHandler
   {
     switch (st)
     {
+      case Toggle_pinyin:
+        _recv.handle_event_key(KeyValue.Event.SWITCH_PINYIN);
+        break;
       case Complete_first:
       case Complete_second:
       case Complete_third:
@@ -590,6 +614,7 @@ public final class KeyEventHandler
     public void selection_state_changed(boolean selection_is_ongoing);
     public InputConnection getCurrentInputConnection();
     public Handler getHandler();
+    public void beforeManualInput();
   }
 
   class Autocapitalisation_callback implements Autocapitalisation.Callback
@@ -597,7 +622,7 @@ public final class KeyEventHandler
     @Override
     public void update_shift_state(boolean should_enable, boolean should_disable)
     {
-      if (should_enable)
+      if (should_enable && !_pinyin.isChinese())
         _recv.set_shift_state(true, false);
       else if (should_disable)
         _recv.set_shift_state(false, false);

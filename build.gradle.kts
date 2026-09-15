@@ -18,6 +18,10 @@ dependencies {
 android {
   namespace = "juloo.keyboard2"
   compileSdkVersion = "android-36"
+  ndkVersion = "27.2.12479018"
+  androidResources {
+    noCompress += "dat"
+  }
 
   defaultConfig {
     applicationId = "com.molaison.unexpectedkeyboard.doubao"
@@ -25,6 +29,12 @@ android {
     targetSdk { version = release(36) }
     versionCode = 55
     versionName = "2.0.4"
+    testInstrumentationRunner = "juloo.keyboard2.PinyinSmokeTest"
+    externalNativeBuild {
+      ndkBuild {
+        arguments += "APP_STL=c++_static"
+      }
+    }
   }
 
   sourceSets {
@@ -37,6 +47,14 @@ android {
 
     named("test") {
       java.srcDirs("test")
+    }
+    named("debug") {
+      manifest.srcFile("debug/AndroidManifest.xml")
+      java.srcDirs("debug")
+    }
+    named("androidTest") {
+      java.srcDirs("androidTest")
+      res.srcDirs("androidTest/res")
     }
   }
 
@@ -121,7 +139,7 @@ val buildKeyboardFont by tasks.registering(Exec::class) {
 val genEmojis by tasks.registering(Exec::class) {
   doFirst { println("\nGenerating res/raw/emojis.txt") }
   workingDir = projectDir
-  commandLine("python", "gen_emoji.py")
+  commandLine("python3", "gen_emoji.py")
 }
 
 val genLayoutsList by tasks.registering(Exec::class) {
@@ -129,7 +147,7 @@ val genLayoutsList by tasks.registering(Exec::class) {
   outputs.file(projectDir.resolve("res/values/layouts.xml"))
   doFirst { println("\nGenerating res/values/layouts.xml") }
   workingDir = projectDir
-  commandLine("python", "gen_layouts.py")
+  commandLine("python3", "gen_layouts.py")
 }
 
 val genMethodXml by tasks.registering(Exec::class) {
@@ -140,7 +158,7 @@ val genMethodXml by tasks.registering(Exec::class) {
   doFirst { println("\nGenerating res/xml/method.xml") }
   doFirst { standardOutput = FileOutputStream(out) }
   workingDir = projectDir
-  commandLine("python", "gen_method_xml.py")
+  commandLine("python3", "gen_method_xml.py")
 }
 
 val checkKeyboardLayouts by tasks.registering(Exec::class) {
@@ -149,7 +167,7 @@ val checkKeyboardLayouts by tasks.registering(Exec::class) {
   outputs.file(projectDir.resolve("check_layout.output"))
   doFirst { println("\nChecking layouts") }
   workingDir = projectDir
-  commandLine("python", "check_layout.py")
+  commandLine("python3", "check_layout.py")
 }
 
 val compileComposeSequences by tasks.registering(Exec::class) {
@@ -162,7 +180,7 @@ val compileComposeSequences by tasks.registering(Exec::class) {
     !it.name.endsWith(".py") && !it.name.endsWith(".md")
   }!!.map { it.absolutePath }.toTypedArray()
   workingDir = projectDir
-  commandLine("python", `in`.resolve("compile.py").absolutePath, *sequences)
+  commandLine("python3", `in`.resolve("compile.py").absolutePath, *sequences)
   doFirst { standardOutput = FileOutputStream(out) }
 }
 

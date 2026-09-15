@@ -1,0 +1,30 @@
+Chinese pinyin input in Unexpected Keyboard
+
+Decoder: Android Open Source Project PinyinIME
+Copyright (C) 2009 The Android Open Source Project
+Apache License 2.0; see AOSP-NOTICE in this directory.
+Source: https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/
+Revision: 49aebad1c1cfbbcaa9288ffed5161e79e57c3679
+The source distribution records the local changes in vendor/pinyin/README.md.
+
+Dictionary: Rime Ice (雾凇拼音), maintained by iDvel and contributors
+Source: https://github.com/iDvel/rime-ice
+Revision: 59fcb4a6bfa71e6ba4fc83af07ee55f0c5b76081
+GNU General Public License v3; see RIME-ICE-LICENSE in this directory.
+Converted from cn_dicts/8105.dict.yaml and cn_dicts/base.dict.yaml.
+The reproducible converter is tools/build_pinyin_dictionary.py in the app source.
+dictionary.json records the checksums, retained entry count and format exclusions.
+
+Rime Ice attributes the 8105 character readings to the Wiktionary Common
+Standard Chinese Characters pinyin index and the character frequencies to
+the BLCU 2.5-billion-character corpus frequency table:
+https://zh.wiktionary.org/wiki/Appendix:汉语拼音索引/通用规范汉字表
+https://faculty.blcu.edu.cn/xinghb/zh_CN/article/167473/content/1437.htm
+
+Rime Ice's base dictionary credits 华宇野风系统词库, THUOCL,
+现代汉语常用词表 and Tencent word vectors, together with community corrections:
+http://bbs.pinyin.thunisoft.com/forum.php?mod=viewthread&tid=30049
+https://github.com/thunlp/THUOCL
+https://gist.github.com/indiejoseph/eae09c673460aa0b56db
+https://ai.tencent.com/ailab/nlp/zh/download.html
+https://github.com/iDvel/rime-ice/issues/24

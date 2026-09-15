@@ -25,8 +25,9 @@ latin_kbdtuf_tr: These keys are now added automatically, unexpected: f11_placeho
 latin_kbdtuf_tr: Missing programming keys, missing: loc esc, loc tab
 latn_colemak: Some keys contain whitespaces, unexpected:  ́
 latn_dvorak: Missing important key, missing: loc capslock
-latn_neo2: Layout redefines the bottom row but some important keys are missing, missing: loc switch_clipboard
+latn_neo2: Layout redefines the bottom row but some important keys are missing, missing: loc switch_clipboard, switch_pinyin
 latn_qwertz_cz_multifunctional: Layout includes some ASCII punctuation but not all, missing: `
 latn_qwertz_sk: Layout includes some ASCII punctuation but not all, missing: `
 latn_qzerty_it: Layout includes some ASCII punctuation but not all, missing: #, $, \, `, ~
 urdu_phonetic_ur: Layout includes some ASCII punctuation but not all, missing: <, >, ?, `, |, ~
+zh_pinyin: Layout includes some ASCII punctuation but not all, missing: !, ", (, ), ,, ., :, ;, ?, [, ]
