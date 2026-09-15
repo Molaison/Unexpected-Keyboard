@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="pinyin_mode_chinese">中</string>
+  <string name="pinyin_mode_english">EN</string>
+  <string name="pinyin_switch_to_chinese">Switch to Chinese pinyin</string>
+  <string name="pinyin_switch_to_english">Switch to English input</string>
+  <string name="pinyin_commit_raw">Commit %1$s without conversion</string>
+  <string name="pinyin_more_candidates">More</string>
+  <string name="pinyin_hint">Pinyin · v for ü</string>
+  <string name="pinyin_english_hint">English input</string>
+</resources>

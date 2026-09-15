@@ -9,19 +9,32 @@ dependencies {
   // Following versions of androidx.window require sdk version 23
   implementation("androidx.window:window-java:1.4.0")
   implementation("androidx.core:core:1.16.0") // Version 1.17.0 available with sdk 36
+  implementation("com.google.code.gson:gson:2.14.0")
+  implementation("com.squareup.okhttp3:okhttp:5.4.0")
+  implementation("io.github.jaredmdobson:concentus:1.0.2")
   testImplementation("junit:junit:4.13.2")
 }
 
 android {
   namespace = "juloo.keyboard2"
   compileSdkVersion = "android-36"
+  ndkVersion = "27.2.12479018"
+  androidResources {
+    noCompress += "dat"
+  }
 
   defaultConfig {
-    applicationId = "juloo.keyboard2"
+    applicationId = "com.molaison.unexpectedkeyboard.doubao"
     minSdk = 21
     targetSdk { version = release(36) }
     versionCode = 55
     versionName = "2.0.4"
+    testInstrumentationRunner = "juloo.keyboard2.PinyinSmokeTest"
+    externalNativeBuild {
+      ndkBuild {
+        arguments += "APP_STL=c++_static"
+      }
+    }
   }
 
   sourceSets {
@@ -34,6 +47,14 @@ android {
 
     named("test") {
       java.srcDirs("test")
+    }
+    named("debug") {
+      manifest.srcFile("debug/AndroidManifest.xml")
+      java.srcDirs("debug")
+    }
+    named("androidTest") {
+      java.srcDirs("androidTest")
+      res.srcDirs("androidTest/res")
     }
   }
 
@@ -74,7 +95,7 @@ android {
         "proguard-rules.pro")
       isShrinkResources = true
       isDebuggable = false
-      resValue("string", "app_name", "@string/app_name_release")
+      resValue("string", "app_name", "@string/app_name_doubao")
       signingConfig = signingConfigs["release"]
     }
 
@@ -82,8 +103,7 @@ android {
       isMinifyEnabled = false
       isShrinkResources = false
       isDebuggable = true
-      applicationIdSuffix = ".debug"
-      resValue("string", "app_name", "@string/app_name_debug")
+      resValue("string", "app_name", "@string/app_name_doubao")
       resValue("bool", "debug_logs", "true")
       signingConfig = signingConfigs["debug"]
     }
@@ -119,7 +139,7 @@ val buildKeyboardFont by tasks.registering(Exec::class) {
 val genEmojis by tasks.registering(Exec::class) {
   doFirst { println("\nGenerating res/raw/emojis.txt") }
   workingDir = projectDir
-  commandLine("python", "gen_emoji.py")
+  commandLine("python3", "gen_emoji.py")
 }
 
 val genLayoutsList by tasks.registering(Exec::class) {
@@ -127,7 +147,7 @@ val genLayoutsList by tasks.registering(Exec::class) {
   outputs.file(projectDir.resolve("res/values/layouts.xml"))
   doFirst { println("\nGenerating res/values/layouts.xml") }
   workingDir = projectDir
-  commandLine("python", "gen_layouts.py")
+  commandLine("python3", "gen_layouts.py")
 }
 
 val genMethodXml by tasks.registering(Exec::class) {
@@ -138,7 +158,7 @@ val genMethodXml by tasks.registering(Exec::class) {
   doFirst { println("\nGenerating res/xml/method.xml") }
   doFirst { standardOutput = FileOutputStream(out) }
   workingDir = projectDir
-  commandLine("python", "gen_method_xml.py")
+  commandLine("python3", "gen_method_xml.py")
 }
 
 val checkKeyboardLayouts by tasks.registering(Exec::class) {
@@ -147,7 +167,7 @@ val checkKeyboardLayouts by tasks.registering(Exec::class) {
   outputs.file(projectDir.resolve("check_layout.output"))
   doFirst { println("\nChecking layouts") }
   workingDir = projectDir
-  commandLine("python", "check_layout.py")
+  commandLine("python3", "check_layout.py")
 }
 
 val compileComposeSequences by tasks.registering(Exec::class) {
@@ -160,7 +180,7 @@ val compileComposeSequences by tasks.registering(Exec::class) {
     !it.name.endsWith(".py") && !it.name.endsWith(".md")
   }!!.map { it.absolutePath }.toTypedArray()
   workingDir = projectDir
-  commandLine("python", `in`.resolve("compile.py").absolutePath, *sequences)
+  commandLine("python3", `in`.resolve("compile.py").absolutePath, *sequences)
   doFirst { standardOutput = FileOutputStream(out) }
 }
 

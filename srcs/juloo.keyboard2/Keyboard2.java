@@ -1,8 +1,10 @@
 package juloo.keyboard2;
 
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.drawable.Drawable;
 import android.inputmethodservice.InputMethodService;
@@ -19,6 +21,8 @@ import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputMethodSubtype;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.Toast;
+import androidx.core.content.ContextCompat;
 import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -28,7 +32,10 @@ import java.util.Set;
 import juloo.cdict.Cdict;
 import juloo.keyboard2.dict.Dictionaries;
 import juloo.keyboard2.dict.DictionariesActivity;
+import juloo.keyboard2.doubao.DoubaoVoiceInput;
 import juloo.keyboard2.prefs.LayoutsPreference;
+import juloo.keyboard2.pinyin.PinyinInput;
+import juloo.keyboard2.pinyin.PinyinCandidatesView;
 import juloo.keyboard2.suggestions.CandidatesView;
 import juloo.keyboard2.suggestions.Suggestions;
 
@@ -41,6 +48,9 @@ public class Keyboard2 extends InputMethodService
   private CandidatesView _candidates_view;
   private Suggestions _suggestions;
   private KeyEventHandler _keyeventhandler;
+  private PinyinInput _pinyin;
+  private PinyinCandidatesView _pinyin_candidates_view;
+  private SharedPreferences _preferences;
   /** If not 'null', the layout to use instead of [_config.current_layout]. */
   private KeyboardData _currentSpecialLayout;
   /** Layout associated with the currently selected locale. Not 'null'. */
@@ -50,6 +60,10 @@ public class Keyboard2 extends InputMethodService
   private ViewGroup _emojiPane = null;
   private ViewGroup _clipboard_pane = null;
   private Handler _handler;
+  private DoubaoVoiceInput _doubaoVoiceInput;
+  private boolean _startVoiceAfterPermission;
+  private boolean _voicePushToTalkActive;
+  private Toast _voiceStateToast;
 
   private Config _config;
 
@@ -60,6 +74,8 @@ public class Keyboard2 extends InputMethodService
   {
     if (_currentSpecialLayout != null)
       return _currentSpecialLayout;
+    if (_pinyin != null && _pinyin.isChinese())
+      return loadLayout(R.xml.zh_pinyin);
     KeyboardData layout = null;
     int layout_i = _config.get_current_layout();
     if (layout_i >= _config.layouts.size())
@@ -68,6 +84,8 @@ public class Keyboard2 extends InputMethodService
       layout = _config.layouts.get(layout_i);
     if (layout == null)
       layout = _localeTextLayout;
+    if (layout == loadLayout(R.xml.zh_pinyin))
+      layout = loadLayout(R.xml.latn_qwerty_us);
     return layout;
   }
 
@@ -81,9 +99,14 @@ public class Keyboard2 extends InputMethodService
 
   void setTextLayout(int l)
   {
+    _pinyin.finish();
     _config.set_current_layout(l);
     _currentSpecialLayout = null;
+    KeyboardData selected = _config.layouts.get(l);
+    _pinyin.setChinese(selected == loadLayout(R.xml.zh_pinyin));
+    _preferences.edit().putBoolean("chinese_mode", _pinyin.isChinese()).apply();
     _keyboard_layout_view.setKeyboard(current_layout());
+    _keyeventhandler.started(_config);
   }
 
   void incrTextLayout(int delta)
@@ -127,6 +150,7 @@ public class Keyboard2 extends InputMethodService
   {
     super.onCreate();
     SharedPreferences prefs = DirectBootAwarePreferences.get_shared_preferences(this);
+    _preferences = prefs;
     _handler = new Handler(getMainLooper());
     _foldStateTracker = new FoldStateTracker(this);
     _dictionaries = Dictionaries.instance(this);
@@ -134,8 +158,10 @@ public class Keyboard2 extends InputMethodService
         _foldStateTracker.isUnfolded(), _dictionaries);
     _config = Config.globalConfig();
     Receiver recvr = this.new Receiver();
+    _doubaoVoiceInput = new DoubaoVoiceInput(this, recvr);
     _suggestions = new Suggestions(recvr, _config);
-    _keyeventhandler = new KeyEventHandler(recvr, _suggestions);
+    _pinyin = new PinyinInput(this, recvr);
+    _keyeventhandler = new KeyEventHandler(recvr, _suggestions, _pinyin);
     KeyValue.Stateful._handler = recvr;
     _config.handler = _keyeventhandler;
     prefs.registerOnSharedPreferenceChangeListener(this);
@@ -148,9 +174,11 @@ public class Keyboard2 extends InputMethodService
 
   @Override
   public void onDestroy() {
-    super.onDestroy();
-
+    _voicePushToTalkActive = false;
+    _doubaoVoiceInput.shutdown();
+    _pinyin.close();
     _foldStateTracker.close();
+    super.onDestroy();
   }
 
   private void create_keyboard_view()
@@ -158,6 +186,26 @@ public class Keyboard2 extends InputMethodService
     _keyboard_container_view = (ViewGroup)inflate_view(R.layout.keyboard);
     _keyboard_layout_view = (Keyboard2View)_keyboard_container_view.findViewById(R.id.keyboard_view);
     _candidates_view = (CandidatesView)_keyboard_container_view.findViewById(R.id.candidates_view);
+    _pinyin_candidates_view = _keyboard_container_view.findViewById(R.id.pinyin_candidates_view);
+    _pinyin_candidates_view.attachLatinCandidates(_candidates_view);
+    _pinyin_candidates_view.setListener(new PinyinCandidatesView.Listener() {
+      public void onCandidateSelected(int index) { _pinyin.selectCandidate(index); }
+      public void onCommitRaw() { _pinyin.commitRaw(); }
+      public void onMoreCandidates() { _pinyin.showMoreCandidates(); }
+    });
+  }
+
+  private void toggle_pinyin()
+  {
+    if (!_pinyin.isAvailable()) return;
+    _voicePushToTalkActive = false;
+    _doubaoVoiceInput.cancel();
+    _pinyin.setChinese(!_pinyin.isChinese());
+    _preferences.edit().putBoolean("chinese_mode", _pinyin.isChinese()).apply();
+    _currentSpecialLayout = null;
+    _keyboard_layout_view.setKeyboard(current_layout());
+    _keyeventhandler.started(_config);
+    refresh_candidates_view();
   }
 
   InputMethodManager get_imm()
@@ -201,12 +249,27 @@ public class Keyboard2 extends InputMethodService
   private void refresh_candidates_view()
   {
     boolean should_show =
-      _config.suggestions_enabled
+      !_pinyin.isChinese()
+      && _config.suggestions_enabled
       && _config.editor_config.should_show_candidates_view
       && !_config.split_layout;
     if (should_show)
       _candidates_view.refresh_config(_config);
     _candidates_view.setVisibility(should_show ? View.VISIBLE : View.GONE);
+    _pinyin_candidates_view.refreshConfig(_config);
+    update_pinyin_view();
+  }
+
+  private void update_pinyin_view()
+  {
+    _candidates_view.setVisibility(!_pinyin.isChinese() && _config.suggestions_enabled
+        && _config.editor_config.should_show_candidates_view && !_config.split_layout
+        ? View.VISIBLE : View.GONE);
+    _pinyin_candidates_view.setState(_pinyin.isChinese(), _pinyin.getDisplayText(),
+        _pinyin.getCandidates(), _pinyin.hasMoreCandidates());
+    boolean hasContent = _pinyin.isComposing() || !_pinyin.getCandidates().isEmpty()
+      || _candidates_view.getVisibility() == View.VISIBLE;
+    _pinyin_candidates_view.setVisibility(_pinyin.isAvailable() && hasContent ? View.VISIBLE : View.GONE);
   }
 
   /** Might re-create the keyboard view. [_keyboard_layout_view.setKeyboard()] and
@@ -251,13 +314,22 @@ public class Keyboard2 extends InputMethodService
   @Override
   public void onStartInputView(EditorInfo info, boolean restarting)
   {
+    _voicePushToTalkActive = false;
+    _doubaoVoiceInput.cancel();
     _config.editor_config.refresh(info, getResources());
+    _pinyin.start(info, _preferences.getBoolean("chinese_mode", true));
     refresh_config();
     _currentSpecialLayout = refresh_special_layout();
     _keyboard_layout_view.setKeyboard(current_layout());
     _keyeventhandler.started(_config);
     setInputView(_keyboard_container_view);
     Logs.debug_startup_input_view(info, _config);
+    if (_startVoiceAfterPermission)
+    {
+      _startVoiceAfterPermission = false;
+      if (has_record_audio_permission())
+        _handler.post(() -> start_doubao_voice_input());
+    }
   }
 
   @Override
@@ -338,6 +410,7 @@ public class Keyboard2 extends InputMethodService
   @Override
   public void onCurrentInputMethodSubtypeChanged(InputMethodSubtype subtype)
   {
+    _pinyin.finish();
     refreshSubtypeImm();
     refresh_current_dictionary();
     refresh_candidates_view();
@@ -349,6 +422,7 @@ public class Keyboard2 extends InputMethodService
   public void onUpdateSelection(int oldSelStart, int oldSelEnd, int newSelStart, int newSelEnd, int candidatesStart, int candidatesEnd)
   {
     super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd);
+    _pinyin.selectionUpdated(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd);
     _keyeventhandler.selection_updated(oldSelStart, newSelStart, newSelEnd);
     if ((oldSelStart == oldSelEnd) != (newSelStart == newSelEnd))
       _keyboard_layout_view.set_selection_state(newSelStart != newSelEnd);
@@ -357,14 +431,115 @@ public class Keyboard2 extends InputMethodService
   @Override
   public void onFinishInputView(boolean finishingInput)
   {
+    _voicePushToTalkActive = false;
+    _doubaoVoiceInput.cancel();
+    _pinyin.finish();
     super.onFinishInputView(finishingInput);
     _keyboard_layout_view.reset();
+  }
+
+  @Override
+  public void onFinishInput()
+  {
+    _pinyin.finish();
+    _pinyin.resetWithoutEditor();
+    super.onFinishInput();
+  }
+
+  private boolean has_record_audio_permission()
+  {
+    return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+      == PackageManager.PERMISSION_GRANTED;
+  }
+
+  private void toggle_doubao_voice_input()
+  {
+    _voicePushToTalkActive = false;
+    if (_doubaoVoiceInput.isActive())
+    {
+      run_doubao_voice_action(() -> _doubaoVoiceInput.toggle());
+      return;
+    }
+    if (!has_record_audio_permission())
+    {
+      _startVoiceAfterPermission = true;
+      Intent intent = new Intent(this, VoicePermissionActivity.class);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      startActivity(intent);
+      return;
+    }
+    _startVoiceAfterPermission = false;
+    run_doubao_voice_action(() -> _doubaoVoiceInput.start());
+  }
+
+  private void start_doubao_voice_input()
+  {
+    _voicePushToTalkActive = false;
+    run_doubao_voice_action(() -> _doubaoVoiceInput.start());
+  }
+
+  private void start_doubao_voice_hold()
+  {
+    if (_doubaoVoiceInput.isActive())
+    {
+      Log.i("Unexpected/DoubaoASR", "voice_hold_ignored_already_active");
+      return;
+    }
+    if (!has_record_audio_permission())
+    {
+      _startVoiceAfterPermission = false;
+      Intent intent = new Intent(this, VoicePermissionActivity.class);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      startActivity(intent);
+      return;
+    }
+    run_doubao_voice_action(() -> {
+      _doubaoVoiceInput.start();
+      _voicePushToTalkActive = true;
+    });
+  }
+
+  private void stop_doubao_voice_hold()
+  {
+    if (!_voicePushToTalkActive)
+      return;
+    _voicePushToTalkActive = false;
+    run_doubao_voice_action(() -> _doubaoVoiceInput.stop());
+  }
+
+  private void run_doubao_voice_action(Runnable action)
+  {
+    try
+    {
+      _pinyin.finish();
+      action.run();
+    }
+    catch (RuntimeException error)
+    {
+      Log.e("Unexpected/DoubaoASR", "Voice input action failed", error);
+      Toast.makeText(this,
+          getString(R.string.toast_voice_input_failed,
+            error.getMessage() == null
+              ? error.getClass().getSimpleName() : error.getMessage()),
+          Toast.LENGTH_LONG).show();
+    }
   }
 
   @Override
   public void onSharedPreferenceChanged(SharedPreferences _prefs, String _key)
   {
     refresh_config();
+    if ("layouts".equals(_key))
+    {
+      int selected = _config.get_current_layout();
+      if (selected >= _config.layouts.size()) selected = 0;
+      if (_config.layouts.get(selected) == loadLayout(R.xml.zh_pinyin))
+      {
+        _pinyin.setChinese(true);
+        _preferences.edit().putBoolean("chinese_mode", true).apply();
+        _keyeventhandler.started(_config);
+      }
+    }
     _keyboard_layout_view.setKeyboard(current_layout());
   }
 
@@ -406,6 +581,8 @@ public class Keyboard2 extends InputMethodService
 
   /** Not static */
   public class Receiver implements KeyEventHandler.IReceiver,
+         DoubaoVoiceInput.Host,
+         PinyinInput.Host,
          KeyValue.Stateful.Symbol_provider
   {
     public void handle_event_key(KeyValue.Event ev)
@@ -419,6 +596,10 @@ public class Keyboard2 extends InputMethodService
         case SWITCH_TEXT:
           _currentSpecialLayout = null;
           _keyboard_layout_view.setKeyboard(current_layout());
+          break;
+
+        case SWITCH_PINYIN:
+          toggle_pinyin();
           break;
 
         case SWITCH_NUMERIC:
@@ -483,14 +664,18 @@ public class Keyboard2 extends InputMethodService
           break;
 
         case SWITCH_VOICE_TYPING:
-          if (!VoiceImeSwitcher.switch_to_voice_ime(Keyboard2.this, get_imm(),
-                Config.globalPrefs()))
-            _config.shouldOfferVoiceTyping = false;
+          Log.i("Unexpected/DoubaoASR", "voice_key_event=toggle");
+          toggle_doubao_voice_input();
           break;
 
         case SWITCH_VOICE_TYPING_CHOOSER:
-          VoiceImeSwitcher.choose_voice_ime(Keyboard2.this, get_imm(),
-              Config.globalPrefs());
+          Log.i("Unexpected/DoubaoASR", "voice_key_event=hold_start");
+          start_doubao_voice_hold();
+          break;
+
+        case STOP_VOICE_TYPING_HOLD:
+          Log.i("Unexpected/DoubaoASR", "voice_key_event=hold_stop");
+          stop_doubao_voice_hold();
           break;
         case HIDE_SELF:
           Keyboard2.this.requestHideSelf(0);
@@ -518,6 +703,42 @@ public class Keyboard2 extends InputMethodService
       return Keyboard2.this.getCurrentInputConnection();
     }
 
+    public void onVoiceStateChanged(DoubaoVoiceInput.State state)
+    {
+      _keyboard_layout_view.set_voice_input_active(
+          state == DoubaoVoiceInput.State.CONNECTING
+          || state == DoubaoVoiceInput.State.LISTENING);
+      if (_voiceStateToast != null)
+      {
+        _voiceStateToast.cancel();
+        _voiceStateToast = null;
+      }
+      int message;
+      switch (state)
+      {
+        case CONNECTING:
+          message = R.string.toast_voice_connecting;
+          break;
+        case LISTENING:
+          message = R.string.toast_voice_listening;
+          break;
+        case FINISHING:
+        case IDLE:
+        default:
+          return;
+      }
+      _voiceStateToast =
+        Toast.makeText(Keyboard2.this, message, Toast.LENGTH_SHORT);
+      _voiceStateToast.show();
+    }
+
+    public void onVoiceFailure(String message)
+    {
+      Toast.makeText(Keyboard2.this,
+          getString(R.string.toast_voice_input_failed, message),
+          Toast.LENGTH_LONG).show();
+    }
+
     public Handler getHandler()
     {
       return _handler;
@@ -528,8 +749,35 @@ public class Keyboard2 extends InputMethodService
       _candidates_view.set_candidates(suggestions);
     }
 
+    public void beforeManualInput()
+    {
+      _voicePushToTalkActive = false;
+      _doubaoVoiceInput.cancel();
+    }
+
+    public void onPinyinChanged()
+    {
+      update_pinyin_view();
+    }
+
     public String provide_stateful_key_symbol(KeyValue.Stateful q)
     {
+      if (q == KeyValue.Stateful.Toggle_pinyin)
+        return !_pinyin.isAvailable() ? "" : getString(_pinyin.isChinese()
+            ? R.string.pinyin_mode_chinese : R.string.pinyin_mode_english);
+      if (_pinyin.isChinese())
+      {
+        int index;
+        switch (q)
+        {
+          case Complete_first: index = 0; break;
+          case Complete_second: index = 1; break;
+          case Complete_third: index = 2; break;
+          default: return "";
+        }
+        List<String> candidates = _pinyin.getCandidates();
+        return index < candidates.size() ? candidates.get(index) : "";
+      }
       switch (q)
       {
         case Complete_first: return _suggestions.suggestions[0];

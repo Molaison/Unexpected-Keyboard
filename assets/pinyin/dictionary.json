@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/iDvel/rime-ice",
+  "revision": "59fcb4a6bfa71e6ba4fc83af07ee55f0c5b76081",
+  "sources": [
+    {
+      "path": "cn_dicts/8105.dict.yaml",
+      "sha256": "1f9a42b91dea6982baee2551981780271aeffd78876662b9c9f324e56b37b120"
+    },
+    {
+      "path": "cn_dicts/base.dict.yaml",
+      "sha256": "9d759771544adf196a0adf9092435ba4df4c0c50d7886963b6b54bf59d14775a"
+    }
+  ],
+  "entries": 545441,
+  "filtered": {
+    "non_bmp_or_non_han_character": 1145,
+    "longer_than_eight_characters": 5058
+  },
+  "binary_bytes": 13299106,
+  "binary_sha256": "1cfbcd82aea989f302db62dcb3c90d8edbd8feea221e1d54e62354bf5ee9ef97"
+}

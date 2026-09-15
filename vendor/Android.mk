@@ -15,3 +15,5 @@ LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384
 LOCAL_LDFLAGS += -Wl,--build-id=none
 
 include $(BUILD_SHARED_LIBRARY)
+
+include $(LOCAL_PATH)/pinyin/Android.mk

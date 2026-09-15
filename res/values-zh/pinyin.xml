@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="pinyin_mode_chinese">中</string>
+  <string name="pinyin_mode_english">英</string>
+  <string name="pinyin_switch_to_chinese">切换到中文全拼</string>
+  <string name="pinyin_switch_to_english">切换到英文输入</string>
+  <string name="pinyin_commit_raw">原样输入 %1$s</string>
+  <string name="pinyin_more_candidates">更多</string>
+  <string name="pinyin_hint">全拼 · v 输入 ü</string>
+  <string name="pinyin_english_hint">英文输入</string>
+</resources>
