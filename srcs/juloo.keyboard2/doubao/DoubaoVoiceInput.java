@@ -12,12 +12,11 @@ import android.os.Process;
 import android.util.Log;
 import android.view.inputmethod.InputConnection;
 import androidx.core.content.ContextCompat;
-import io.github.jaredmdobson.concentus.OpusApplication;
-import io.github.jaredmdobson.concentus.OpusEncoder;
-import io.github.jaredmdobson.concentus.OpusException;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,7 +29,7 @@ public final class DoubaoVoiceInput
   private static final int SAMPLES_PER_FRAME = 320;
   private static final int PCM_BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2;
   private static final int FRAME_DURATION_MS = 20;
-  private static final long FINAL_DRAIN_TIMEOUT_MS = 1500;
+  private static final long FINAL_DRAIN_TIMEOUT_MS = 10000;
   private static final long INTERIM_UPDATE_INTERVAL_NS = 150000000L;
 
   public enum State
@@ -193,19 +192,11 @@ public final class DoubaoVoiceInput
         return;
       }
 
-      final boolean accepted;
-      if (response.type == DoubaoProtocol.ResponseType.FINAL_RESULT)
-      {
-        accepted = run.connection.commitText(response.text, 1);
-        run.hasComposingText = false;
-        run.latestInterim = "";
-      }
-      else
-      {
-        accepted = run.connection.setComposingText(response.text, 1);
-        run.hasComposingText = true;
-        run.latestInterim = response.text;
-      }
+      // ASR replies describe the current utterance. Keep one composing span
+      // until completion so repeated/revised final packets replace that span.
+      final boolean accepted = run.connection.setComposingText(response.text, 1);
+      run.hasComposingText = true;
+      run.latestInterim = response.text;
       if (!accepted)
         failInputConnection(run, "The target editor rejected voice text");
       else
@@ -293,6 +284,7 @@ public final class DoubaoVoiceInput
     volatile AudioRecord recorder;
     volatile boolean stopRequested;
     volatile boolean cancelled;
+    volatile long audioFramesSent;
 
     boolean hasComposingText;
     String latestInterim = "";
@@ -314,18 +306,13 @@ public final class DoubaoVoiceInput
         throwIfCancelledOrFailed();
         session.startSession();
         throwIfCancelledOrFailed();
-        mainHandler.post(() -> {
-          if (isCurrent(this) && !cancelled && !stopRequested)
-            host.onVoiceStateChanged(State.LISTENING);
-        });
-
         streamAudio();
         throwIfCancelledOrFailed();
         session.finish();
         boolean receivedFinal = session.awaitFinalOrFinished(
             FINAL_DRAIN_TIMEOUT_MS);
         if (!receivedFinal)
-          Log.w(TAG, "Final ASR drain timed out; keeping the latest transcript");
+          throw new IOException("Timed out waiting for the final ASR result");
       }
       catch (Throwable error)
       {
@@ -380,40 +367,107 @@ public final class DoubaoVoiceInput
       if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED)
         throw new IOException("AudioRecord initialization failed");
 
-      OpusFrameEncoder encoder = new OpusFrameEncoder();
-      short[] pcmFrame = new short[SAMPLES_PER_FRAME];
-      long startedAtMs = System.currentTimeMillis();
-      long frameIndex = 0;
-
-      audioRecord.startRecording();
-      if (audioRecord.getRecordingState()
-          != AudioRecord.RECORDSTATE_RECORDING)
-        throw new IOException("AudioRecord did not enter recording state");
-
-      while (!stopRequested && !cancelled)
+      try (OpusFrameEncoder encoder = new OpusFrameEncoder())
       {
-        int samplesRead = readFrame(audioRecord, pcmFrame);
-        if (samplesRead != SAMPLES_PER_FRAME)
-          break;
-        throwIfCancelledOrFailed();
-        byte[] opus = encoder.encode(pcmFrame);
-        int frameState = frameIndex == 0
-            ? DoubaoProtocol.FRAME_FIRST : DoubaoProtocol.FRAME_MIDDLE;
-        session.sendAudio(opus, frameState,
-            startedAtMs + frameIndex * FRAME_DURATION_MS);
-        frameIndex++;
-        if (frameIndex == 1 || frameIndex % 50 == 0)
-          Log.i(TAG, "audio_frames_sent=" + frameIndex);
-      }
+        long startedAtMs = System.currentTimeMillis();
+        long frameIndex = 0;
 
-      if (!cancelled)
-      {
-        audioRecord.stop();
-        Arrays.fill(pcmFrame, (short)0);
-        byte[] finalOpus = encoder.encode(pcmFrame);
-        session.sendAudio(finalOpus, DoubaoProtocol.FRAME_LAST,
-            startedAtMs + frameIndex * FRAME_DURATION_MS);
-        Log.i(TAG, "audio_last_sent frames=" + frameIndex);
+        audioRecord.startRecording();
+        if (audioRecord.getRecordingState()
+            != AudioRecord.RECORDSTATE_RECORDING)
+          throw new IOException("AudioRecord did not enter recording state");
+
+        // Capture independently so credential recovery cannot lose the words
+        // spoken while registration or the new WebSocket handshake is running.
+        ArrayBlockingQueue<short[]> capturedFrames = new ArrayBlockingQueue<>(3000);
+        CountDownLatch captureFinished = new CountDownLatch(1);
+        AtomicReference<IOException> captureFailure = new AtomicReference<>();
+        Thread capture = new Thread(() -> {
+          Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
+          try
+          {
+            while (!stopRequested && !cancelled)
+            {
+              short[] samples = new short[SAMPLES_PER_FRAME];
+              int count = readFrame(audioRecord, samples);
+              if (count > 0 && !capturedFrames.offer(samples))
+                throw new IOException("Voice processing fell more than 60 seconds behind microphone capture");
+              if (count < SAMPLES_PER_FRAME) break;
+            }
+          }
+          catch (IOException | RuntimeException error)
+          {
+            captureFailure.set(new IOException("Microphone capture failed", error));
+          }
+          finally
+          {
+            try { audioRecord.stop(); }
+            catch (RuntimeException error)
+            {
+              IOException failure = new IOException("Could not stop microphone capture", error);
+              if (!captureFailure.compareAndSet(null, failure)) captureFailure.get().addSuppressed(error);
+            }
+            captureFinished.countDown();
+          }
+        }, "doubao-microphone");
+        capture.start();
+        mainHandler.post(() -> {
+          if (isCurrent(this) && !cancelled && !stopRequested)
+            host.onVoiceStateChanged(State.LISTENING);
+        });
+
+        Exception streamingProblem = null;
+        try
+        {
+          while (!cancelled && !session.isFinished())
+          {
+            throwIfCancelledOrFailed();
+            if (captureFailure.get() != null) throw captureFailure.get();
+            short[] pcmFrame = capturedFrames.poll(100, TimeUnit.MILLISECONDS);
+            if (pcmFrame == null)
+            {
+              if (captureFinished.getCount() == 0) break;
+              continue;
+            }
+            byte[] opus = encoder.encode(pcmFrame);
+            int frameState = frameIndex == 0
+                ? DoubaoProtocol.FRAME_FIRST : DoubaoProtocol.FRAME_MIDDLE;
+            session.sendAudio(opus, frameState, startedAtMs + frameIndex * FRAME_DURATION_MS);
+            frameIndex++;
+            audioFramesSent = frameIndex;
+            if (frameIndex == 1 || frameIndex % 50 == 0)
+              Log.i(TAG, "audio_frames_sent=" + frameIndex);
+          }
+        }
+        catch (Exception error)
+        {
+          streamingProblem = error;
+          throw error;
+        }
+        finally
+        {
+          stopRequested = true;
+          try
+          {
+            capture.join(2000);
+            if (capture.isAlive()) throw new IOException("Microphone capture did not stop");
+          }
+          catch (IOException | InterruptedException error)
+          {
+            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+            if (streamingProblem != null) streamingProblem.addSuppressed(error);
+            else throw error;
+          }
+        }
+        if (captureFailure.get() != null) throw captureFailure.get();
+
+        if (!cancelled && !session.isFinished())
+        {
+          byte[] finalOpus = encoder.encode(new short[SAMPLES_PER_FRAME]);
+          session.sendAudio(finalOpus, DoubaoProtocol.FRAME_LAST,
+              startedAtMs + frameIndex * FRAME_DURATION_MS);
+          Log.i(TAG, "audio_last_sent frames=" + frameIndex);
+        }
       }
     }
 
@@ -478,6 +532,13 @@ public final class DoubaoVoiceInput
     }
 
     @Override
+    public void onConnecting(DoubaoAsrClient.Session connecting)
+    {
+      session = connecting;
+      if (cancelled) connecting.cancel();
+    }
+
+    @Override
     public void onResponse(DoubaoProtocol.Response response)
     {
       switch (response.type)
@@ -494,15 +555,14 @@ public final class DoubaoVoiceInput
           break;
         case FINAL_RESULT:
           handleTranscript(this, response);
-          if (response.vadFinished)
-            stopRequested = true;
+          stopRequested = true;
           break;
         case SESSION_FINISHED:
           stopRequested = true;
           break;
         case ERROR:
           asyncFailure.compareAndSet(null, new IOException(
-              "Doubao ASR error: " + response.errorMessage));
+              "Doubao ASR error " + response.statusCode + ": " + response.errorMessage));
           stopRequested = true;
           break;
         default:
@@ -518,25 +578,4 @@ public final class DoubaoVoiceInput
     }
   }
 
-  static final class OpusFrameEncoder
-  {
-    private final OpusEncoder encoder;
-    private final byte[] output = new byte[4000];
-
-    OpusFrameEncoder() throws OpusException
-    {
-      encoder = new OpusEncoder(SAMPLE_RATE, 1,
-          OpusApplication.OPUS_APPLICATION_AUDIO);
-    }
-
-    byte[] encode(short[] pcm) throws OpusException
-    {
-      if (pcm.length != SAMPLES_PER_FRAME)
-        throw new IllegalArgumentException("Expected " + SAMPLES_PER_FRAME
-            + " PCM samples, got " + pcm.length);
-      int encodedLength = encoder.encode(pcm, 0, SAMPLES_PER_FRAME,
-          output, 0, output.length);
-      return Arrays.copyOf(output, encodedLength);
-    }
-  }
 }

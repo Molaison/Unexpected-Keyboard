@@ -146,8 +146,8 @@ public final class DoubaoProtocol
     extra.addProperty("app_name", APP_NAME);
     extra.addProperty("cell_compress_rate", 8);
     extra.addProperty("did", deviceId);
-    extra.addProperty("enable_asr_threepass", false);
-    extra.addProperty("enable_asr_twopass", false);
+    extra.addProperty("enable_asr_threepass", true);
+    extra.addProperty("enable_asr_twopass", true);
     extra.addProperty("input_mode", "tool");
     extra.addProperty("interim_results", true);
 
@@ -196,6 +196,10 @@ public final class DoubaoProtocol
           break;
       }
     }
+
+    // The live IME service uses 20000000 for successful control responses.
+    if (statusCode != 0 && statusCode != 200 && statusCode != 20000000)
+      return Response.error(statusCode, nonEmptyStatus(statusCode, statusMessage));
 
     switch (messageType)
     {

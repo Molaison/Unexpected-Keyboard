@@ -38,6 +38,20 @@ dictionary opening, correction initialization, and real per-key queries without
 touch events. The normal touch test remains the acceptance gate; a timing run
 does not verify editor interactions.
 
+Voice validation has separate online and microphone gates:
+
+```sh
+ANDROID_HOME=/path/to/android-sdk bash tools/run-doubao-live-test.sh emulator-5580
+ANDROID_HOME=/path/to/android-sdk bash tools/run-doubao-device-tests.sh emulator-5580
+```
+
+The first sends only a fixed, offline-synthesized phrase (requires FFmpeg with
+flite) and checks two real service sessions and saved credential reuse. The
+second uses real keyboard touches and AudioRecord on a disposable emulator;
+its microphone is silent. It restores microphone permission and the selected
+IME afterward. Native libopus sources and license are included under
+`vendor/opus`; refresh the pinned source with `python3 tools/vendor_opus.py --download`.
+
 Make sure the Git submodules are initialized and point to the right revision:
 
 ```sh

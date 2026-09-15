@@ -11,7 +11,6 @@ dependencies {
   implementation("androidx.core:core:1.16.0") // Version 1.17.0 available with sdk 36
   implementation("com.google.code.gson:gson:2.14.0")
   implementation("com.squareup.okhttp3:okhttp:5.4.0")
-  implementation("io.github.jaredmdobson:concentus:1.0.2")
   testImplementation("junit:junit:4.13.2")
 }
 

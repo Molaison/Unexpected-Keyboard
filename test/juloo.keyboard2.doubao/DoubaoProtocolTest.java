@@ -48,6 +48,8 @@ public class DoubaoProtocolTest
     assertEquals("123", extra.get("did").getAsString());
     assertEquals("tool", extra.get("input_mode").getAsString());
     assertTrue(extra.get("interim_results").getAsBoolean());
+    assertTrue(extra.get("enable_asr_twopass").getAsBoolean());
+    assertTrue(extra.get("enable_asr_threepass").getAsBoolean());
   }
 
   @Test
@@ -131,6 +133,24 @@ public class DoubaoProtocolTest
     assertEquals(DoubaoProtocol.ResponseType.UNKNOWN, response.type);
   }
 
+  @Test
+  public void failureStatusWithoutFailureMethodIsVisible() throws Exception
+  {
+    DoubaoProtocol.Response error = DoubaoProtocol.parseResponse(
+        response("TaskResponse", 408, "audio timeout", ""));
+    assertEquals(DoubaoProtocol.ResponseType.ERROR, error.type);
+    assertEquals(408, error.statusCode);
+    assertEquals("audio timeout", error.errorMessage);
+  }
+
+  @Test
+  public void liveServiceSuccessCodeStartsTheTask() throws Exception
+  {
+    DoubaoProtocol.Response started = DoubaoProtocol.parseResponse(
+        response("TaskStarted", 20000000, "OK", ""));
+    assertEquals(DoubaoProtocol.ResponseType.TASK_STARTED, started.type);
+  }
+
   @Test(expected = DoubaoProtocol.ProtocolException.class)
   public void malformedJsonFails() throws Exception
   {
@@ -141,16 +161,6 @@ public class DoubaoProtocolTest
   public void malformedProtobufFails() throws Exception
   {
     DoubaoProtocol.parseResponse(new byte[]{0x3a, 0x05, '{'});
-  }
-
-  @Test
-  public void encodesTwentyMillisecondOpusFrame() throws Exception
-  {
-    DoubaoVoiceInput.OpusFrameEncoder encoder =
-        new DoubaoVoiceInput.OpusFrameEncoder();
-    byte[] opus = encoder.encode(new short[320]);
-    assertTrue(opus.length > 0);
-    assertTrue(opus.length < 4000);
   }
 
   @Test

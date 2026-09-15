@@ -10,3 +10,12 @@ android-check:
 
 pinyin-device-test serial:
     bash tools/run-pinyin-instrumentation.sh '{{serial}}'
+
+doubao-live-test serial:
+    bash tools/run-doubao-live-test.sh '{{serial}}'
+
+doubao-device-test serial:
+    bash tools/run-doubao-device-tests.sh '{{serial}}'
+
+opus-source:
+    python3 tools/vendor_opus.py --download

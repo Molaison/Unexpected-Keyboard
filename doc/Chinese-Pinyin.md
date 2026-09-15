@@ -4,7 +4,7 @@
 
 基于 `Molaison/Unexpected-Keyboard` 的 `agent/embedded-doubao-asr`，基线提交
 `175aa5b52ce12b457de23e251262217d10146b4f`。实现分支为
-`feature/chinese-pinyin`。
+`feature/chinese-pinyin`，已合入本地 `main`。
 
 首版实现 26 键 QWERTY 全拼、离线词语和整句候选、分词选字、空格上屏、
 退格编辑、中英切换。保留原有滑动符号、数字键盘、快捷键和豆包语音输入。
@@ -75,14 +75,15 @@ python3 tools/build_pinyin_dictionary.py --download --jobs 2
 
 ## 验证与产物
 
-2026-09-15 验证环境：JDK 21、Android SDK 36、NDK 27.2.12479018；
+2026-09-15 完成中文验收，2026-09-16 补充语音修复验证。
+环境为 JDK 21、Android SDK 36、NDK 27.2.12479018；
 界面验证使用 Android 35 x86_64 软件模拟器 `emulator-5580`。
 
 | 检查 | 结果与覆盖范围 | 记录 |
 | --- | --- | --- |
 | 原生 JNI 和组合编辑 | 通过。实际词库、用户词库、错误路径、未解析尾部、200 组固定随机输入，以及 15 组容错案例、混合简拼、部分选词和禁止学习 | `build/validation/native-tests.log` |
 | APK 文件描述符加载 | 通过。带前后缀词库文件的非零偏移正确，解码器打开和关闭后调用方描述符仍可读取 | 同上 |
-| JVM 单元测试 | 32 项通过，其中豆包协议测试 13 项、中文编辑器策略 3 项 | `build/test-results/testDebugUnitTest/` |
+| JVM 单元测试 | 当前 33 项通过，其中豆包协议测试 14 项、中文编辑器策略 3 项 | `build/test-results/testDebugUnitTest/` |
 | 布局与 Android 构建 | 通过。Debug 主 APK、测试 APK，以及 `arm64-v8a`、`armeabi-v7a`、`x86`、`x86_64` 原生库 | `build/validation/android-build.log` |
 | Release R8 | `minifyReleaseWithR8` 通过；未签名或在设备上验证 Release APK | 同上 |
 | 真实触摸与编辑器 | 14 项通过，包含 Ctrl 左上角滑动切换、单行高度、简拼、模糊音、错序、邻键及重复字母 | `build/validation/instrumentation.log` |
@@ -118,14 +119,17 @@ ANDROID_HOME=/path/to/android-sdk \
 `build/validation/submission-build.log`。此次清理未修改执行逻辑。
 
 可安装的 Debug APK：`build/outputs/apk/debug/Unexpected-Keyboard-debug.apk`，
-19,070,207 字节，使用本机 Debug 签名。SHA-256：
+当前语音修复版为 19,750,905 字节，使用本机 Debug 签名；最终打包记录为
+`build/validation/voice-final-build.log`。SHA-256：
 
 ```text
-de08dbd2e0931edad5740f1bdbe36ad7945fb756af86b47993a1d79d155abb27
+24624ae81cd5a0f43af95f2bc24af02799864107c99a3d1b610e074924114eef
 ```
 
 最终候选界面截图：`build/validation/pinyin-keyboard.png`。
-实体手机和豆包在线识别尚未验证。软件模拟器中诊断输入的单次候选查询
+实体手机尚未验证。后续语音修复已通过两次实际服务识别及三项模拟器录音
+检查，记录见 [豆包语音修复与验收](Voice-Input.md)。
+软件模拟器中诊断输入的单次候选查询
 为 9–1307 ms，不能用它推断真机打字延迟。
 
 ## 已修复问题与诊断顺序
@@ -185,4 +189,4 @@ de08dbd2e0931edad5740f1bdbe36ad7945fb756af86b47993a1d79d155abb27
 首版提供简体中文 26 键拼音，支持简拼和常见容错，不包含九宫格、双拼、
 手写或繁简转换。
 解码器每段最多 39 个拼音字符（含隔音符号），继续输入会先上屏当前段。
-构建、主机解码与模拟器检查分别记录；不能视为实体手机或豆包在线识别证明。
+构建、主机解码、模拟器与在线识别检查分别记录；实体手机实测尚未完成。

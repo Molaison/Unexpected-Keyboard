@@ -1,4 +1,5 @@
 LOCAL_PATH := $(call my-dir)
+unexpected_keyboard_vendor_path := $(LOCAL_PATH)
 
 include $(CLEAR_VARS)
 
@@ -16,4 +17,5 @@ LOCAL_LDFLAGS += -Wl,--build-id=none
 
 include $(BUILD_SHARED_LIBRARY)
 
-include $(LOCAL_PATH)/pinyin/Android.mk
+include $(unexpected_keyboard_vendor_path)/pinyin/Android.mk
+include $(unexpected_keyboard_vendor_path)/opus/Android.mk

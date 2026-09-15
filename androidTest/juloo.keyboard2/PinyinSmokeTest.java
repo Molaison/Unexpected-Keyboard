@@ -27,11 +27,19 @@ public final class PinyinSmokeTest extends Instrumentation
   private PinyinTestActivity activity;
   private int checks;
   private boolean benchmark;
+  private boolean voiceLive;
+  private boolean voiceFresh;
+  private boolean voiceRegression;
+  private boolean voiceMicrophone;
 
   @Override public void onCreate(Bundle arguments)
   {
     super.onCreate(arguments);
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
+    voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
+    voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
+    voiceRegression = arguments != null && "true".equals(arguments.getString("voice_regression"));
+    voiceMicrophone = arguments != null && "true".equals(arguments.getString("voice_microphone"));
     start();
   }
 
@@ -40,6 +48,20 @@ public final class PinyinSmokeTest extends Instrumentation
     Bundle result = new Bundle();
     try
     {
+      if (voiceRegression)
+      {
+        juloo.keyboard2.doubao.DoubaoRegressionTest.run(this);
+        result.putString("stream", "DOUBAO_REGRESSION_OK\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (voiceLive)
+      {
+        juloo.keyboard2.doubao.DoubaoLiveTest.run(this, voiceFresh);
+        result.putString("stream", "DOUBAO_LIVE_OK\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
       if (benchmark)
       {
         benchmarkDecoder();
@@ -66,6 +88,13 @@ public final class PinyinSmokeTest extends Instrumentation
       }
       focus(activity.plain);
       chinese(true);
+      if (voiceMicrophone)
+      {
+        microphoneInput();
+        result.putString("stream", "DOUBAO_MICROPHONE_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
       if (onMain(() -> candidatesView().isShown())) throw new AssertionError("Empty Chinese candidate row occupies space");
       type("nihao");
       if (onMain(() -> candidatesView().getHeight()) > Math.round(
@@ -267,6 +296,55 @@ public final class PinyinSmokeTest extends Instrumentation
     });
     await("IME window", () -> keyboard() != null && keyboard().isShown() && keyboard().getWidth() > 0);
     idle();
+  }
+
+  /** Actual AudioRecord and keyboard touches on an emulator with a silent mic. */
+  private void microphoneInput() throws Exception
+  {
+    if (getTargetContext().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+        != android.content.pm.PackageManager.PERMISSION_GRANTED)
+      throw new AssertionError("Grant microphone permission before this opt-in test");
+    clear();
+    type("nihao");
+    key("voice_typing");
+    text(activity.plain, "你好");
+    Object run = awaitRecording();
+    key("voice_typing");
+    await("microphone stop and final result", () -> !voice().isActive());
+    await("recorder release", () -> field(run, "recorder") == null);
+    passed("tap starts real microphone capture and a second tap releases it");
+
+    float[] point = onMain(() -> keyPoint("voice_typing", false));
+    long down = SystemClock.uptimeMillis();
+    injectTouch(down, MotionEvent.ACTION_DOWN, point[0], point[1]);
+    Object held = awaitRecording();
+    injectTouch(down, MotionEvent.ACTION_UP, point[0], point[1]);
+    await("voice hold release", () -> !voice().isActive());
+    await("held recorder release", () -> field(held, "recorder") == null);
+    passed("holding the microphone records until the finger is released");
+
+    key("voice_typing");
+    Object cancelled = awaitRecording();
+    type("a");
+    await("manual typing cancels voice", () -> !voice().isActive());
+    await("cancelled recorder release", () -> field(cancelled, "recorder") == null);
+    text(activity.plain, "你好a");
+    passed("manual pinyin input cancels microphone capture and keeps the editor text");
+  }
+
+  private Object awaitRecording() throws Exception
+  {
+    await("microphone frames sent", () -> {
+      Object run = field(voice(), "activeRun");
+      return run != null && (Long)field(run, "audioFramesSent") >= 3;
+    });
+    return onMain(() -> field(voice(), "activeRun"));
+  }
+
+  private juloo.keyboard2.doubao.DoubaoVoiceInput voice() throws Exception
+  {
+    Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
+    return (juloo.keyboard2.doubao.DoubaoVoiceInput)field(field(receiver, "this$0"), "_doubaoVoiceInput");
   }
 
   private void clear() throws Exception

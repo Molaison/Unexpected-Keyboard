@@ -14,6 +14,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -58,6 +60,7 @@ public final class DoubaoAsrClient
 
   public interface Listener
   {
+    default void onConnecting(Session session) { }
     void onResponse(DoubaoProtocol.Response response);
     void onFailure(IOException failure);
   }
@@ -83,9 +86,18 @@ public final class DoubaoAsrClient
       throw new IllegalArgumentException("listener must not be null");
     Credentials credentials = credentialStore.ensureCredentials();
     Log.i(TAG, "credentials_ready");
-    Session session = new Session(httpClient, credentials, listener);
-    session.connectAndStartTask();
-    return session;
+    Session session = new Session(httpClient, credentialStore, credentials, listener);
+    try
+    {
+      listener.onConnecting(session);
+      session.connectAndStartTask();
+      return session;
+    }
+    catch (IOException | RuntimeException error)
+    {
+      session.cancel();
+      throw error;
+    }
   }
 
   public void shutdown()
@@ -96,11 +108,223 @@ public final class DoubaoAsrClient
 
   public static final class Session
   {
+    private static final int MAX_RECOVERY_BYTES = 4 * 1024 * 1024;
+    private final OkHttpClient httpClient;
+    private final CredentialStore credentialStore;
+    private final Credentials originalCredentials;
+    private final Listener listener;
+    private final List<AudioFrame> bufferedAudio = new ArrayList<>();
+    private volatile Connection connection;
+    private volatile boolean cancelled;
+    private volatile boolean refreshUsed;
+    private volatile boolean recognizedText;
+    private volatile boolean closed;
+    private boolean started;
+    private boolean finishing;
+    private int bufferedBytes;
+    private long timestampOffset;
+    private long replayStartedNs;
+    private long firstReplayTimestamp;
+    private Credentials replacement;
+
+    Session(OkHttpClient httpClient, CredentialStore credentialStore,
+        Credentials credentials, Listener listener)
+    {
+      this.httpClient = httpClient;
+      this.credentialStore = credentialStore;
+      this.originalCredentials = credentials;
+      this.listener = listener;
+      connection = newConnection(credentials);
+    }
+
+    static HttpUrl buildWebSocketUrl(String deviceId) { return Connection.buildWebSocketUrl(deviceId); }
+
+    void connectAndStartTask() throws IOException
+    {
+      if (cancelled) throw new IOException("Voice input was cancelled before connecting");
+      try { connection.connectAndStartTask(); }
+      catch (IOException error) { recover(error); }
+    }
+
+    public void startSession() throws IOException
+    {
+      started = true;
+      try { connection.startSession(); }
+      catch (IOException error) { recover(error); }
+    }
+
+    public void sendAudio(byte[] frame, int state, long timestampMs) throws IOException
+    {
+      if (cancelled) throw new IOException("Voice input was cancelled");
+      if (!refreshUsed && !recognizedText)
+      {
+        if (bufferedBytes + frame.length > MAX_RECOVERY_BYTES)
+          throw new IOException("No ASR response before the recovery audio buffer filled");
+        bufferedAudio.add(new AudioFrame(frame.clone(), state, timestampMs));
+        bufferedBytes += frame.length;
+      }
+      else if (recognizedText) clearBufferedAudio();
+      try
+      {
+        paceReplay(timestampMs);
+        connection.sendAudio(frame, state, timestampMs + timestampOffset);
+      }
+      catch (IOException error) { recover(error); }
+    }
+
+    public void finish() throws IOException
+    {
+      finishing = true;
+      try { connection.finish(); }
+      catch (IOException error) { recover(error); }
+    }
+
+    public boolean isFinished() { return connection.isFinished(); }
+
+    public boolean awaitFinalOrFinished(long timeoutMs) throws IOException
+    {
+      boolean finished;
+      try { finished = connection.awaitFinalOrFinished(timeoutMs); }
+      catch (IOException error)
+      {
+        recover(error);
+        finished = connection.awaitFinalOrFinished(timeoutMs);
+      }
+      if (finished && recognizedText && replacement != null && !cancelled)
+      {
+        credentialStore.saveReplacement(originalCredentials, replacement);
+        replacement = null;
+        Log.i(TAG, "credentials_replaced_after_success");
+      }
+      return finished;
+    }
+
+    public void close() throws IOException
+    {
+      closed = true;
+      clearBufferedAudio();
+      connection.close();
+    }
+
+    public void cancel()
+    {
+      cancelled = true;
+      Connection current = connection;
+      if (current != null) current.cancel();
+    }
+
+    private Connection newConnection(Credentials credentials)
+    {
+      Forwarder forwarder = new Forwarder();
+      Connection current = new Connection(httpClient, credentials, forwarder);
+      forwarder.source = current;
+      return current;
+    }
+
+    private boolean canRecover(IOException error)
+    {
+      return !cancelled && !closed && !refreshUsed && !recognizedText
+        && error instanceof ServiceException
+        && ((ServiceException)error).statusCode == 50700000;
+    }
+
+    private void recover(IOException error) throws IOException
+    {
+      if (!canRecover(error)) throw error;
+      refreshUsed = true;
+      Log.w(TAG, "ASR 50700000; refreshing credentials once and replaying " + bufferedAudio.size() + " audio frames");
+      Connection previous = connection;
+      connection = null;
+      previous.cancel();
+      replacement = credentialStore.acquireFreshCredentials();
+      if (cancelled) throw new IOException("Voice input was cancelled during credential refresh");
+      connection = newConnection(replacement);
+      connection.connectAndStartTask();
+      if (started) connection.startSession();
+      if (!bufferedAudio.isEmpty())
+      {
+        firstReplayTimestamp = bufferedAudio.get(0).timestamp;
+        timestampOffset = System.currentTimeMillis() - firstReplayTimestamp;
+        replayStartedNs = System.nanoTime();
+      }
+      for (AudioFrame audio : bufferedAudio)
+      {
+        if (cancelled) throw new IOException("Voice input was cancelled during audio replay");
+        paceReplay(audio.timestamp);
+        connection.sendAudio(audio.bytes, audio.state, audio.timestamp + timestampOffset);
+      }
+      clearBufferedAudio();
+      if (finishing) connection.finish();
+    }
+
+    private void paceReplay(long timestampMs) throws IOException
+    {
+      if (replayStartedNs == 0) return;
+      long remaining = replayStartedNs + TimeUnit.MILLISECONDS.toNanos(timestampMs - firstReplayTimestamp)
+        - System.nanoTime();
+      if (remaining <= 0) return;
+      try { TimeUnit.NANOSECONDS.sleep(remaining); }
+      catch (InterruptedException error)
+      {
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted while replaying voice audio", error);
+      }
+    }
+
+    private void clearBufferedAudio()
+    {
+      bufferedAudio.clear();
+      bufferedBytes = 0;
+    }
+
+    private final class Forwarder implements Listener
+    {
+      Connection source;
+
+      @Override public void onResponse(DoubaoProtocol.Response response)
+      {
+        if (source != connection || cancelled || closed) return;
+        if (response.type == DoubaoProtocol.ResponseType.ERROR
+            && canRecover(new ServiceException(response.statusCode, response.errorMessage))) return;
+        if (!response.text.isEmpty()) recognizedText = true;
+        listener.onResponse(response);
+      }
+
+      @Override public void onFailure(IOException error)
+      {
+        if (source != connection || cancelled || closed || canRecover(error)) return;
+        listener.onFailure(error);
+      }
+    }
+
+    private static final class AudioFrame
+    {
+      final byte[] bytes;
+      final int state;
+      final long timestamp;
+      AudioFrame(byte[] bytes, int state, long timestamp)
+      { this.bytes = bytes; this.state = state; this.timestamp = timestamp; }
+    }
+  }
+
+  static final class ServiceException extends IOException
+  {
+    final int statusCode;
+    ServiceException(int statusCode, String message)
+    {
+      super("Doubao ASR error " + statusCode + ": " + message);
+      this.statusCode = statusCode;
+    }
+  }
+
+  static final class Connection
+  {
     private final OkHttpClient httpClient;
     private final Credentials credentials;
     private final Listener listener;
     private final String requestId = UUID.randomUUID().toString();
     private final CountDownLatch openLatch = new CountDownLatch(1);
+    private final CountDownLatch closeLatch = new CountDownLatch(1);
     private final CountDownLatch terminalLatch = new CountDownLatch(1);
     private final BlockingQueue<DoubaoProtocol.Response> controlResponses =
         new LinkedBlockingQueue<DoubaoProtocol.Response>();
@@ -110,8 +334,9 @@ public final class DoubaoAsrClient
 
     private volatile WebSocket webSocket;
     private volatile boolean finishSent;
+    private volatile boolean sessionFinished;
 
-    Session(OkHttpClient httpClient, Credentials credentials, Listener listener)
+    Connection(OkHttpClient httpClient, Credentials credentials, Listener listener)
     {
       this.httpClient = httpClient;
       this.credentials = credentials;
@@ -163,12 +388,16 @@ public final class DoubaoAsrClient
 
     public void finish() throws IOException
     {
+      throwIfFailed();
+      if (sessionFinished) return;
       if (finishSent)
         throw new IllegalStateException("FinishSession was already sent");
       finishSent = true;
       send(DoubaoProtocol.buildFinishSession(requestId, credentials.token));
       Log.i(TAG, "finish_session_sent");
     }
+
+    public boolean isFinished() { return sessionFinished; }
 
     public boolean awaitFinalOrFinished(long timeoutMs) throws IOException
     {
@@ -181,8 +410,12 @@ public final class DoubaoAsrClient
     {
       closeRequested.set(true);
       WebSocket socket = webSocket;
-      if (socket != null && !socket.close(1000, "ASR session complete"))
-        throw new IOException("WebSocket refused the close request");
+      if (socket != null)
+      {
+        if (!socket.close(1000, "ASR session complete") && closeLatch.getCount() != 0)
+          throw new IOException("WebSocket refused the close request");
+        await(closeLatch, HANDSHAKE_TIMEOUT_MS, "ASR WebSocket close");
+      }
     }
 
     public void cancel()
@@ -191,8 +424,9 @@ public final class DoubaoAsrClient
       WebSocket socket = webSocket;
       if (socket != null)
         socket.cancel();
-      openLatch.countDown();
-      terminalLatch.countDown();
+      closeLatch.countDown();
+      // Wake both latch waiters and a worker waiting for a control response.
+      fail(new IOException("Doubao ASR session was cancelled"));
     }
 
     private void send(byte[] message) throws IOException
@@ -232,8 +466,10 @@ public final class DoubaoAsrClient
         if (response.type == expected)
           return;
         if (response.type == DoubaoProtocol.ResponseType.ERROR)
-          throw new IOException("Doubao ASR rejected the request: "
-              + response.errorMessage);
+        {
+          throwIfFailed();
+          throw new ServiceException(response.statusCode, response.errorMessage);
+        }
         throw new IOException("Expected " + expected + " but received "
             + response.type);
       }
@@ -280,7 +516,15 @@ public final class DoubaoAsrClient
           return;
         }
 
+        if (response.type == DoubaoProtocol.ResponseType.SESSION_FINISHED)
+          sessionFinished = true;
         listener.onResponse(response);
+        if (response.type == DoubaoProtocol.ResponseType.ERROR)
+        {
+          fail(new ServiceException(response.statusCode, response.errorMessage));
+          socket.cancel();
+          return;
+        }
         switch (response.type)
         {
           case TASK_STARTED:
@@ -295,8 +539,7 @@ public final class DoubaoAsrClient
 
         if (response.type == DoubaoProtocol.ResponseType.SESSION_FINISHED
             || response.type == DoubaoProtocol.ResponseType.ERROR
-            || (finishSent
-                && response.type == DoubaoProtocol.ResponseType.FINAL_RESULT))
+            || response.type == DoubaoProtocol.ResponseType.FINAL_RESULT)
           terminalLatch.countDown();
       }
 
@@ -307,11 +550,13 @@ public final class DoubaoAsrClient
             && terminalLatch.getCount() != 0)
           fail(new IOException("ASR WebSocket is closing: " + code + " "
               + reason));
+        socket.close(code, reason);
       }
 
       @Override
       public void onClosed(WebSocket socket, int code, String reason)
       {
+        closeLatch.countDown();
         if (!closeRequested.get()
             && terminalLatch.getCount() != 0)
           fail(new IOException("ASR WebSocket closed: " + code + " "
@@ -322,9 +567,12 @@ public final class DoubaoAsrClient
       public void onFailure(WebSocket socket, Throwable error,
           Response response)
       {
+        closeLatch.countDown();
         String message = "ASR WebSocket failed";
         if (response != null)
           message += " with HTTP " + response.code();
+        if (error.getMessage() != null)
+          message += ": " + error.getMessage();
         fail(new IOException(message, error));
       }
     }
@@ -400,6 +648,28 @@ public final class DoubaoAsrClient
         save(credentials);
       }
       return credentials;
+    }
+
+    synchronized Credentials acquireFreshCredentials() throws IOException
+    {
+      Credentials credentials = new Credentials();
+      credentials.deviceId = "";
+      credentials.installId = "";
+      credentials.token = "";
+      credentials.cdid = UUID.randomUUID().toString();
+      credentials.openudid = generateOpenudid();
+      credentials.clientudid = UUID.randomUUID().toString();
+      registerDevice(credentials);
+      requestToken(credentials);
+      return credentials;
+    }
+
+    synchronized void saveReplacement(Credentials previous, Credentials replacement) throws IOException
+    {
+      Credentials current = load();
+      if (!current.deviceId.equals(previous.deviceId) || !current.token.equals(previous.token))
+        throw new IOException("ASR credentials changed while the session was recovering");
+      save(replacement);
     }
 
     private Credentials load()
