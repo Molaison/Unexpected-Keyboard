@@ -13,6 +13,7 @@ import android.util.Log;
 import android.view.inputmethod.InputConnection;
 import androidx.core.content.ContextCompat;
 import java.io.IOException;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
@@ -192,9 +193,16 @@ public final class DoubaoVoiceInput
         return;
       }
 
-      // ASR replies describe the current utterance. Keep one composing span
-      // until completion so repeated/revised final packets replace that span.
-      final boolean accepted = run.connection.setComposingText(response.text, 1);
+      // Each reply describes one indexed utterance. Retain the other sentences
+      // so even a delayed revision of an earlier final preserves newer text.
+      int index = response.utteranceIndex >= 0
+          ? response.utteranceIndex : run.currentUtteranceIndex;
+      run.currentUtteranceIndex = Math.max(run.currentUtteranceIndex, index);
+      run.utteranceTexts.put(index, response.text);
+      StringBuilder text = new StringBuilder();
+      for (String utterance : run.utteranceTexts.values())
+        text.append(utterance);
+      final boolean accepted = run.connection.setComposingText(text, 1);
       run.hasComposingText = true;
       run.latestInterim = response.text;
       if (!accepted)
@@ -228,6 +236,7 @@ public final class DoubaoVoiceInput
       host.onVoiceFailure("The target editor rejected the final voice text");
     run.hasComposingText = false;
     run.latestInterim = "";
+    run.utteranceTexts.clear();
   }
 
   private void complete(SessionRun run, Throwable problem)
@@ -287,6 +296,8 @@ public final class DoubaoVoiceInput
     volatile long audioFramesSent;
 
     boolean hasComposingText;
+    final TreeMap<Integer, String> utteranceTexts = new TreeMap<>();
+    int currentUtteranceIndex;
     String latestInterim = "";
     long lastInterimUpdateNs;
 
@@ -309,7 +320,7 @@ public final class DoubaoVoiceInput
         streamAudio();
         throwIfCancelledOrFailed();
         session.finish();
-        boolean receivedFinal = session.awaitFinalOrFinished(
+        boolean receivedFinal = session.awaitSessionFinished(
             FINAL_DRAIN_TIMEOUT_MS);
         if (!receivedFinal)
           throw new IOException("Timed out waiting for the final ASR result");
@@ -545,17 +556,15 @@ public final class DoubaoVoiceInput
       {
         case INTERIM_RESULT:
           long now = System.nanoTime();
-          if (now - lastInterimUpdateNs >= INTERIM_UPDATE_INTERVAL_NS)
+          if (response.vadFinished
+              || now - lastInterimUpdateNs >= INTERIM_UPDATE_INTERVAL_NS)
           {
             lastInterimUpdateNs = now;
             handleTranscript(this, response);
           }
-          if (response.vadFinished)
-            stopRequested = true;
           break;
         case FINAL_RESULT:
           handleTranscript(this, response);
-          stopRequested = true;
           break;
         case SESSION_FINISHED:
           stopRequested = true;

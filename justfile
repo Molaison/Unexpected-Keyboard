@@ -14,8 +14,14 @@ pinyin-device-test serial:
 doubao-live-test serial:
     bash tools/run-doubao-live-test.sh '{{serial}}'
 
+doubao-continuous-test serial:
+    bash tools/run-doubao-live-test.sh '{{serial}}' false true
+
 doubao-device-test serial:
     bash tools/run-doubao-device-tests.sh '{{serial}}'
+
+doubao-device-cancel-test serial:
+    bash tools/run-doubao-device-tests.sh '{{serial}}' cancel
 
 opus-source:
     python3 tools/vendor_opus.py --download

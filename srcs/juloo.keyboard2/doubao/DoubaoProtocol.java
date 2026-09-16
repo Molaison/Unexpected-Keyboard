@@ -44,13 +44,14 @@ public final class DoubaoProtocol
     public final boolean isFinal;
     public final boolean vadStart;
     public final boolean vadFinished;
+    public final int utteranceIndex;
     public final int packetNumber;
     public final int statusCode;
     public final String errorMessage;
     public final String rawJson;
 
     private Response(ResponseType type, String text, boolean isFinal,
-        boolean vadStart, boolean vadFinished, int packetNumber,
+        boolean vadStart, boolean vadFinished, int utteranceIndex, int packetNumber,
         int statusCode, String errorMessage, String rawJson)
     {
       this.type = type;
@@ -58,6 +59,7 @@ public final class DoubaoProtocol
       this.isFinal = isFinal;
       this.vadStart = vadStart;
       this.vadFinished = vadFinished;
+      this.utteranceIndex = utteranceIndex;
       this.packetNumber = packetNumber;
       this.statusCode = statusCode;
       this.errorMessage = errorMessage;
@@ -66,12 +68,12 @@ public final class DoubaoProtocol
 
     static Response simple(ResponseType type)
     {
-      return new Response(type, "", false, false, false, -1, 0, "", null);
+      return new Response(type, "", false, false, false, -1, -1, 0, "", null);
     }
 
     static Response error(int statusCode, String message)
     {
-      return new Response(ResponseType.ERROR, "", false, false, false, -1,
+      return new Response(ResponseType.ERROR, "", false, false, false, -1, -1,
           statusCode, message, null);
     }
   }
@@ -238,15 +240,16 @@ public final class DoubaoProtocol
     {
       int packetNumber = optionalInt(extra, "packet_number", -1);
       return new Response(ResponseType.HEARTBEAT, "", false, false, false,
-          packetNumber, 0, "", resultJson);
+          -1, packetNumber, 0, "", resultJson);
     }
 
     if (optionalBoolean(extra, "vad_start", false))
       return new Response(ResponseType.VAD_START, "", false, true, false,
-          -1, 0, "", resultJson);
+          -1, -1, 0, "", resultJson);
 
     List<JsonObject> results = resultObjects(resultsElement);
     String text = "";
+    int utteranceIndex = -1;
     boolean explicitFinal = false;
     boolean vadFinished = false;
     boolean nonstreamResult = false;
@@ -255,7 +258,10 @@ public final class DoubaoProtocol
     {
       String candidate = extractResultText(result);
       if (!candidate.isEmpty())
+      {
         text = candidate;
+        utteranceIndex = optionalInt(result, "index", -1);
+      }
 
       Boolean interim = firstBoolean(result, "is_interim", "interim");
       if (Boolean.FALSE.equals(interim))
@@ -273,7 +279,7 @@ public final class DoubaoProtocol
     boolean isFinal = nonstreamResult || (explicitFinal && vadFinished);
     return new Response(
         isFinal ? ResponseType.FINAL_RESULT : ResponseType.INTERIM_RESULT,
-        text, isFinal, false, vadFinished, -1, 0, "", resultJson);
+        text, isFinal, false, vadFinished, utteranceIndex, -1, 0, "", resultJson);
   }
 
   private static byte[] request(String requestId, String token,

@@ -1,9 +1,70 @@
 # 豆包语音修复与验收
 
+## 2026-09-17：点按持续录音
+
+点按开始后，说完一句或在句间停顿不会结束录音；再次点按才停止，长按仍在
+松手时停止。手动输入、取消和识别错误仍会结束本次录音。
+
+原实现把句尾 VAD 和最终识别结果都设置为停止请求。实际服务允许在同一个
+会话中连续识别多句，用 `results[].index` 区分句子，第二句开始时没有
+`VAD_START`。现在按句子序号保存文字，同句重复包与修订包只更新该句；
+迟到的前句修订也不会覆盖后句。主动停止后等待 `SessionFinished`，避免
+上一句的最终结果让等待提前结束；句尾后的异常断线仍明确报告。
+
+连续语音验收使用两句离线合成的英语，每句后发送 3 秒静音，再等待句尾
+回复。实际服务回复进入真实 `DoubaoVoiceInput` 监听器和 EditText，检查
+两句都完整保留、主动停止前仍处于录音状态。独立录音触摸测试使用真实
+AudioRecord 和模拟服务句尾回复，检查帧数继续增加及再次点按、长按松手、
+手动输入取消。两种验证均不能替代实体手机上的实际说话。
+
+```sh
+ANDROID_HOME=/path/to/android-sdk just doubao-continuous-test emulator-5580
+ANDROID_HOME=/path/to/android-sdk just doubao-device-test emulator-5580
+```
+
+本轮验证结果：
+
+| 检查 | 结果 | 记录 |
+| --- | --- | --- |
+| 两句在线识别与编辑器上屏 | 两句分别识别、保留在同一编辑器，句尾后仍活动，主动停止后结束 | `build/validation/voice-continuous-live.log` |
+| 错误与编辑器回归 | 6 项通过，覆盖句子序号、重复包、迟到修订、终态等待、异常断线和取消 | `build/validation/voice-continuous-regression.log` |
+| 真实录音与触摸 | 4 项分别通过：句尾持续采集、再次点按停止、长按松手停止、手动输入取消；前三项同轮，取消单独复测 | `build/validation/voice-continuous-microphone-recheck.log`、`voice-microphone-cancel.log` |
+| JVM 与构建 | 34 项单元测试通过，Debug 主/测试 APK 和 Release R8 通过 | `build/validation/voice-continuous-final-build.log`、`voice-continuous-cancel-test-build.log` |
+| 安装包检查 | v1/v2 签名与 16 KiB 对齐通过 | `build/validation/voice-continuous-apk-validation.log` |
+
+当前安装包为 `build/outputs/apk/debug/Unexpected-Keyboard-debug.apk`，
+19,750,905 字节，SHA-256：
+
+```text
+17a2c6c484a57cccf33c0c9b45e0a6e60eb869ab5b1ea39c6071ed891a819fba
+```
+
+真实服务的句子序号记录保留在 `voice-continuous-protocol.log`。加入序号前，
+Android 回归确实复现了第一句被覆盖，仅余 `前缀第二句。`，记录为
+`voice-continuous-index-red.log`；修复后同一断言通过。
+
+连续执行录音检查时，服务两次返回 `40200011: concurrency quota exceeded`。
+日志显示长按与点按事件已送达，错误出现在新会话建立阶段。保留已通过的
+用例记录后，用相同录音、按键及文字断言单独复测取消，结果通过：
+
+```sh
+ANDROID_HOME=/path/to/android-sdk just doubao-device-cancel-test emulator-5580
+```
+
+软件模拟器首次启动还出现了系统应用与目标应用的启动 ANR，预编译后在线
+用例恢复；触摸前通过窗口日志与 UiAutomator 解除遗留的 System UI 弹窗。
+截图预览经过缩放，操作坐标应使用 UiAutomator 的实际边界。本轮没有禁用
+ANR 检查或跳过输入断言。完整执行记录在
+`build/validation/voice-continuous-fix.md`。
+验收完成后的模拟器关机阶段，宿主进程再次以 139 退出；日志为
+`build/validation/voice-continuous-emulator.log`，全部验收记录此前已保存。
+
+## 2026-09-16：凭据与编码修复
+
 2026-09-16，基于本地 `main` 的 `d1e1bba` 修复本轮复现的语音异常。
 两次真实服务识别、三项模拟器录音触摸检查、五项错误/编辑器回归均通过。
 
-## 问题与修复
+### 问题与修复
 
 - 旧凭据仍可完成 StartTask、StartSession，但随后返回
   `SessionFailed 50700000: service discovery failure`。独立新凭据可识别同一
@@ -22,7 +83,7 @@
 - 握手失败会释放连接；取消会唤醒控制响应等待；服务错误会停止发送。
   识别结束等待超时会显示错误，服务端成功状态 `20000000` 已加入协议回归。
 
-## 验证结果
+### 验证结果
 
 | 检查 | 结果 | 记录 |
 | --- | --- | --- |
@@ -40,14 +101,14 @@ Opus 和真实豆包服务完成；不采集个人录音。错误回归使用确
 真实 EditText 的 InputConnection。录音触摸用例使用模拟器的静音麦克风，
 不能替代实体手机上实际说话、具体网络与机型兼容性验证。
 
-产物为 `build/outputs/apk/debug/Unexpected-Keyboard-debug.apk`，19,750,905 字节，
+当轮产物为 `build/outputs/apk/debug/Unexpected-Keyboard-debug.apk`，19,750,905 字节，
 使用原有本机 Debug 签名。SHA-256：
 
 ```text
 24624ae81cd5a0f43af95f2bc24af02799864107c99a3d1b610e074924114eef
 ```
 
-## 验证命令
+### 验证命令
 
 ```sh
 ./gradlew --no-daemon --max-workers=2 testDebugUnitTest assembleDebug \
@@ -65,7 +126,7 @@ ANDROID_HOME=/path/to/android-sdk bash tools/run-doubao-device-tests.sh emulator
 常规验收。麦克风脚本用于已安装两个 Debug APK 的独立模拟器，结束时恢复
 原录音权限及选中的输入法。
 
-## 来源与诊断记录
+### 来源与诊断记录
 
 - [doubaoime-asr](https://github.com/yangmoling/doubaoime-asr/tree/267972f815f519fd7c6149f85a8b7cc99daf61a5)
   的会话配置用于对照协议。本版恢复其默认的二遍、三遍识别设置；仅更改

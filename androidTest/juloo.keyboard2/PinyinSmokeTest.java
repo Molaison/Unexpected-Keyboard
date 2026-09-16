@@ -29,8 +29,10 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean benchmark;
   private boolean voiceLive;
   private boolean voiceFresh;
+  private boolean voiceContinuous;
   private boolean voiceRegression;
   private boolean voiceMicrophone;
+  private String voiceMicrophoneCase;
 
   @Override public void onCreate(Bundle arguments)
   {
@@ -38,8 +40,10 @@ public final class PinyinSmokeTest extends Instrumentation
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
+    voiceContinuous = arguments != null && "true".equals(arguments.getString("voice_continuous"));
     voiceRegression = arguments != null && "true".equals(arguments.getString("voice_regression"));
     voiceMicrophone = arguments != null && "true".equals(arguments.getString("voice_microphone"));
+    voiceMicrophoneCase = arguments == null ? "all" : arguments.getString("voice_microphone_case", "all");
     start();
   }
 
@@ -55,10 +59,13 @@ public final class PinyinSmokeTest extends Instrumentation
         finish(Activity.RESULT_OK, result);
         return;
       }
-      if (voiceLive)
+      if (voiceLive || voiceContinuous)
       {
-        juloo.keyboard2.doubao.DoubaoLiveTest.run(this, voiceFresh);
-        result.putString("stream", "DOUBAO_LIVE_OK\n");
+        if (voiceContinuous)
+          juloo.keyboard2.doubao.DoubaoLiveTest.runContinuous(this);
+        else
+          juloo.keyboard2.doubao.DoubaoLiveTest.run(this, voiceFresh);
+        result.putString("stream", voiceContinuous ? "DOUBAO_CONTINUOUS_OK\n" : "DOUBAO_LIVE_OK\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -298,17 +305,49 @@ public final class PinyinSmokeTest extends Instrumentation
     idle();
   }
 
-  /** Actual AudioRecord and keyboard touches on an emulator with a silent mic. */
+  /** Real AudioRecord/touches with a silent mic and synthetic ASR sentence replies. */
   private void microphoneInput() throws Exception
   {
     if (getTargetContext().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
         != android.content.pm.PackageManager.PERMISSION_GRANTED)
       throw new AssertionError("Grant microphone permission before this opt-in test");
+    if ("cancel".equals(voiceMicrophoneCase))
+    {
+      clear();
+      onMain(() -> {
+        activity.plain.setText("你好第一句。第二句。");
+        activity.plain.setSelection(activity.plain.length());
+        return null;
+      });
+      cancelMicrophoneInput();
+      return;
+    }
+    if (!"all".equals(voiceMicrophoneCase))
+      throw new IllegalArgumentException("Unknown microphone case: " + voiceMicrophoneCase);
     clear();
     type("nihao");
     key("voice_typing");
     text(activity.plain, "你好");
     Object run = awaitRecording();
+    juloo.keyboard2.doubao.DoubaoAsrClient.Listener listener =
+      (juloo.keyboard2.doubao.DoubaoAsrClient.Listener)run;
+    listener.onResponse(juloo.keyboard2.doubao.DoubaoRegressionTest.response(
+        "{\"results\":[{\"text\":\"第一句\",\"is_interim\":true,\"is_vad_finished\":true,\"index\":0}]}"));
+    listener.onResponse(juloo.keyboard2.doubao.DoubaoRegressionTest.response(
+        "{\"results\":[{\"text\":\"第一句。\",\"is_final\":true,\"is_vad_finished\":true,\"index\":0}]}"));
+    text(activity.plain, "你好第一句。");
+    long firstFrames = (Long)field(run, "audioFramesSent");
+    await("microphone continues after sentence end", () -> {
+      if (field(voice(), "activeRun") != run || (Boolean)field(run, "stopRequested"))
+        throw new AssertionError("A sentence result stopped tap recording");
+      return (Long)field(run, "audioFramesSent") >= firstFrames + 50;
+    });
+    listener.onResponse(juloo.keyboard2.doubao.DoubaoRegressionTest.response(
+        "{\"results\":[{\"text\":\"第二句。\",\"is_final\":true,\"is_vad_finished\":true,\"index\":1}]}"));
+    text(activity.plain, "你好第一句。第二句。");
+    if (!onMain(() -> voice().isActive()) || (Boolean)field(run, "stopRequested"))
+      throw new AssertionError("The second sentence stopped tap recording");
+    passed("sentence-end replies keep real microphone capture active and append the next sentence");
     key("voice_typing");
     await("microphone stop and final result", () -> !voice().isActive());
     await("recorder release", () -> field(run, "recorder") == null);
@@ -323,12 +362,17 @@ public final class PinyinSmokeTest extends Instrumentation
     await("held recorder release", () -> field(held, "recorder") == null);
     passed("holding the microphone records until the finger is released");
 
+    cancelMicrophoneInput();
+  }
+
+  private void cancelMicrophoneInput() throws Exception
+  {
     key("voice_typing");
     Object cancelled = awaitRecording();
     type("a");
     await("manual typing cancels voice", () -> !voice().isActive());
     await("cancelled recorder release", () -> field(cancelled, "recorder") == null);
-    text(activity.plain, "你好a");
+    text(activity.plain, "你好第一句。第二句。a");
     passed("manual pinyin input cancels microphone capture and keeps the editor text");
   }
 

@@ -181,14 +181,14 @@ public final class DoubaoAsrClient
 
     public boolean isFinished() { return connection.isFinished(); }
 
-    public boolean awaitFinalOrFinished(long timeoutMs) throws IOException
+    public boolean awaitSessionFinished(long timeoutMs) throws IOException
     {
       boolean finished;
-      try { finished = connection.awaitFinalOrFinished(timeoutMs); }
+      try { finished = connection.awaitSessionFinished(timeoutMs); }
       catch (IOException error)
       {
         recover(error);
-        finished = connection.awaitFinalOrFinished(timeoutMs);
+        finished = connection.awaitSessionFinished(timeoutMs);
       }
       if (finished && recognizedText && replacement != null && !cancelled)
       {
@@ -399,9 +399,9 @@ public final class DoubaoAsrClient
 
     public boolean isFinished() { return sessionFinished; }
 
-    public boolean awaitFinalOrFinished(long timeoutMs) throws IOException
+    public boolean awaitSessionFinished(long timeoutMs) throws IOException
     {
-      await(terminalLatch, timeoutMs, "final ASR result", false);
+      await(terminalLatch, timeoutMs, "ASR session finish", false);
       throwIfFailed();
       return terminalLatch.getCount() == 0;
     }
@@ -537,9 +537,9 @@ public final class DoubaoAsrClient
             break;
         }
 
+        // A final transcript ends one utterance, not the recording session.
         if (response.type == DoubaoProtocol.ResponseType.SESSION_FINISHED
-            || response.type == DoubaoProtocol.ResponseType.ERROR
-            || response.type == DoubaoProtocol.ResponseType.FINAL_RESULT)
+            || response.type == DoubaoProtocol.ResponseType.ERROR)
           terminalLatch.countDown();
       }
 

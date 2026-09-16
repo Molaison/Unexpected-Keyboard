@@ -43,7 +43,7 @@ public final class DoubaoRegressionTest
       fixture.receive("SessionFailed", 50700000, "service discovery failure", "");
       try
       {
-        fixture.session.awaitFinalOrFinished(100);
+        fixture.session.awaitSessionFinished(100);
         throw new AssertionError("A service error was reported as a successful final response");
       }
       catch (IOException expected)
@@ -88,9 +88,15 @@ public final class DoubaoRegressionTest
     try (Transport fixture = new Transport())
     {
       fixture.receive("", 20000000, "OK", finalJson("测试"));
+      if (fixture.session.awaitSessionFinished(100))
+        throw new AssertionError("A sentence final completed the recording session");
       fixture.session.finish();
-      if (!fixture.session.awaitFinalOrFinished(100))
-        throw new AssertionError("An early final result was lost before FinishSession");
+      fixture.receive("", 20000000, "OK", finalJson("最后一句"));
+      if (fixture.session.awaitSessionFinished(100))
+        throw new AssertionError("A sentence final skipped the remaining session drain");
+      fixture.receive("SessionFinished", 20000000, "OK", "");
+      if (!fixture.session.awaitSessionFinished(100))
+        throw new AssertionError("SessionFinished did not complete the final drain");
     }
     try (Transport fixture = new Transport())
     {
@@ -98,70 +104,120 @@ public final class DoubaoRegressionTest
       fixture.session.finish();
       if (fixture.socket.sent != 0) throw new AssertionError("Finish was sent to an already finished session");
     }
-    passed(test, "early final and server-finished sessions drain correctly");
+    passed(test, "sentence finals do not complete the session; explicit stop drains through SessionFinished");
+
+    try (Transport fixture = new Transport())
+    {
+      fixture.receive("", 20000000, "OK", finalJson("测试"));
+      fixture.listener.onClosed(fixture.socket, 1000, "unexpected close");
+      if (fixture.failure.get() == null)
+        throw new AssertionError("An unexpected socket close after a sentence final was hidden");
+    }
+    passed(test, "unexpected transport closure after a sentence is still reported");
 
     checkEditor(test);
-    passed(test, "repeated and revised final text replaces one editor span; cancelled replies are ignored");
-    passed(test, "DOUBAO_REGRESSION_OK checks=5");
+    passed(test, "sentence boundaries keep recording; final revisions and subsequent utterances preserve editor text");
+    passed(test, "DOUBAO_REGRESSION_OK checks=6");
   }
 
   private static void checkEditor(Instrumentation test) throws Exception
   {
-    AtomicReference<EditText> editor = new AtomicReference<>();
-    AtomicReference<DoubaoVoiceInput> voice = new AtomicReference<>();
-    AtomicReference<DoubaoVoiceInput.SessionRun> run = new AtomicReference<>();
-    List<String> failures = new ArrayList<>();
-    test.runOnMainSync(() -> {
-      EditText view = new EditText(test.getTargetContext());
-      view.setText("前缀");
-      view.setSelection(view.length());
-      editor.set(view);
-      InputConnection connection = view.onCreateInputConnection(new EditorInfo());
-      DoubaoVoiceInput input = new DoubaoVoiceInput(test.getTargetContext(), new DoubaoVoiceInput.Host() {
-        @Override public InputConnection getCurrentInputConnection() { return connection; }
-        @Override public void onVoiceStateChanged(DoubaoVoiceInput.State state) { }
-        @Override public void onVoiceFailure(String message) { failures.add(message); }
-      });
-      voice.set(input);
-      run.set(input.new SessionRun(connection));
-    });
-    try
+    try (Editor editor = new Editor(test, "前缀"))
     {
-      set(voice.get(), "activeRun", run.get());
-      run.get().onResponse(DoubaoProtocol.parseResponse(packet("", 20000000, "OK",
-            "{\"results\":[{\"text\":\"你好\",\"is_interim\":true}]}")));
-      run.get().onResponse(DoubaoProtocol.parseResponse(packet("", 20000000, "OK", finalJson("你好。"))));
-      run.get().onResponse(DoubaoProtocol.parseResponse(packet("", 20000000, "OK", finalJson("你好。"))));
-      run.get().onResponse(DoubaoProtocol.parseResponse(packet("", 20000000, "OK", finalJson("你好世界。"))));
-      Method complete = DoubaoVoiceInput.class.getDeclaredMethod("complete", DoubaoVoiceInput.SessionRun.class, Throwable.class);
-      complete.setAccessible(true);
-      complete.invoke(voice.get(), run.get(), null);
-      test.waitForIdleSync();
+      DoubaoVoiceInput.SessionRun run = editor.run;
+      run.onResponse(response("{\"results\":[{\"text\":\"你好\",\"is_interim\":true,\"index\":0}]}"));
+      run.onResponse(response("{\"results\":[{\"text\":\"你好\",\"is_interim\":true,\"is_vad_finished\":true,\"index\":0}]}"));
+      if (run.stopRequested) throw new AssertionError("VAD end stopped tap recording");
+      run.onResponse(response(finalJson("你好。")));
+      run.onResponse(response(finalJson("你好。")));
+      if (run.stopRequested) throw new AssertionError("A final result stopped tap recording");
+      // The real service advances index without sending a VAD_START event.
+      run.onResponse(response(finalJson("第二句。", 1)));
+      run.onResponse(response(finalJson("第二句。", 1)));
+      if (!editor.text().equals("前缀你好。第二句。"))
+        throw new AssertionError("A subsequent utterance overwrote or duplicated text: " + editor.text());
+      // A delayed revision of an earlier utterance must retain the newer one.
+      run.onResponse(response(finalJson("你好世界。", 0)));
+      if (!editor.text().equals("前缀你好世界。第二句。"))
+        throw new AssertionError("An earlier sentence revision lost the newer sentence: " + editor.text());
+      if (!editor.voice.isActive() || run.stopRequested)
+        throw new AssertionError("The second sentence ended recording without a tap");
+      test.runOnMainSync(() -> editor.voice.toggle());
+      if (!run.stopRequested) throw new AssertionError("The second tap did not request stop");
+      editor.complete();
+      if (!editor.text().equals("前缀你好世界。第二句。"))
+        throw new AssertionError("Completing voice input changed the final text: " + editor.text());
+      DoubaoVoiceInput.SessionRun cancelled = editor.voice.new SessionRun(run.connection);
+      set(editor.voice, "activeRun", cancelled);
       test.runOnMainSync(() -> {
-        if (!editor.get().getText().toString().equals("前缀你好世界。"))
-          throw new AssertionError("Voice text was duplicated or did not replace interim text: " + editor.get().getText());
+        editor.voice.cancel();
+        editor.view.append("手动");
       });
-      AtomicReference<DoubaoVoiceInput.SessionRun> cancelled = new AtomicReference<>();
-      test.runOnMainSync(() -> cancelled.set(voice.get().new SessionRun(
-          editor.get().onCreateInputConnection(new EditorInfo()))));
-      set(voice.get(), "activeRun", cancelled.get());
-      test.runOnMainSync(() -> {
-        voice.get().cancel();
-        editor.get().append("手动");
-      });
-      cancelled.get().onResponse(DoubaoProtocol.parseResponse(packet("", 20000000, "OK", finalJson("迟到结果"))));
-      test.waitForIdleSync();
-      test.runOnMainSync(() -> {
-        if (!editor.get().getText().toString().equals("前缀你好世界。手动") || !failures.isEmpty())
-          throw new AssertionError("Cancelled voice changed the editor: " + failures);
-      });
+      cancelled.onResponse(response(finalJson("迟到结果")));
+      if (!editor.text().equals("前缀你好世界。第二句。手动"))
+        throw new AssertionError("Cancelled voice changed the editor: " + editor.text());
     }
-    finally { test.runOnMainSync(() -> voice.get().shutdown()); }
   }
 
   private static String finalJson(String text)
   {
-    return "{\"results\":[{\"text\":\"" + text + "\",\"is_final\":true,\"is_vad_finished\":true}]}";
+    return finalJson(text, 0);
+  }
+
+  private static String finalJson(String text, int index)
+  {
+    return "{\"results\":[{\"text\":\"" + text + "\",\"is_final\":true,\"is_vad_finished\":true,\"index\":" + index + "}]}";
+  }
+
+  public static DoubaoProtocol.Response response(String json) throws DoubaoProtocol.ProtocolException
+  {
+    return DoubaoProtocol.parseResponse(packet("", 20000000, "OK", json));
+  }
+
+  /** The same real editor/voice listener used by deterministic and live checks. */
+  static final class Editor implements AutoCloseable
+  {
+    final Instrumentation test;
+    final List<String> failures = new ArrayList<>();
+    EditText view;
+    DoubaoVoiceInput voice;
+    DoubaoVoiceInput.SessionRun run;
+
+    Editor(Instrumentation test, String prefix) throws Exception
+    {
+      this.test = test;
+      test.runOnMainSync(() -> {
+        view = new EditText(test.getTargetContext());
+        view.setText(prefix);
+        view.setSelection(view.length());
+        InputConnection connection = view.onCreateInputConnection(new EditorInfo());
+        voice = new DoubaoVoiceInput(test.getTargetContext(), new DoubaoVoiceInput.Host() {
+          @Override public InputConnection getCurrentInputConnection() { return connection; }
+          @Override public void onVoiceStateChanged(DoubaoVoiceInput.State state) { }
+          @Override public void onVoiceFailure(String message) { failures.add(message); }
+        });
+        run = voice.new SessionRun(connection);
+      });
+      set(voice, "activeRun", run);
+    }
+
+    String text()
+    {
+      AtomicReference<String> text = new AtomicReference<>();
+      test.runOnMainSync(() -> text.set(view.getText().toString()));
+      if (!failures.isEmpty()) throw new AssertionError("Voice editor failed: " + failures);
+      return text.get();
+    }
+
+    void complete() throws Exception
+    {
+      Method complete = DoubaoVoiceInput.class.getDeclaredMethod("complete", DoubaoVoiceInput.SessionRun.class, Throwable.class);
+      complete.setAccessible(true);
+      complete.invoke(voice, run, null);
+      test.waitForIdleSync();
+    }
+
+    @Override public void close() { test.runOnMainSync(() -> voice.shutdown()); }
   }
 
   private static final class Transport implements AutoCloseable

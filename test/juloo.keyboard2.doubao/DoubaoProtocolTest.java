@@ -86,6 +86,20 @@ public class DoubaoProtocolTest
     assertEquals(DoubaoProtocol.ResponseType.INTERIM_RESULT, response.type);
     assertEquals("你好", response.text);
     assertFalse(response.isFinal);
+    assertEquals(-1, response.utteranceIndex);
+  }
+
+  @Test
+  public void preservesSentenceIndexesWithoutVadStart() throws Exception
+  {
+    DoubaoProtocol.Response first = DoubaoProtocol.parseResponse(response("", 20000000, "OK",
+        "{\"results\":[{\"text\":\"第一句。\",\"is_interim\":false,\"is_vad_finished\":true,\"index\":0}]}"));
+    DoubaoProtocol.Response second = DoubaoProtocol.parseResponse(response("", 20000000, "OK",
+        "{\"results\":[{\"text\":\"第二句\",\"is_interim\":true,\"index\":1}]}"));
+    assertEquals(0, first.utteranceIndex);
+    assertEquals(1, second.utteranceIndex);
+    assertEquals(DoubaoProtocol.ResponseType.FINAL_RESULT, first.type);
+    assertEquals(DoubaoProtocol.ResponseType.INTERIM_RESULT, second.type);
   }
 
   @Test
