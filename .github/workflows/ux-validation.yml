@@ -1,0 +1,32 @@
+name: Keyboard UX validation
+on:
+  push:
+    branches: [enhancement/clipboard-pinyin-ux-20261005]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Export tracked sources without credentials or local data
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ux-source/vendor/cdict build
+          git archive HEAD | tar -x -C /tmp/ux-source
+          git -C vendor/cdict archive HEAD | tar -x -C /tmp/ux-source/vendor/cdict
+          git bundle create build/ux-history.bundle HEAD
+          tar -czf build/ux-source.tar.gz -C /tmp/ux-source .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ux-review-source
+          path: |
+            build/ux-source.tar.gz
+            build/ux-history.bundle
+          retention-days: 3
