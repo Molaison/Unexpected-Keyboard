@@ -1,31 +1,88 @@
-name: Prepare upstream integration
+name: Validate upstream and nine-key integration
 on:
   push:
     branches: [enhancement/upstream-t9-suggestions-20261005]
     paths: [.github/workflows/prepare-integration.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  sources:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DEBUG_KEYSTORE: debug.keystore
+      DEBUG_KEYSTORE_PASSWORD: debug0
+      DEBUG_KEY_ALIAS: debug
+      DEBUG_KEY_PASSWORD: debug0
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
           persist-credentials: false
-      - name: Fetch the reviewed upstream revision
+      - name: Assemble the reviewed source tree
         run: |
-          git remote add upstream https://github.com/Julow/Unexpected-Keyboard.git
-          git fetch upstream master
-          git cat-file -e 41249cd63701e70f291bf5fe65d0d52a6efeaafe^{commit}
-          git bundle create "$RUNNER_TEMP/keyboard-history.bundle" --all
-          tar --exclude='./.git' --exclude='*/.git' -czf "$RUNNER_TEMP/keyboard-sources.tar.gz" .
-      - uses: actions/upload-artifact@v4
+          cp tools/.integration/resolve_merge.py "$RUNNER_TEMP/resolve_merge.py"
+          cp tools/.integration/export_tree.py "$RUNNER_TEMP/export_tree.py"
+          cat tools/.integration/features.part* | gzip -dc > "$RUNNER_TEMP/features.patch"
+          echo "b0982d1f38efc64fc70a91184943837a378bd25e75ffd5010e61d588f2c6c91f  $RUNNER_TEMP/features.patch" | sha256sum -c
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch https://github.com/Julow/Unexpected-Keyboard.git 41249cd63701e70f291bf5fe65d0d52a6efeaafe
+          git merge --no-commit --no-ff 41249cd63701e70f291bf5fe65d0d52a6efeaafe || test "$(git diff --name-only --diff-filter=U | wc -l)" -eq 6
+          python3 "$RUNNER_TEMP/resolve_merge.py"
+          git apply "$RUNNER_TEMP/features.patch"
+          git rm -r tools/.integration .github/workflows/prepare-integration.yml
+          git add -u
+          git add srcs test doc androidTest res check_layout.output tools
+          git diff --cached --check
+          git commit -m 'Merge reviewed upstream and implement Chinese nine-key and ranked suggestions'
+          mkdir -p build/validation
+      - name: Restore existing debug signing key
+        env:
+          KEYSTORE_ASC: ${{ secrets.DEBUG_KEYSTORE }}
+        run: |
+          if [[ -n "$KEYSTORE_ASC" ]]; then
+            printf '%s' "$KEYSTORE_ASC" | gpg -d --passphrase debug0 --batch > debug.keystore
+          fi
+      - uses: actions/setup-java@v4
         with:
-          name: upstream-integration-sources
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.4
+      - name: Test actual JNI decoder and ranking
+        run: bash test/native/run-pinyin-tests.sh | tee build/validation/native-tests.log
+      - name: Build and test Android application
+        run: gradle checkKeyboardLayouts testDebugUnitTest assembleDebug assembleDebugAndroidTest | tee build/validation/gradle.log
+      - name: Check reproducible generated files
+        run: git diff --name-only --exit-code
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Exercise actual IME with touch events
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: bash tools/run-pinyin-instrumentation.sh emulator-5554
+      - name: Export exactly the validated Git tree without changing branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 "$RUNNER_TEMP/export_tree.py"
+      - name: Upload test evidence and installable APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nine-key-validation
           path: |
-            ${{ runner.temp }}/keyboard-history.bundle
-            ${{ runner.temp }}/keyboard-sources.tar.gz
-          retention-days: 3
-          if-no-files-found: error
+            build/validation/
+            build/outputs/apk/debug/*.apk
+            build/outputs/apk/androidTest/debug/*.apk
+            build/reports/tests/
+          retention-days: 7
+          if-no-files-found: warn
