@@ -44,3 +44,26 @@ index e7e6167..1de6da1 100755
  "$pinyin_adb" -s "$pinyin_serial" shell am instrument -w -r \
    "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/instrumentation.log"
  grep -q 'PINYIN_SMOKE_OK' "$pinyin_root/build/validation/instrumentation.log"
+diff --git a/androidTest/juloo.keyboard2/PinyinSmokeTest.java b/androidTest/juloo.keyboard2/PinyinSmokeTest.java
+index 9cfe3cb..a60375f 100644
+--- a/androidTest/juloo.keyboard2/PinyinSmokeTest.java
++++ b/androidTest/juloo.keyboard2/PinyinSmokeTest.java
+@@ -322,8 +322,17 @@ public final class PinyinSmokeTest extends Instrumentation
+     idle();
+     android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
+     java.util.List<android.view.accessibility.AccessibilityNodeInfo> readings = root.findAccessibilityNodeInfosByText("ming");
+-    if (readings.isEmpty() || !readings.get(0).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
++    if (readings.isEmpty())
+       throw new AssertionError("Nine-key reading picker did not offer ming");
++    // PopupMenu exposes the title as a non-clickable TextView; the containing
++    // menu row owns the click. Tap its visible text like a user instead.
++    Rect readingBounds = new Rect();
++    readings.get(0).getBoundsInScreen(readingBounds);
++    if (!readings.get(0).isVisibleToUser() || readingBounds.isEmpty())
++      throw new AssertionError("The ming reading is not visible");
++    down = SystemClock.uptimeMillis();
++    injectTouch(down, MotionEvent.ACTION_DOWN, readingBounds.exactCenterX(), readingBounds.exactCenterY());
++    injectTouch(down, MotionEvent.ACTION_UP, readingBounds.exactCenterX(), readingBounds.exactCenterY());
+     idle();
+     key("space");
+     text(activity.plain, "明");
