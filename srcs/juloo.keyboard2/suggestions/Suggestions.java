@@ -1,6 +1,7 @@
 package juloo.keyboard2.suggestions;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import juloo.cdict.Cdict;
 import juloo.keyboard2.dict.Dictionaries;
@@ -15,6 +16,9 @@ public final class Suggestions
   Callback _callback;
   Config _config;
   boolean _enabled;
+  private String _lastWord;
+  private Cdict _lastDictionary, _lastEmojiDictionary;
+  private static final int SEARCH_COUNT = 12;
 
   /** Current suggestions. The best suggestion is at index [0]. */
   public String[] suggestions = new String[MAX_COUNT];
@@ -33,7 +37,7 @@ public final class Suggestions
 
   public void started()
   {
-    _enabled = _config.editor_config.should_show_candidates_view;
+    _enabled = _config.suggestions_enabled && _config.editor_config.should_show_candidates_view;
     clear();
   }
 
@@ -50,6 +54,9 @@ public final class Suggestions
 
   void clear()
   {
+    _lastWord = null;
+    _lastDictionary = null;
+    _lastEmojiDictionary = null;
     count = 0;
     for (int i = 0; i < MAX_COUNT; i++)
       suggestions[i] = null;
@@ -59,35 +66,34 @@ public final class Suggestions
   int query_suggestions(String word)
   {
     Cdict dict = _config.current_dictionary;
-    boolean first_char_upper = Character.isUpperCase(word.charAt(0));
-    word = apply_substitutions(word);
-    Cdict.Result r = dict.find(word);
-    int i = 0;
+    if (word.equals(_lastWord) && dict == _lastDictionary && _config.emoji_dictionary == _lastEmojiDictionary)
+      return count;
+    clear();
+    String normalized = apply_substitutions(word);
+    Cdict.Result r = dict.find(normalized);
+    List<SuggestionRanker.Hit> pool = new ArrayList<>();
     if (r.found)
-      suggestions[i++] = dict.word(r.index);
-    int[] suffixes = dict.suffixes(r, MAX_COUNT);
-    // Disable distance search for small words
-    int[] dist = (word.length() < 3 || i + 1 >= MAX_COUNT) ? NO_RESULTS :
-      dict.distance(word, 1, MAX_COUNT);
-    for (int j = 0; j < MAX_COUNT && i < MAX_COUNT; j++)
-    {
-      if (suffixes.length > j)
-        suggestions[i++] = dict.word(suffixes[j]);
-      if (dist.length > j && i < MAX_COUNT)
-        suggestions[i++] = dict.word(dist[j]);
-    }
-    if (first_char_upper)
-      capitalize_results();
-    emoji_suggestion = query_emoji(word); // word with substitutions applied
-    count = i;
-    return i;
+      pool.add(new SuggestionRanker.Hit(dict.word(r.index), dict.freq(r.index), SuggestionRanker.EXACT));
+    for (int id : dict.suffixes(r, SEARCH_COUNT))
+      pool.add(new SuggestionRanker.Hit(dict.word(id), dict.freq(id), SuggestionRanker.PREFIX));
+    // Short prefixes are too ambiguous for useful edit-distance correction.
+    if (normalized.codePointCount(0, normalized.length()) >= 3)
+      for (int id : dict.distance(normalized, 1, SEARCH_COUNT))
+        pool.add(new SuggestionRanker.Hit(dict.word(id), dict.freq(id), SuggestionRanker.CORRECTION));
+    List<String> ranked = SuggestionRanker.rank(word, pool, MAX_COUNT);
+    count = ranked.size();
+    for (int i = 0; i < count; i++) suggestions[i] = ranked.get(i);
+    emoji_suggestion = query_emoji(normalized);
+    _lastWord = word;
+    _lastDictionary = dict;
+    _lastEmojiDictionary = _config.emoji_dictionary;
+    return count;
   }
 
-  void capitalize_results()
+  static void capitalize_results(String[] s, int count)
   {
     for (int i = 0; i < count; i++)
-      suggestions[i] = suggestions[i].substring(0, 1).toUpperCase()
-        + suggestions[i].substring(1);
+      s[i] = SuggestionRanker.matchCase("Word", s[i]);
   }
 
   String query_emoji(String word)

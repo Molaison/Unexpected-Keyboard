@@ -12,6 +12,7 @@ import android.view.ViewGroup;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.PopupMenu;
 import java.util.ArrayList;
 import java.util.List;
 import juloo.keyboard2.Config;
@@ -25,9 +26,11 @@ public final class PinyinCandidatesView extends LinearLayout
     void onCandidateSelected(int index);
     void onCommitRaw();
     void onMoreCandidates();
+    default void onSpellingSelected(int index) {}
   }
 
   private Listener listener;
+  private List<String> spellingOptions = new ArrayList<>();
   private final LinearLayout row;
   private final TextView preedit;
   private final HorizontalScrollView candidateScroll;
@@ -58,6 +61,18 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setTextColor(secondaryColor);
     preedit.setBackgroundResource(R.drawable.suggestions_item_background);
     preedit.setOnClickListener(v -> { if (listener != null) listener.onCommitRaw(); });
+    preedit.setOnLongClickListener(v -> {
+      if (spellingOptions.isEmpty()) return false;
+      PopupMenu menu = new PopupMenu(getContext(), preedit);
+      for (int i = 0; i < spellingOptions.size(); i++)
+        menu.getMenu().add(0, i, i, spellingOptions.get(i));
+      menu.setOnMenuItemClickListener(item -> {
+        if (listener != null) listener.onSpellingSelected(item.getItemId());
+        return true;
+      });
+      menu.show();
+      return true;
+    });
     row.addView(preedit, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT));
     candidateScroll = new HorizontalScrollView(context);
     candidateScroll.setHorizontalScrollBarEnabled(false);
@@ -71,6 +86,9 @@ public final class PinyinCandidatesView extends LinearLayout
   }
 
   public void setListener(Listener listener) { this.listener = listener; }
+
+  public void setSpellingOptions(List<String> options)
+  { spellingOptions = new ArrayList<>(options); }
 
   /** Reuse the original English suggestions in this same row. */
   public void attachLatinCandidates(View view)
@@ -92,7 +110,8 @@ public final class PinyinCandidatesView extends LinearLayout
   {
     preedit.setVisibility(chinese && !composition.isEmpty() ? VISIBLE : GONE);
     preedit.setText(composition);
-    preedit.setContentDescription(getContext().getString(R.string.pinyin_commit_raw, composition));
+    preedit.setContentDescription(getContext().getString(R.string.pinyin_commit_raw, composition)
+        + (spellingOptions.isEmpty() ? "" : "; " + getContext().getString(R.string.pinyin_choose_spelling)));
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
     candidateScroll.setVisibility(chinese ? VISIBLE : GONE);
 

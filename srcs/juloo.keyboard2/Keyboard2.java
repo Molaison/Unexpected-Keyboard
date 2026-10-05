@@ -33,6 +33,7 @@ import juloo.cdict.Cdict;
 import juloo.keyboard2.dict.Dictionaries;
 import juloo.keyboard2.dict.DictionariesActivity;
 import juloo.keyboard2.doubao.DoubaoVoiceInput;
+import juloo.keyboard2.dict.DictionarySwitcher;
 import juloo.keyboard2.prefs.LayoutsPreference;
 import juloo.keyboard2.pinyin.PinyinInput;
 import juloo.keyboard2.pinyin.PinyinCandidatesView;
@@ -75,7 +76,7 @@ public class Keyboard2 extends InputMethodService
     if (_currentSpecialLayout != null)
       return _currentSpecialLayout;
     if (_pinyin != null && _pinyin.isChinese())
-      return loadLayout(R.xml.zh_pinyin);
+      return loadLayout(_pinyin.isNineKey() ? R.xml.zh_pinyin_9key : R.xml.zh_pinyin);
     KeyboardData layout = null;
     int layout_i = _config.get_current_layout();
     if (layout_i >= _config.layouts.size())
@@ -84,7 +85,7 @@ public class Keyboard2 extends InputMethodService
       layout = _config.layouts.get(layout_i);
     if (layout == null)
       layout = _localeTextLayout;
-    if (layout == loadLayout(R.xml.zh_pinyin))
+    if (layout == loadLayout(R.xml.zh_pinyin) || layout == loadLayout(R.xml.zh_pinyin_9key))
       layout = loadLayout(R.xml.latn_qwerty_us);
     return layout;
   }
@@ -103,8 +104,14 @@ public class Keyboard2 extends InputMethodService
     _config.set_current_layout(l);
     _currentSpecialLayout = null;
     KeyboardData selected = _config.layouts.get(l);
-    _pinyin.setChinese(selected == loadLayout(R.xml.zh_pinyin));
-    _preferences.edit().putBoolean("chinese_mode", _pinyin.isChinese()).apply();
+    boolean selectedChinese = selected == loadLayout(R.xml.zh_pinyin) || selected == loadLayout(R.xml.zh_pinyin_9key);
+    if (selectedChinese) _pinyin.setNineKey(selected == loadLayout(R.xml.zh_pinyin_9key));
+    _pinyin.setChinese(selectedChinese);
+    _preferences.edit().putBoolean("chinese_mode", _pinyin.isChinese())
+      .putBoolean("chinese_nine_key", _pinyin.isNineKey()).apply();
+    // The active dictionary depends on the current layout.
+    refresh_current_dictionary();
+    refresh_candidates_view();
     _keyboard_layout_view.setKeyboard(current_layout());
     _keyeventhandler.started(_config);
   }
@@ -192,7 +199,21 @@ public class Keyboard2 extends InputMethodService
       public void onCandidateSelected(int index) { _pinyin.selectCandidate(index); }
       public void onCommitRaw() { _pinyin.commitRaw(); }
       public void onMoreCandidates() { _pinyin.showMoreCandidates(); }
+      public void onSpellingSelected(int index) { _pinyin.selectSpelling(index); }
     });
+  }
+
+  private void toggle_pinyin_layout()
+  {
+    if (!_pinyin.isChinese()) return;
+    _voicePushToTalkActive = false;
+    _doubaoVoiceInput.cancel();
+    _pinyin.setNineKey(!_pinyin.isNineKey());
+    _preferences.edit().putBoolean("chinese_nine_key", _pinyin.isNineKey()).apply();
+    _currentSpecialLayout = null;
+    _keyboard_layout_view.setKeyboard(current_layout());
+    _keyeventhandler.started(_config);
+    refresh_candidates_view();
   }
 
   private void toggle_pinyin()
@@ -232,18 +253,22 @@ public class Keyboard2 extends InputMethodService
 
   private void refresh_current_dictionary()
   {
-    _config.current_dictionary = null;
-    _config.emoji_dictionary = null;
-    if (_config.device_locales.default_ == null)
-      return;
-    String current = _config.device_locales.default_.dictionary;
-    if (current == null)
-      return;
-    Cdict[] dicts = _dictionaries.load(current);
-    if (dicts == null)
-      return;
-    _config.current_dictionary = Dictionaries.find_by_name(dicts, "main");
-    _config.emoji_dictionary = Dictionaries.find_by_name(dicts, "emoji");
+    _config.should_show_dictionary_switch =
+      (_config.device_locales.installed.size() > 0);
+    String dict_name = _dictionaries.get_selected(_config);
+    if (dict_name == null)
+      dict_name = (_config.device_locales.default_ != null) ?
+        _config.device_locales.default_.dictionary : null;
+    _dictionaries.set_current_dictionary(_config, dict_name);
+  }
+
+  /** Remember and apply the dictionary chosen by the user for the current
+      context. */
+  private void select_dictionary(String dict_name)
+  {
+    _dictionaries.set_selected(_config, dict_name);
+    refresh_current_dictionary();
+    refresh_candidates_view();
   }
 
   private void refresh_candidates_view()
@@ -254,7 +279,10 @@ public class Keyboard2 extends InputMethodService
       && _config.editor_config.should_show_candidates_view
       && !_config.split_layout;
     if (should_show)
+    {
       _candidates_view.refresh_config(_config);
+      _keyeventhandler.dictionary_changed();
+    }
     _candidates_view.setVisibility(should_show ? View.VISIBLE : View.GONE);
     _pinyin_candidates_view.refreshConfig(_config);
     update_pinyin_view();
@@ -265,6 +293,7 @@ public class Keyboard2 extends InputMethodService
     _candidates_view.setVisibility(!_pinyin.isChinese() && _config.suggestions_enabled
         && _config.editor_config.should_show_candidates_view && !_config.split_layout
         ? View.VISIBLE : View.GONE);
+    _pinyin_candidates_view.setSpellingOptions(_pinyin.getSpellingOptions());
     _pinyin_candidates_view.setState(_pinyin.isChinese(), _pinyin.getDisplayText(),
         _pinyin.getCandidates(), _pinyin.hasMoreCandidates());
     boolean hasContent = _pinyin.isComposing() || !_pinyin.getCandidates().isEmpty()
@@ -317,7 +346,8 @@ public class Keyboard2 extends InputMethodService
     _voicePushToTalkActive = false;
     _doubaoVoiceInput.cancel();
     _config.editor_config.refresh(info, getResources());
-    _pinyin.start(info, _preferences.getBoolean("chinese_mode", true));
+    _pinyin.start(info, _preferences.getBoolean("chinese_mode", true),
+        _preferences.getBoolean("chinese_nine_key", false));
     refresh_config();
     _currentSpecialLayout = refresh_special_layout();
     _keyboard_layout_view.setKeyboard(current_layout());
@@ -330,6 +360,11 @@ public class Keyboard2 extends InputMethodService
       if (has_record_audio_permission())
         _handler.post(() -> start_doubao_voice_input());
     }
+  }
+
+  @Override
+  public void setExtractViewShown(boolean shown){
+      super.setExtractViewShown(false);
   }
 
   @Override
@@ -415,7 +450,6 @@ public class Keyboard2 extends InputMethodService
     refresh_current_dictionary();
     refresh_candidates_view();
     _keyboard_layout_view.setKeyboard(current_layout());
-    _keyeventhandler.ime_subtype_changed();
   }
 
   @Override
@@ -533,8 +567,11 @@ public class Keyboard2 extends InputMethodService
     {
       int selected = _config.get_current_layout();
       if (selected >= _config.layouts.size()) selected = 0;
-      if (_config.layouts.get(selected) == loadLayout(R.xml.zh_pinyin))
+      KeyboardData selectedLayout = _config.layouts.get(selected);
+      if (selectedLayout == loadLayout(R.xml.zh_pinyin) || selectedLayout == loadLayout(R.xml.zh_pinyin_9key))
       {
+        _pinyin.setNineKey(selectedLayout == loadLayout(R.xml.zh_pinyin_9key));
+        _preferences.edit().putBoolean("chinese_nine_key", _pinyin.isNineKey()).apply();
         _pinyin.setChinese(true);
         _preferences.edit().putBoolean("chinese_mode", true).apply();
         _keyeventhandler.started(_config);
@@ -566,10 +603,15 @@ public class Keyboard2 extends InputMethodService
     return true;
   }
 
+  public void launch_dictionaries_activity()
+  {
+    start_activity(DictionariesActivity.class);
+  }
+
   /** Called from [onClick] attributes. */
   public void launch_dictionaries_activity(View v)
   {
-    start_activity(DictionariesActivity.class);
+    launch_dictionaries_activity();
   }
 
   void start_activity(Class cls)
@@ -581,9 +623,8 @@ public class Keyboard2 extends InputMethodService
 
   /** Not static */
   public class Receiver implements KeyEventHandler.IReceiver,
-         DoubaoVoiceInput.Host,
-         PinyinInput.Host,
-         KeyValue.Stateful.Symbol_provider
+         DoubaoVoiceInput.Host, PinyinInput.Host,
+         KeyValue.Stateful.Symbol_provider, DictionarySwitcher.Callback
   {
     public void handle_event_key(KeyValue.Event ev)
     {
@@ -600,6 +641,10 @@ public class Keyboard2 extends InputMethodService
 
         case SWITCH_PINYIN:
           toggle_pinyin();
+          break;
+
+        case SWITCH_PINYIN_LAYOUT:
+          toggle_pinyin_layout();
           break;
 
         case SWITCH_NUMERIC:
@@ -677,8 +722,13 @@ public class Keyboard2 extends InputMethodService
           Log.i("Unexpected/DoubaoASR", "voice_key_event=hold_stop");
           stop_doubao_voice_hold();
           break;
+
         case HIDE_SELF:
           Keyboard2.this.requestHideSelf(0);
+          break;
+
+        case CHANGE_DICTIONARY:
+          new DictionarySwitcher(Keyboard2.this, _dictionaries, this).choose();
           break;
       }
     }
@@ -786,6 +836,16 @@ public class Keyboard2 extends InputMethodService
         case Complete_emoji: return _suggestions.emoji_suggestion;
       }
       return "";
+    }
+
+    public void on_change_dictionary(String dict_name)
+    {
+      select_dictionary(dict_name);
+    }
+
+    public void launch_dictionaries_activity()
+    {
+      Keyboard2.this.launch_dictionaries_activity();
     }
   }
 

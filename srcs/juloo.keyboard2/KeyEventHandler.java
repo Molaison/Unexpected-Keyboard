@@ -184,7 +184,7 @@ public final class KeyEventHandler
     if (!_pinyin.isChinese()) _suggestions.currently_typed_word(word);
   }
 
-  public void ime_subtype_changed()
+  public void dictionary_changed()
   {
     // Refresh the suggestions immediately after dictionary changed.
     if (!_pinyin.isChinese()) _suggestions.currently_typed_word(_typedword.get());

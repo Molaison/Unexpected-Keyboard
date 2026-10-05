@@ -5,7 +5,7 @@ import java.util.Collections;
 import java.util.List;
 
 /** Pinyin editing state, shared by the IME and tests of the real decoder. */
-public final class PinyinComposition
+public final class PinyinComposition implements ChineseComposition
 {
   private final PinyinDecoder decoder;
   private String spelling = "";

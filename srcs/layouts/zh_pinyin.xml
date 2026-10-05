@@ -25,7 +25,7 @@
     <key c="l" ne="|" sw="\\"/>
   </row>
   <row>
-    <key width="1.5" role="action" c="shift" ne="loc capslock"/>
+    <key width="1.5" role="action" c="shift" nw="switch_pinyin_layout" ne="loc capslock"/>
     <key c="z"/>
     <key c="x"/>
     <key c="c" ne="&lt;" sw="。"/>

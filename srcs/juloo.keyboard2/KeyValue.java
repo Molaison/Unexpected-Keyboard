@@ -27,6 +27,9 @@ public final class KeyValue implements Comparable<KeyValue>
     STOP_VOICE_TYPING_HOLD,
     HIDE_SELF,
     SWITCH_PINYIN,
+    CHANGE_DICTIONARY,
+    SWITCH_PINYIN_LAYOUT,
+    PINYIN_2, PINYIN_3, PINYIN_4, PINYIN_5, PINYIN_6, PINYIN_7, PINYIN_8, PINYIN_9,
   }
 
   // Must be evaluated in the reverse order of their values.
@@ -662,8 +665,18 @@ public final class KeyValue implements Comparable<KeyValue>
       case "complete_second": return statefulKey(Stateful.Complete_second);
       case "complete_third": return statefulKey(Stateful.Complete_third);
       case "complete_emoji": return statefulKey(Stateful.Complete_emoji);
+      case "switch_pinyin_layout": return eventKey("9/26", Event.SWITCH_PINYIN_LAYOUT, FLAG_SMALLER_FONT);
+      case "pinyin_2": return eventKey("ABC", Event.PINYIN_2, FLAG_SMALLER_FONT);
+      case "pinyin_3": return eventKey("DEF", Event.PINYIN_3, FLAG_SMALLER_FONT);
+      case "pinyin_4": return eventKey("GHI", Event.PINYIN_4, FLAG_SMALLER_FONT);
+      case "pinyin_5": return eventKey("JKL", Event.PINYIN_5, FLAG_SMALLER_FONT);
+      case "pinyin_6": return eventKey("MNO", Event.PINYIN_6, FLAG_SMALLER_FONT);
+      case "pinyin_7": return eventKey("PQRS", Event.PINYIN_7, FLAG_SMALLER_FONT);
+      case "pinyin_8": return eventKey("TUV", Event.PINYIN_8, FLAG_SMALLER_FONT);
+      case "pinyin_9": return eventKey("WXYZ", Event.PINYIN_9, FLAG_SMALLER_FONT);
       case "switch_pinyin": return statefulKey(Stateful.Toggle_pinyin);
       case "hide_self": return eventKey("⊻", Event.HIDE_SELF, FLAG_SMALLER_FONT);
+      case "change_dictionary": return eventKey(0xE01D, Event.CHANGE_DICTIONARY, 0);
 
       /* Key events */
       case "esc": return keyeventKey("Esc", KeyEvent.KEYCODE_ESCAPE, FLAG_SMALLER_FONT);

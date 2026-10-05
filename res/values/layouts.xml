@@ -94,6 +94,7 @@
     <item>tamil_default</item>
     <item>urdu_phonetic_ur</item>
     <item>zh_pinyin</item>
+    <item>zh_pinyin_9key</item>
     <item>custom</item>
   </string-array>
   <string-array name="pref_layout_entries">
@@ -189,6 +190,7 @@
     <item>தமிழ்</item>
     <item>Urdu Phonetic</item>
     <item>Chinese (Pinyin)</item>
+    <item>Chinese (Pinyin, 9-key)</item>
     <item>@string/pref_layout_e_custom</item>
   </string-array>
   <integer-array name="layout_ids">
@@ -284,6 +286,7 @@
     <item>@xml/tamil_default</item>
     <item>@xml/urdu_phonetic_ur</item>
     <item>@xml/zh_pinyin</item>
+    <item>@xml/zh_pinyin_9key</item>
     <item>-1</item>
   </integer-array>
 </resources>
