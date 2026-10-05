@@ -5,6 +5,7 @@ on:
     paths: [.github/workflows/prepare-integration.yml]
 permissions:
   contents: write
+  actions: read
 defaults:
   run:
     shell: bash
@@ -12,18 +13,13 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      DEBUG_KEYSTORE: debug.keystore
-      DEBUG_KEYSTORE_PASSWORD: debug0
-      DEBUG_KEY_ALIAS: debug
-      DEBUG_KEY_PASSWORD: debug0
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           submodules: recursive
           persist-credentials: false
-      - name: Assemble the reviewed source tree
+      - name: Assemble the identical reviewed and built source tree
         run: |
           cp tools/.integration/resolve_merge.py "$RUNNER_TEMP/resolve_merge.py"
           cp tools/.integration/export_tree.py "$RUNNER_TEMP/export_tree.py"
@@ -42,29 +38,16 @@ jobs:
           git add srcs test doc androidTest res check_layout.output tools
           git diff --cached --check
           git commit -m 'Merge reviewed upstream and implement Chinese nine-key and ranked suggestions'
+          test "$(git rev-parse HEAD^{tree})" = e654a5dd0bc720b02cee7bb4226609882b1d2762
           mkdir -p build/validation
-      - name: Restore existing debug signing key
-        env:
-          KEYSTORE_ASC: ${{ secrets.DEBUG_KEYSTORE }}
-        run: |
-          if [[ -n "$KEYSTORE_ASC" ]]; then
-            printf '%s' "$KEYSTORE_ASC" | gpg -d --passphrase debug0 --batch > debug.keystore
-          fi
-      - uses: actions/setup-java@v4
+      - name: Retrieve APK and passing build results for exactly this source tree
+        uses: actions/download-artifact@v4
         with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.14.4
-          cache-read-only: false
-      - name: Test actual JNI decoder and ranking
-        run: bash test/native/run-pinyin-tests.sh | tee build/validation/native-tests.log
-      - name: Build and test Android application
-        run: gradle checkKeyboardLayouts testDebugUnitTest assembleDebug assembleDebugAndroidTest | tee build/validation/gradle.log
-      - name: Check reproducible generated files
-        run: git diff --name-only --exit-code
-      - name: Export the built Git tree without changing branches
+          name: nine-key-validation
+          path: build
+          run-id: 37315482907
+          github-token: ${{ github.token }}
+      - name: Export source objects for authorized connector publication
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 "$RUNNER_TEMP/export_tree.py"
