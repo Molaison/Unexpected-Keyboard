@@ -11,22 +11,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          submodules: recursive
           persist-credentials: false
-      - name: Export tracked sources without credentials or local data
+      - name: Retrieve pinned Rime Ice sources
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/ux-source/vendor/cdict build
-          git archive HEAD | tar -x -C /tmp/ux-source
-          git -C vendor/cdict archive HEAD | tar -x -C /tmp/ux-source/vendor/cdict
-          git bundle create build/ux-history.bundle HEAD
-          tar -czf build/ux-source.tar.gz -C /tmp/ux-source .
+          mkdir -p build/lexicon-source
+          base=https://raw.githubusercontent.com/iDvel/rime-ice/59fcb4a6bfa71e6ba4fc83af07ee55f0c5b76081
+          for file in base.dict.yaml ext.dict.yaml 8105.dict.yaml; do
+            curl --fail --retry 2 --location "$base/cn_dicts/$file" -o "build/lexicon-source/$file"
+          done
+          sha256sum build/lexicon-source/*.yaml > build/lexicon-source/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ux-review-source
-          path: |
-            build/ux-source.tar.gz
-            build/ux-history.bundle
+          name: ux-lexicon-source
+          path: build/lexicon-source/
           retention-days: 3
