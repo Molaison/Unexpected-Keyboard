@@ -1,0 +1,31 @@
+name: Prepare upstream integration
+on:
+  push:
+    branches: [enhancement/upstream-t9-suggestions-20261005]
+    paths: [.github/workflows/prepare-integration.yml]
+permissions:
+  contents: read
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Fetch the reviewed upstream revision
+        run: |
+          git remote add upstream https://github.com/Julow/Unexpected-Keyboard.git
+          git fetch upstream master
+          git cat-file -e 41249cd63701e70f291bf5fe65d0d52a6efeaafe^{commit}
+          git bundle create "$RUNNER_TEMP/keyboard-history.bundle" --all
+          tar --exclude='./.git' --exclude='*/.git' -czf "$RUNNER_TEMP/keyboard-sources.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upstream-integration-sources
+          path: |
+            ${{ runner.temp }}/keyboard-history.bundle
+            ${{ runner.temp }}/keyboard-sources.tar.gz
+          retention-days: 3
+          if-no-files-found: error
