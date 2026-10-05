@@ -28,3 +28,9 @@ https://github.com/thunlp/THUOCL
 https://gist.github.com/indiejoseph/eae09c673460aa0b56db
 https://ai.tencent.com/ailab/nlp/zh/download.html
 https://github.com/iDvel/rime-ice/issues/24
+
+Nine-key direct lexicon: additional Rime Ice cn_dicts/ext.dict.yaml from the
+same pinned revision, alongside 8105.dict.yaml and base.dict.yaml. GPL-3.0.
+The source headers credit contributors, polyphonic entries from Tencent, and
+https://github.com/rime/rime-essay-simp. See nine_key.json for input checksums,
+entry counts and format exclusions, and tools/build_nine_key_lexicon.py.

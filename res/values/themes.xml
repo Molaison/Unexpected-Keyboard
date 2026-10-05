@@ -13,6 +13,7 @@
     <!-- Adjust the lightness of keys depending on their role. -->
     <attr name="colorKeyAction" format="color"/>
     <attr name="colorKeySpaceBar" format="color"/>
+    <attr name="minimumKeyGap" format="dimension"/>
     <!-- Label colors -->
     <attr name="colorLabel" format="color"/>
     <attr name="colorLabelPressed" format="color"/> <!-- defaults to colorLabel -->
@@ -371,5 +372,31 @@
     <item name="keyBorderWidthActivated">0dp</item>
     <item name="emoji_button_bg">#3B2D50</item>
     <item name="emoji_color">#FFFFFF</item>
+  </style>
+  <style name="SoftLight" parent="Light">
+    <item name="colorKeyboard">#F2F4F8</item>
+    <item name="colorKey">#FFFFFF</item>
+    <item name="colorKeyAction">#E1E7F0</item>
+    <item name="colorKeySpaceBar">#E5ECF8</item>
+    <item name="colorKeyActivated">#C6D7F2</item>
+    <item name="colorLabel">#1D2939</item>
+    <item name="colorSubLabel">#66758A</item>
+    <item name="colorLabelActivated">#3565B4</item>
+    <item name="keyBorderRadius">10dp</item>
+    <item name="keyBorderWidth">0dp</item>
+    <item name="minimumKeyGap">3dp</item>
+  </style>
+  <style name="SoftDark" parent="Dark">
+    <item name="colorKeyboard">#141B26</item>
+    <item name="colorKey">#263143</item>
+    <item name="colorKeyAction">#1D2736</item>
+    <item name="colorKeySpaceBar">#30425F</item>
+    <item name="colorKeyActivated">#40577B</item>
+    <item name="colorLabel">#E7EDF7</item>
+    <item name="colorSubLabel">#A5B3C8</item>
+    <item name="colorLabelActivated">#ABC6FF</item>
+    <item name="keyBorderRadius">10dp</item>
+    <item name="keyBorderWidth">0dp</item>
+    <item name="minimumKeyGap">3dp</item>
   </style>
 </resources>

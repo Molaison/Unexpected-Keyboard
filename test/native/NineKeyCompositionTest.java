@@ -62,7 +62,8 @@ public final class NineKeyCompositionTest
       }
       type(c, "nihaozhongguo");
       check(c.select(find(c, "你好")).isEmpty(), "Partial selection must not commit prematurely");
-      check(c.getComposingText().equals("你好94664486"), "Retain exact unselected raw keys");
+      check(c.getSpelling().equals("6442694664486"), "Retain exact raw keys separately from visible preedit");
+      check(c.getComposingText().equals("你好zhongguo"), "Show matched pinyin after a fixed phrase");
       check(c.select(find(c, "中国")).equals("你好中国"), "Commit fixed prefix plus suffix");
 
       type(c, "nihaozhongguo");
@@ -70,9 +71,11 @@ public final class NineKeyCompositionTest
       for (int i = 0; i < 8; i++) c.backspace();
       check(c.getComposingText().equals("你好"), "Deletion reaches fixed choice");
       c.backspace();
-      check(c.getComposingText().equals("64426"), "Backspace undoes a fixed choice, not a Hanzi fragment");
+      check(c.getSpelling().equals("64426") && c.getComposingText().equals("nihao"), "Backspace undoes a fixed choice, not a Hanzi fragment");
       c.backspace();
-      check(c.acceptRaw().equals("6442"), "Raw commit after deletion");
+      String matched = c.getComposingText();
+      check(c.getSpelling().equals("6442") && matched.matches("[a-z]+"), "Deletion retains raw keys but displays pinyin");
+      check(c.acceptRaw().equals(matched), "Enter commits displayed pinyin after deletion");
 
       type(c, "xi'an");
       check(c.select(find(c, "西安")).equals("西安"), "Explicit syllable separator");
@@ -117,7 +120,7 @@ public final class NineKeyCompositionTest
         if (c.getCandidateCount() > 0)
         {
           String committed = c.select(random.nextInt(c.getCandidateCount()));
-          if (committed.isEmpty()) check(!c.getComposingText().equals(raw), "Partial choice advances");
+          if (committed.isEmpty()) check(c.getComposingText().codePointAt(0) >= 0x3400 && c.getSpelling().equals(raw), "Partial choice fixes Hanzi without discarding raw keys");
         }
         c.acceptRaw();
         check(!d.isLearningEnabled(), "Speculation and selection respect private mode");

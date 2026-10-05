@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="ux_keyboard">‹ 键盘</string>
+  <string name="ux_clipboard">剪贴板</string>
+  <string name="ux_clear">清空</string>
+  <string name="ux_record_history">记录最近复制 · 仅本机</string>
+  <string name="ux_recent_count">最近 · %1$d</string>
+  <string name="ux_pinned_count">固定 · %1$d</string>
+  <string name="ux_pin">固定</string>
+  <string name="ux_unpin">取消固定</string>
+  <string name="ux_clip_actions">剪贴板操作</string>
+  <string name="ux_paste_clip">粘贴：%1$s</string>
+  <string name="ux_paste">粘贴</string>
+  <string name="ux_pasted">已粘贴，可继续点选其他内容</string>
+  <string name="ux_preview">查看全文</string>
+  <string name="ux_delete">删除</string>
+  <string name="ux_deleted">已删除</string>
+  <string name="ux_undo">撤销</string>
+  <string name="ux_pins_empty">还没有固定内容\n点击卡片旁的 ☆，保留常用片段</string>
+  <string name="ux_history_empty">在应用中复制文字，即可在这里粘贴\n不记录来源应用标记为敏感的内容</string>
+  <string name="ux_clipboard_privacy">最近记录仅在内存中暂存；固定内容保存在本机</string>
+  <string name="ux_unlock_to_pin">解锁设备后才能保存固定内容</string>
+  <string name="ux_clear_history_title">清空最近记录？</string>
+  <string name="ux_clear_history_message">删除最近记录及系统剪贴板当前内容。已固定的片段会保留。</string>
+  <string name="ux_more_candidates">展开候选词</string>
+  <string name="ux_readings">拼音 ▾</string>
+  <string name="ux_layout_switch">切换九键／26键</string>
+  <string name="ux_theme_soft_light">柔和浅色</string>
+  <string name="ux_theme_soft_dark">柔和深色</string>
+  <string name="ux_history_duration_hour">1 小时</string>
+</resources>

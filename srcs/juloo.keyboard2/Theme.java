@@ -33,6 +33,7 @@ public class Theme
 
   // Key borders
   public final float keyBorderRadius;
+  public final float minimumKeyGap;
   public final float keyBorderWidth;
   public final float keyBorderWidthActivated;
   public final float keyBorderWidthAction;
@@ -68,6 +69,7 @@ public class Theme
         s.getFloat(R.styleable.keyboard_secondaryDimming, 0.25f));
     greyedLabelColor = adjustLight(labelColor,
         s.getFloat(R.styleable.keyboard_greyedDimming, 0.5f));
+    minimumKeyGap = s.getDimension(R.styleable.keyboard_minimumKeyGap, 0);
     keyBorderRadius = s.getDimension(R.styleable.keyboard_keyBorderRadius, 0);
     keyBorderWidth = s.getDimension(R.styleable.keyboard_keyBorderWidth, 0);
     keyBorderWidthActivated = s.getDimension(R.styleable.keyboard_keyBorderWidthActivated, 0);
@@ -130,8 +132,8 @@ public class Theme
       // height of the candidates view into account.
       row_height = Math.min(config.keyboard_rows_height_pixels,
           (config.screenHeightPixels - config.keyboard_rows_height_pixels) / layout.keysHeight);
-      vertical_margin = config.key_vertical_margin * row_height;
-      horizontal_margin = config.key_horizontal_margin * keyWidth;
+      vertical_margin = Math.max(theme.minimumKeyGap, config.key_vertical_margin * row_height);
+      horizontal_margin = Math.max(theme.minimumKeyGap, config.key_horizontal_margin * keyWidth);
       // Add half of the key margin on the left and on the top as it's also
       // added on the right and on the bottom of every keys.
       margin_top = config.marginTop + vertical_margin / 2;

@@ -29,6 +29,8 @@
     <item>@string/pref_numpad_layout_e_low_first</item>
   </string-array>
   <string-array name="pref_theme_entries">
+    <item>@string/ux_theme_soft_light</item>
+    <item>@string/ux_theme_soft_dark</item>
     <item>@string/pref_theme_e_system</item>
     <item>@string/pref_theme_e_dark</item>
     <item>@string/pref_theme_e_light</item>
@@ -50,6 +52,8 @@
     <item>@string/pref_theme_e_gradientpurplepink</item>
   </string-array>
   <string-array name="pref_theme_values">
+    <item>soft_light</item>
+    <item>soft_dark</item>
     <item>system</item>
     <item>dark</item>
     <item>light</item>
@@ -120,12 +124,14 @@
     <item>@string/pref_clipboard_history_duration_1</item>
     <item>@string/pref_clipboard_history_duration_5</item>
     <item>@string/pref_clipboard_history_duration_30</item>
+    <item>@string/ux_history_duration_hour</item>
     <item>@string/pref_clipboard_history_duration_stop</item>
   </string-array>
   <string-array name="pref_clipboard_duration_values">
     <item>1</item>
     <item>5</item>
     <item>30</item>
+    <item>60</item>
     <item>-1</item>
   </string-array>
   <string-array name="pref_change_method_key_replacement_entries">

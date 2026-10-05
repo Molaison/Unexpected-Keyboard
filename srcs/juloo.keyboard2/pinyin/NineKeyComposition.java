@@ -10,7 +10,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Bounded phonetic beam over the packaged dictionary, not a separate T9 word list.
+/** Bounded phonetic beam plus an exact, memory-mapped nine-key word index.
  * Raw keys are retained independently of the decoder's mutable search workspace.
  * All speculative searches disable learning; only an explicit choice can learn. */
 public final class NineKeyComposition implements ChineseComposition
@@ -23,6 +23,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int IMPOSSIBLE = 1000000;
   private static final String INITIALS = " b c ch d f g h j k l m n p q r s sh t w x y z zh ";
   private final PinyinDecoder decoder;
+  private final NineKeyLexicon lexicon;
   private final Set<String> syllables = new HashSet<>();
   private final Set<String> prefixes = new HashSet<>();
   private final List<Fixed> fixed = new ArrayList<>();
@@ -59,16 +60,21 @@ public final class NineKeyComposition implements ChineseComposition
     final int index;
     final int consumed;
     final float score;
+    String display;
     Candidate(String text, String spelling, int index, int consumed, float score)
     {
       this.text = text; this.spelling = spelling; this.index = index;
       this.consumed = consumed; this.score = score;
+      this.display = spelling;
     }
   }
 
-  public NineKeyComposition(PinyinDecoder decoder)
+  public NineKeyComposition(PinyinDecoder decoder) { this(decoder, null); }
+
+  public NineKeyComposition(PinyinDecoder decoder, NineKeyLexicon lexicon)
   {
     this.decoder = decoder;
+    this.lexicon = lexicon;
     for (String value : decoder.getSpellings())
     {
       String s = value.toLowerCase(Locale.ROOT);
@@ -94,17 +100,53 @@ public final class NineKeyComposition implements ChineseComposition
   public boolean isEmpty() { return raw.isEmpty(); }
   public boolean isFull() { return raw.length() >= PinyinDecoder.MAX_PINYIN_LENGTH; }
   public String getSpelling() { return raw; }
-  public String getComposingText() { return fixedText + raw.substring(fixedEnd); }
-  public String getDisplayText() { return getComposingText(); }
+  public String getComposingText() { return fixedText + resolvedSpelling(); }
+  public String getDisplayText()
+  {
+    prepare();
+    if (candidates.isEmpty()) return getComposingText();
+    return fixedText + candidates.get(0).display;
+  }
+
+  private String resolvedSpelling()
+  {
+    prepare();
+    if (!candidates.isEmpty()) return candidates.get(0).spelling;
+    if (!paths.isEmpty()) return paths.get(0).spelling;
+    return raw.substring(fixedEnd); // Unparseable input remains recoverable.
+  }
+
+  private static String formatSpelling(String spelling, int[] starts)
+  {
+    StringBuilder out = new StringBuilder();
+    int begin = 0;
+    for (int i = 1; i < starts.length; i++)
+    {
+      int end = Math.min(spelling.length(), starts[i]);
+      if (end <= begin) continue;
+      String part = spelling.substring(begin, end).replace("'", "");
+      if (out.length() > 0) out.append(' ');
+      out.append(part);
+      begin = end;
+    }
+    if (begin < spelling.length())
+    {
+      if (out.length() > 0) out.append(' ');
+      out.append(spelling.substring(begin).replace("'", ""));
+    }
+    return out.toString();
+  }
   public int getCandidateCount() { prepare(); return candidates.size(); }
   public String getCandidate(int index) { prepare(); return candidates.get(index).text; }
 
-  /** Long-pressing the preedit exposes these actual, dictionary-backed readings. */
+  /** The visible Pinyin control exposes these dictionary-backed readings. */
   public List<String> getSpellings()
   {
     prepare();
     List<String> result = new ArrayList<>();
-    for (Path path : paths) if (result.size() < CANDIDATE_PATHS) result.add(path.spelling);
+    if (!candidates.isEmpty()) result.add(candidates.get(0).spelling);
+    for (Path path : paths)
+      if (result.size() < CANDIDATE_PATHS && !result.contains(path.spelling)) result.add(path.spelling);
     return result;
   }
 
@@ -152,6 +194,14 @@ public final class NineKeyComposition implements ChineseComposition
   {
     prepare();
     Candidate c = candidates.get(index);
+    if (c.index < 0)
+    {
+      // Direct index entries cover the complete remaining spelling. Never replay
+      // their index into the native decoder, whose candidates are a different set.
+      String result = fixedText + c.text;
+      reset();
+      return result;
+    }
     boolean learning = decoder.isLearningEnabled();
     decoder.setLearningEnabled(false);
     try
@@ -280,7 +330,18 @@ public final class NineKeyComposition implements ChineseComposition
     try
     {
       String remaining = raw.substring(fixedEnd);
-      paths = searchPaths(remaining);
+      paths = new ArrayList<>(searchPaths(remaining));
+      List<NineKeyLexicon.Entry> direct = lexicon == null ? Collections.emptyList()
+          : lexicon.lookup(remaining, constraint, 128);
+      // Exact lexical hits rescue pronunciations discarded by the incremental
+      // beam. Query a bounded number natively as well, preserving native learning.
+      List<Path> rescued = new ArrayList<>();
+      Set<String> seenReadings = new HashSet<>();
+      for (NineKeyLexicon.Entry e : direct)
+        if (rescued.size() < 12 && seenReadings.add(e.spelling))
+          rescued.add(new Path(e.spelling, e.score));
+      for (Path path : paths) if (seenReadings.add(path.spelling)) rescued.add(path);
+      paths = rescued;
       Map<String, Candidate> unique = new LinkedHashMap<>();
       int pathCount = 0;
       for (Path path : paths)
@@ -301,9 +362,17 @@ public final class NineKeyComposition implements ChineseComposition
           // Fully decoded words/sentences lead; partial choices remain available.
           if (consumed < remaining.length()) score += 12000 + (remaining.length() - consumed) * 100;
           Candidate c = new Candidate(text, path.spelling, i, consumed, score);
+          c.display = formatSpelling(path.spelling, starts);
           Candidate old = unique.get(text);
           if (old == null || c.score < old.score) unique.put(text, c);
         }
+      }
+      for (NineKeyLexicon.Entry e : direct)
+      {
+        if (unique.containsKey(e.text)) continue; // Prefer native choice/learning when present.
+        Candidate c = new Candidate(e.text, e.spelling, -1, remaining.length(), e.score);
+        c.display = e.display;
+        unique.put(e.text, c);
       }
       candidates.addAll(unique.values());
       Collections.sort(candidates, (a, b) -> {
