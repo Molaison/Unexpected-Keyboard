@@ -63,7 +63,10 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: bash tools/run-pinyin-instrumentation.sh emulator-5554
+          script: |
+            ready=false; for attempt in $(seq 1 45); do adb -s emulator-5554 shell cmd overlay list --user 0 > build/validation/boot-overlays.txt; if grep -q '^\[x\] com.android.systemui:neutral' build/validation/boot-overlays.txt && grep -q '^\[x\] com.android.systemui:accent' build/validation/boot-overlays.txt; then ready=true; break; fi; sleep 2; done; test "$ready" = true
+            sleep 5
+            bash tools/run-pinyin-instrumentation.sh emulator-5554
       - name: Upload test evidence and installable APK
         if: always()
         uses: actions/upload-artifact@v4
