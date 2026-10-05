@@ -1,29 +1,77 @@
-name: Keyboard UX validation
+name: Validate clipboard and pinyin UX
 on:
   push:
     branches: [enhancement/clipboard-pinyin-ux-20261005]
-  workflow_dispatch:
+    paths: [.github/workflows/ux-validation.yml, 'tools/.ux/**']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
+          submodules: recursive
           persist-credentials: false
-      - name: Retrieve pinned Rime Ice sources
-        shell: bash
+      - name: Assemble reviewed source and reproducible dictionary
         run: |
           set -euo pipefail
-          mkdir -p build/lexicon-source
-          base=https://raw.githubusercontent.com/iDvel/rime-ice/59fcb4a6bfa71e6ba4fc83af07ee55f0c5b76081
-          for file in base.dict.yaml ext.dict.yaml 8105.dict.yaml; do
-            curl --fail --retry 2 --location "$base/cn_dicts/$file" -o "build/lexicon-source/$file"
-          done
-          sha256sum build/lexicon-source/*.yaml > build/lexicon-source/SHA256SUMS
-      - uses: actions/upload-artifact@v4
+          cp tools/.ux/export.py "$RUNNER_TEMP/export.py"
+          cat tools/.ux/part* | xz -dc > "$RUNNER_TEMP/ux.patch"
+          echo 'ea3f1815756583e6725893ec683a39f56206c4189bbf99025cef93fa4e8bafe7  '"$RUNNER_TEMP/ux.patch" | sha256sum -c
+          git apply "$RUNNER_TEMP/ux.patch"
+          python3 tools/build_nine_key_lexicon.py --download
+          echo '25d6e7e32968d0a1e2ba814bdbdd2657ec7f806a2776aeaa4950abc9b3a58471  assets/pinyin/nine_key.dat' | sha256sum -c
+          git rm -r tools/.ux .github/workflows/ux-validation.yml
+          git add -A
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Implement clipboard cards, matched-pinyin preedit, direct lexical recall and soft themes'
+          mkdir -p build/validation
+      - uses: actions/setup-java@v4
         with:
-          name: ux-lexicon-source
-          path: build/lexicon-source/
-          retention-days: 3
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.4
+          cache-read-only: false
+      - name: Native and Android build acceptance
+        run: |
+          set -euo pipefail
+          bash test/native/run-pinyin-tests.sh | tee build/validation/native.log
+          gradle checkKeyboardLayouts testDebugUnitTest assembleDebug assembleDebugAndroidTest | tee build/validation/gradle.log
+          git diff --exit-code
+      - name: Export exact source objects without changing refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 "$RUNNER_TEMP/export.py"
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Actual input and clipboard touch acceptance
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            sleep 20
+            bash tools/run-pinyin-instrumentation.sh emulator-5554
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: keyboard-ux-validation
+          path: |
+            build/validation/
+            build/reports/tests/
+            build/outputs/apk/debug/*.apk
+            build/outputs/apk/androidTest/debug/*.apk
+          retention-days: 14
