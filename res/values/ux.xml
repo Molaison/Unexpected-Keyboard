@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="ux_keyboard">‹ Keyboard</string>
+  <string name="ux_clipboard">Clipboard</string>
+  <string name="ux_clear">Clear</string>
+  <string name="ux_record_history">Remember recent clips · on this device</string>
+  <string name="ux_recent_count">Recent · %1$d</string>
+  <string name="ux_pinned_count">Pinned · %1$d</string>
+  <string name="ux_pin">Pin</string>
+  <string name="ux_unpin">Unpin</string>
+  <string name="ux_clip_actions">Clip actions</string>
+  <string name="ux_paste_clip">Paste: %1$s</string>
+  <string name="ux_paste">Paste</string>
+  <string name="ux_pasted">Pasted. Tap another clip to continue.</string>
+  <string name="ux_preview">Full text</string>
+  <string name="ux_delete">Delete</string>
+  <string name="ux_deleted">Deleted</string>
+  <string name="ux_undo">Undo</string>
+  <string name="ux_pins_empty">No pinned clips. Tap ☆ on a clip to keep it.</string>
+  <string name="ux_history_empty">Copy text in an app, then paste it here\nClips marked sensitive by the source app are excluded</string>
+  <string name="ux_clipboard_privacy">Recent clips expire in memory; pinned clips stay on this device.</string>
+  <string name="ux_unlock_to_pin">Unlock your device before pinning clips.</string>
+  <string name="ux_clear_history_title">Clear recent clips?</string>
+  <string name="ux_clear_history_message">Clears recent history and the current system clipboard. Your pinned clips will be kept.</string>
+  <string name="ux_more_candidates">Expand candidates</string>
+  <string name="ux_readings">Pinyin ▾</string>
+  <string name="ux_layout_switch">Switch 9-key / 26-key</string>
+  <string name="ux_theme_soft_light">Soft light</string>
+  <string name="ux_theme_soft_dark">Soft dark</string>
+  <string name="ux_history_duration_hour">1 hour</string>
+</resources>

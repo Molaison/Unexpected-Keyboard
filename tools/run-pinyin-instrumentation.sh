@@ -15,6 +15,14 @@ pinyin_ime="$pinyin_package/juloo.keyboard2.Keyboard2"
 pinyin_previous_ime="$("$pinyin_adb" -s "$pinyin_serial" shell settings get secure default_input_method | tr -d '\r')"
 restore_ime() {
   pinyin_status=$?
+  for screenshot in pinyin-keyboard pinyin-nine-key clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
+    if "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" \
+        > "$pinyin_root/build/validation/$screenshot.png.tmp" 2>/dev/null; then
+      mv "$pinyin_root/build/validation/$screenshot.png.tmp" "$pinyin_root/build/validation/$screenshot.png"
+    else
+      rm -f "$pinyin_root/build/validation/$screenshot.png.tmp"
+    fi
+  done
   "$pinyin_adb" -s "$pinyin_serial" logcat -d -v threadtime > "$pinyin_root/build/validation/logcat.txt" || true
   "$pinyin_adb" -s "$pinyin_serial" shell dumpsys input_method > "$pinyin_root/build/validation/input-method.txt" || true
   "$pinyin_adb" -s "$pinyin_serial" shell dumpsys window > "$pinyin_root/build/validation/window.txt" || true
@@ -32,8 +40,3 @@ trap restore_ime EXIT
   "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/instrumentation.log"
 grep -q 'PINYIN_SMOKE_OK' "$pinyin_root/build/validation/instrumentation.log"
 grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/instrumentation.log"
-"$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat cache/pinyin-keyboard.png \
-  > "$pinyin_root/build/validation/pinyin-keyboard.png"
-
-"$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat cache/pinyin-nine-key.png \
-  > "$pinyin_root/build/validation/pinyin-nine-key.png"

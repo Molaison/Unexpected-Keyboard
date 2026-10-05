@@ -103,11 +103,12 @@ public final class PinyinSmokeTest extends Instrumentation
         finish(Activity.RESULT_OK, result);
         return;
       }
-      if (onMain(() -> candidatesView().isShown())) throw new AssertionError("Empty Chinese candidate row occupies space");
+      if (!onMain(() -> candidatesView().isShown() && findText(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
+        throw new AssertionError("Clipboard toolbar is not discoverable while idle");
       type("nihao");
       if (onMain(() -> candidatesView().getHeight()) > Math.round(
-            48 * getTargetContext().getResources().getDisplayMetrics().density))
-        throw new AssertionError("Chinese preedit and candidates exceed one compact row");
+            96 * getTargetContext().getResources().getDisplayMetrics().density))
+        throw new AssertionError("Chinese preedit and candidates exceed two separate rows");
       text(activity.plain, "nihao");
       tapCandidate("你好");
       text(activity.plain, "你好");
@@ -216,7 +217,16 @@ public final class PinyinSmokeTest extends Instrumentation
       clear();
       type("shi");
       int beforeMore = onMain(() -> ((ViewGroup)field(candidatesView(), "items")).getChildCount());
-      tapCandidate(getTargetContext().getString(R.string.pinyin_more_candidates));
+      tap(onMain(() -> (View)field(candidatesView(), "more")));
+      await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
+      View loadMore = onMain(() -> findText((View)field(candidatesView(), "expandedItems"), getTargetContext().getString(R.string.pinyin_more_candidates)));
+      for (int attempt=0; !onMain(() -> loadMore.getGlobalVisibleRect(new Rect())); attempt++)
+      {
+        if (attempt >= 30) throw new AssertionError("More candidates button is unreachable");
+        Rect r = onMain(() -> { Rect b=new Rect(); ((View)field(candidatesView(), "expandedScroll")).getGlobalVisibleRect(b); return b; });
+        swipe(r.exactCenterX(), r.bottom-10, r.exactCenterX(), r.top+10);
+      }
+      tap(loadMore);
       await("additional candidate cells", () ->
           ((ViewGroup)field(candidatesView(), "items")).getChildCount() > beforeMore);
       key("enter");
@@ -251,11 +261,13 @@ public final class PinyinSmokeTest extends Instrumentation
       text(activity.plain, "你好中国");
       passed("candidate UI screenshot and final commit");
       nineKeyChecks();
+      clipboardChecks();
       result.putString("stream", "\nPINYIN_SMOKE_OK checks=" + checks + "\n");
       finish(Activity.RESULT_OK, result);
     }
     catch (Throwable error)
     {
+      try { screenshot("failure-ux.png"); } catch (Throwable screenshotError) { error.addSuppressed(screenshotError); }
       String trace = Log.getStackTraceString(error);
       Log.e("PinyinSmokeTest", "IME smoke test failed", error);
       result.putString("stream", "\nPINYIN_SMOKE_FAILED\n" + trace);
@@ -287,39 +299,45 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     nineKey(true);
     nineKeys("64426");
-    text(activity.plain, "64426");
+    text(activity.plain, "nihao");
     tapCandidate("你好");
     text(activity.plain, "你好");
-    passed("real nine-key taps, raw preedit, Chinese candidate commit");
+    passed("real nine-key taps, readable pinyin preedit, Chinese candidate commit");
+
+    onMain(() -> {
+      Object index = field(((KeyEventHandler)Config.globalConfig().handler)._pinyin, "lexicon");
+      if (!(index instanceof juloo.keyboard2.pinyin.NineKeyLexicon)
+          || ((juloo.keyboard2.pinyin.NineKeyLexicon)index).size() != 882585)
+        throw new AssertionError("The APK must actually map the full nine-key lexicon; fallback is not acceptance");
+      return null;
+    });
+    clear();
+    nineKeys("74363898394");
+    text(activity.plain, "shenduxuexi");
+    tapCandidate("深度学习");
+    text(activity.plain, "深度学习");
+    passed("packaged lexicon mapping and extended vocabulary through actual taps");
 
     clear();
     nineKeys("6442694664486");
     tapCandidate("你好");
-    text(activity.plain, "你好94664486");
+    text(activity.plain, "你好zhongguo");
     key("space");
     text(activity.plain, "你好中国");
-    passed("nine-key partial choice preserves remaining digits");
+    passed("nine-key partial choice preserves remaining matched pinyin");
 
     clear();
     nineKeys("64426");
     key("backspace");
     key("enter");
-    text(activity.plain, "6442");
+    text(activity.plain, "niha");
     passed("nine-key backspace and raw Enter");
 
     clear();
     nineKeys("6464");
-    View preedit = onMain(() -> (View)field(candidatesView(), "preedit"));
-    float[] point = onMain(() -> {
-      Rect r = new Rect();
-      if (!preedit.getGlobalVisibleRect(r)) throw new AssertionError("No nine-key preedit");
-      return new float[] {r.exactCenterX(), r.exactCenterY()};
-    });
-    long down = SystemClock.uptimeMillis();
-    injectTouch(down, MotionEvent.ACTION_DOWN, point[0], point[1]);
-    SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 150);
-    injectTouch(down, MotionEvent.ACTION_UP, point[0], point[1]);
+    tap(onMain(() -> (View)field(candidatesView(), "readings")));
     idle();
+    long down;
     android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
     java.util.List<android.view.accessibility.AccessibilityNodeInfo> readings = root.findAccessibilityNodeInfosByText("ming");
     if (readings.isEmpty())
@@ -336,7 +354,7 @@ public final class PinyinSmokeTest extends Instrumentation
     idle();
     key("space");
     text(activity.plain, "明");
-    passed("long-press preedit chooses an ambiguous reading");
+    passed("visible Pinyin button chooses an ambiguous reading");
 
     onMain(() -> { activity.password.setText(""); return null; });
     focus(activity.password);
@@ -357,7 +375,7 @@ public final class PinyinSmokeTest extends Instrumentation
 
     clear();
     nineKeys("9674494664486736");
-    text(activity.plain, "9674494664486736");
+    text(activity.plain, "woshizhongguoren");
     File screenshot = new File(getTargetContext().getCacheDir(), "pinyin-nine-key.png");
     Bitmap bitmap = getUiAutomation().takeScreenshot();
     try (FileOutputStream output = new FileOutputStream(screenshot))
@@ -376,6 +394,132 @@ public final class PinyinSmokeTest extends Instrumentation
       throw new AssertionError("Stale predictions survived cursor movement");
     nineKey(false);
     passed("nine-key sentence, context prediction, cursor invalidation and layout restoration");
+  }
+
+  private ClipboardPaneView clipboard() throws Exception
+  {
+    Object receiver=((KeyEventHandler)Config.globalConfig().handler)._recv;
+    return (ClipboardPaneView)field(field(receiver,"this$0"),"_clipboard_pane");
+  }
+
+  private void menuText(String text) throws Exception
+  {
+    idle();
+    android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+    java.util.List<android.view.accessibility.AccessibilityNodeInfo> found=root.findAccessibilityNodeInfosByText(text);
+    for (android.view.accessibility.AccessibilityNodeInfo node:found)
+    {
+      Rect r=new Rect(); node.getBoundsInScreen(r);
+      if(node.isVisibleToUser() && !r.isEmpty() && node.getText()!=null && text.equalsIgnoreCase(node.getText().toString())) { touch(r.exactCenterX(),r.exactCenterY()); return; }
+    }
+    throw new AssertionError("Menu item not visible: "+text);
+  }
+
+  private void screenshot(String name) throws Exception
+  {
+    idle();
+    Bitmap bitmap=getUiAutomation().takeScreenshot();
+    try(FileOutputStream output=new FileOutputStream(new File(getTargetContext().getCacheDir(),name)))
+    { if(bitmap==null || !bitmap.compress(Bitmap.CompressFormat.PNG,100,output)) throw new AssertionError("Screenshot failed"); }
+  }
+
+  private void clipboardChecks() throws Exception
+  {
+    clear();
+    if (!java.util.Arrays.asList(getTargetContext().getResources().getStringArray(R.array.pref_clipboard_duration_values)).contains("60"))
+      throw new AssertionError("Default clipboard retention must be selectable in settings");
+    ClipboardHistoryService service=onMain(() -> ClipboardHistoryService.get_service(getTargetContext()));
+    android.content.ClipboardManager cm=(android.content.ClipboardManager)getTargetContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+    onMain(() -> { ClipboardHistoryService.set_history_enabled(true); service.clear_history_and_current();
+      for(int i=0;i<35;i++) service.add_clip("Sample clip "+i);
+      if(service.clear_expired_and_get_history().size()!=30) throw new AssertionError("History must be bounded at 30");
+      service.add_clip("Sample clip 20");
+      if(service.clear_expired_and_get_history().size()!=30 || !service.clear_expired_and_get_history().get(0).equals("Sample clip 20"))
+        throw new AssertionError("Repeated clip must be promoted, not duplicated");
+      service.clear_history();
+      android.content.ClipData sensitive=android.content.ClipData.newPlainText("test","SENSITIVE_TEST_VALUE");
+      android.os.PersistableBundle extras=new android.os.PersistableBundle();
+      extras.putBoolean("android.content.extra.IS_SENSITIVE",true); sensitive.getDescription().setExtras(extras);
+      cm.setPrimaryClip(sensitive); return null; });
+    idle();
+    if(onMain(() -> service.current_text()!=null || !service.clear_expired_and_get_history().isEmpty()))
+      throw new AssertionError("Sensitive system clip was retained");
+    passed("bounded, deduplicated clipboard history and sensitive-content exclusion");
+
+    onMain(() -> { ClipboardHistoryService.set_history_enabled(false);
+      cm.setPrimaryClip(android.content.ClipData.newPlainText("test","A plain current clip")); return null; });
+    idle();
+    tap(onMain(() -> findText(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
+    await("clipboard panel", () -> clipboard()!=null && clipboard().isShown());
+    tap(onMain(() -> findText(clipboard(),"A plain current clip")));
+    text(activity.plain,"A plain current clip");
+    if(!onMain(() -> clipboard().isShown())) throw new AssertionError("Pasting unexpectedly closed the clipboard panel");
+    if(!onMain(() -> service.clear_expired_and_get_history().isEmpty())) throw new AssertionError("Disabled recording saved a clip");
+    passed("visible toolbar and whole-card paste work with history recording disabled");
+
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_pin))));
+    if(!onMain(() -> "A plain current clip".equals(service.current_text()))) throw new AssertionError("Pinning erased the system clipboard");
+    tap(onMain(() -> (View)field(clipboard(),"pinnedTab")));
+    tap(onMain(() -> findText(clipboard(),"A plain current clip")));
+    text(activity.plain,"A plain current clipA plain current clip");
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clip_actions))));
+    menuText(getTargetContext().getString(R.string.ux_preview));
+    menuText(getTargetContext().getString(android.R.string.cancel));
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clip_actions))));
+    menuText(getTargetContext().getString(R.string.ux_delete));
+    if(onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Pin was not removed");
+    onMain(() -> {
+      View undo = (View)field(clipboard(), "undoButton");
+      Rect bounds = new Rect();
+      if (!undo.getGlobalVisibleRect(bounds)) throw new AssertionError("Undo must be visible");
+      if (android.os.Build.VERSION.SDK_INT >= 35)
+      {
+        android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
+        undo.getDisplay().getRealMetrics(screen);
+        int nav = undo.getRootWindowInsets().getInsets(android.view.WindowInsets.Type.navigationBars()).bottom;
+        if (bounds.bottom > screen.heightPixels - nav)
+          throw new AssertionError("Undo overlaps the navigation bar: " + bounds);
+      }
+      return null;
+    });
+    screenshot("clipboard-undo.png");
+    tap(onMain(() -> (View)field(clipboard(),"undoButton")));
+    if(!onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Undo did not restore pin");
+    if(!getTargetContext().getSharedPreferences("pinned_clipboards",0).getString("pinned","").contains("A plain current clip"))
+      throw new AssertionError("Pin persistence changed its existing storage key");
+    passed("pin, repeated paste, delete and undo through visible touch controls");
+
+    tap(onMain(() -> (View)field(clipboard(),"recentTab")));
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clip_actions))));
+    menuText(getTargetContext().getString(R.string.ux_delete));
+    if(onMain(() -> service.current_text()!=null)) throw new AssertionError("Explicit delete left the current clip visible");
+    tap(onMain(() -> (View)field(clipboard(),"undoButton")));
+    if(!onMain(() -> service.clear_expired_and_get_history().contains("A plain current clip"))) throw new AssertionError("Undo failed for recent clip");
+    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_clear))));
+    menuText(getTargetContext().getString(R.string.ux_clear));
+    if(!onMain(() -> service.clear_expired_and_get_history().isEmpty())) throw new AssertionError("Clear did not clear history");
+    if(!onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Clear erased a pin");
+    passed("delete-current and confirmed clear preserve pinned snippets");
+
+    onMain(() -> { ClipboardHistoryService.set_history_enabled(true);
+      service.add_clip("The meeting has moved to 3:30 PM. I will send the notes afterwards.");
+      service.add_clip("蛋白质设计 · 本周结果\n请复核候选结构和评分表。");
+      service.add_clip("Could you send me the updated version? Thank you!"); return null; });
+    idle();
+    screenshot("clipboard-light.png");
+    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));
+    await("return to keyboard", () -> keyboard().isShown());
+    clear(); nineKey(true); nineKeys("64426");
+    screenshot("nine-key-light.png");
+    key("space");
+    onMain(() -> { DirectBootAwarePreferences.get_shared_preferences(getTargetContext()).edit().putString("theme","soft_dark").apply(); return null; });
+    idle(); focus(activity.plain); clear(); nineKeys("64426");
+    screenshot("nine-key-dark.png");
+    tap(onMain(() -> findText(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
+    await("dark clipboard panel", () -> clipboard().isShown());
+    screenshot("clipboard-dark.png");
+    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));
+    passed("light/dark surfaces and clipboard return preserve editor focus");
   }
 
   /** Cold decoder timing on Android; separate from the real touch test. */
@@ -521,8 +665,14 @@ public final class PinyinSmokeTest extends Instrumentation
   {
     if (onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isChinese()) != enabled)
     {
-      float[] point = onMain(() -> keyPoint("ctrl", true));
-      swipe(point[0], point[1], point[2], point[3]);
+      boolean phone = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isChinese()
+          && ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
+      if (phone) key("switch_pinyin");
+      else
+      {
+        float[] point = onMain(() -> keyPoint("ctrl", true));
+        swipe(point[0], point[1], point[2], point[3]);
+      }
       await("Ctrl northwest language switch", () ->
           ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isChinese() == enabled);
     }

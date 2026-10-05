@@ -25,7 +25,7 @@ public final class ClipboardHistoryService
     if (VERSION.SDK_INT <= 11)
       return null;
     if (_service == null)
-      _service = new ClipboardHistoryService(ctx);
+      _service = new ClipboardHistoryService(ctx.getApplicationContext());
     return _service;
   }
 
@@ -50,7 +50,7 @@ public final class ClipboardHistoryService
   /** The maximum size limits the amount of user data stored in memory but also
       gives a sense to the user that the history is not persisted and can be
       forgotten as soon as the app stops. */
-  public static final int MAX_HISTORY_SIZE = 6;
+  public static final int MAX_HISTORY_SIZE = 30;
 
   static ClipboardHistoryService _service = null;
   static ClipboardPasteCallback _paste_callback = null;
@@ -85,43 +85,92 @@ public final class ClipboardHistoryService
   /** This will call [on_clipboard_history_change]. */
   public synchronized void remove_history_entry(String clip)
   {
-    int last_pos = _history.size() - 1;
-    boolean last_pos_changed = false;
-    for (int pos = last_pos; pos >= 0; pos--)
-    {
-      if (!_history.get(pos).content.equals(clip))
-        continue;
-      // Removing the current clipboard, clear the system clipboard.
-      if (pos == last_pos)
-        last_pos_changed = true;
-      _history.remove(pos);
-    }
-    if (last_pos_changed)
-    {
-      if (VERSION.SDK_INT >= 28)
-        _cm.clearPrimaryClip();
-      else
-        _cm.setText("");
-    }
+    for (Iterator<HistoryEntry> it = _history.iterator(); it.hasNext();)
+      if (it.next().content.equals(clip)) it.remove();
     if (_listener != null)
       _listener.on_clipboard_history_change();
   }
 
-  /** Add clipboard entries to the history, skipping consecutive duplicates and
+  /** Add clipboard entries to the history, skipping duplicates and
       empty strings. */
   public synchronized void add_clip(String clip)
   {
     if (!Config.globalConfig().clipboard_history_enabled)
       return;
-    int size = _history.size();
-    if (clip.equals("") || (size > 0 && _history.get(0).content.equals(clip)))
-      return;
-    if (size >= MAX_HISTORY_SIZE)
-      _history.remove(size - 1);
-    _history.add(0,new HistoryEntry(clip));
+    add_bounded(clip);
     if (_listener != null)
       _listener.on_clipboard_history_change();
   }
+
+  private void add_bounded(String clip)
+  {
+    if (clip == null || clip.isEmpty() || clip.length() > 65536) return;
+    for (Iterator<HistoryEntry> it = _history.iterator(); it.hasNext();)
+      if (it.next().content.equals(clip)) it.remove();
+    _history.add(0, new HistoryEntry(clip));
+    int chars = 0;
+    for (int i = 0; i < _history.size(); i++)
+    {
+      chars += _history.get(i).content.length();
+      if (i >= MAX_HISTORY_SIZE || chars > 262144)
+      {
+        _history.subList(i, _history.size()).clear();
+        break;
+      }
+    }
+  }
+
+  /** Explicit deletion only; pinning/removing history must not erase unrelated clips. */
+  public synchronized void delete_history_entry(String text)
+  {
+    if (text.equals(current_text())) clear_current();
+    remove_history_entry(text);
+  }
+
+  public synchronized void restore_history_entry(String text)
+  {
+    // Explicit Undo may restore a clip even with automatic capture disabled.
+    add_bounded(text);
+    if (_listener != null) _listener.on_clipboard_history_change();
+  }
+
+  private void clear_current()
+  {
+    try
+    {
+      if (VERSION.SDK_INT >= 28) _cm.clearPrimaryClip();
+      else _cm.setPrimaryClip(ClipData.newPlainText("", ""));
+    }
+    catch (RuntimeException disconnected) {}
+  }
+
+  public void clear_history_and_current() { clear_current(); clear_history(); }
+
+  public void capture_current_clip() { add_current_clip(); }
+
+  private ClipData readable_clip()
+  {
+    try
+    {
+      ClipData clip = _cm.getPrimaryClip();
+      if (clip != null && VERSION.SDK_INT >= 24 && clip.getDescription().getExtras() != null
+          && clip.getDescription().getExtras().getBoolean("android.content.extra.IS_SENSITIVE", false))
+        return null;
+      return clip;
+    }
+    catch (RuntimeException disconnected) { return null; }
+  }
+
+  public String current_text()
+  {
+    ClipData clip = readable_clip();
+    if (clip == null || clip.getItemCount() == 0) return null;
+    CharSequence text = clip.getItemAt(0).getText();
+    return text == null || text.length() == 0 || text.length() > 65536 ? null : text.toString();
+  }
+
+  public void remove_on_clipboard_history_change(OnClipboardHistoryChange listener)
+  { if (_listener == listener) _listener = null; }
 
   public synchronized void clear_history()
   {
@@ -140,9 +189,7 @@ public final class ClipboardHistoryService
   /** Add what is currently in the system clipboard into the history. */
   void add_current_clip()
   {
-    ClipData clip = null;
-    // getPrimaryClip might throw when the keyboard is disconnected.
-    try { clip = _cm.getPrimaryClip(); } catch (Exception _e) {}
+    ClipData clip = readable_clip();
     if (clip == null)
       return;
     int count = clip.getItemCount();
@@ -166,6 +213,7 @@ public final class ClipboardHistoryService
     public void onPrimaryClipChanged()
     {
       add_current_clip();
+      if (_listener != null) _listener.on_clipboard_history_change();
     }
   }
 

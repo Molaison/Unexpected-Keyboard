@@ -27,6 +27,7 @@ public final class PinyinInput implements AutoCloseable
   private final Context context;
   private final Host host;
   private PinyinDecoder decoder;
+  private NineKeyLexicon lexicon;
   private ChineseComposition composition;
   private boolean nineKey;
   private String predictionContext = "";
@@ -123,13 +124,32 @@ public final class PinyinInput implements AutoCloseable
     if (!(composition instanceof NineKeyComposition) || !isComposing()) return;
     host.beforeManualInput();
     ((NineKeyComposition)composition).constrainSpelling(index);
+    updateEditor();
     candidateLimit = 32;
     publish();
   }
 
   private ChineseComposition newComposition()
   {
-    return nineKey ? new NineKeyComposition(decoder) : new PinyinComposition(decoder);
+    if (!nineKey) return new PinyinComposition(decoder);
+    if (lexicon == null)
+    {
+      try (AssetFileDescriptor asset = context.getAssets().openFd("pinyin/nine_key.dat");
+          android.os.ParcelFileDescriptor.AutoCloseInputStream input =
+            new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+              android.os.ParcelFileDescriptor.dup(asset.getFileDescriptor())))
+      {
+        // Use a raw, owned duplicate: AssetFileDescriptor streams may expose
+        // asset-relative channels, while this mapping uses an absolute APK offset.
+        lexicon = new NineKeyLexicon(input.getChannel(), asset.getStartOffset(), asset.getLength());
+      }
+      catch (IOException error)
+      {
+        // Keep the existing decoder usable if an optional index is unavailable.
+        android.util.Log.w("PinyinInput", "Nine-key index unavailable", error);
+      }
+    }
+    return new NineKeyComposition(decoder, lexicon);
   }
 
   private boolean append(char c)

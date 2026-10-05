@@ -198,7 +198,7 @@ public final class Config
     current_layout_wide = _prefs.getInt("current_layout_landscape", 0);
     circle_sensitivity = Integer.valueOf(_prefs.getString("circle_sensitivity", "2"));
     clipboard_history_enabled = _prefs.getBoolean("clipboard_history_enabled", false);
-    clipboard_history_duration = Integer.parseInt(_prefs.getString("clipboard_history_duration", "5"));
+    clipboard_history_duration = Integer.parseInt(_prefs.getString("clipboard_history_duration", "60"));
     space_bar_auto_complete = _prefs.getBoolean("space_bar_auto_complete", false);
     physical_keyboard_hide = _prefs.getString("physical_keyboard_behavior", "hide").equals("hide");
     float screen_width_dp = dm.widthPixels / dm.density;
@@ -260,6 +260,8 @@ public final class Config
     int night_mode = res.getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
     switch (theme_name)
     {
+      case "soft_light": return R.style.SoftLight;
+      case "soft_dark": return R.style.SoftDark;
       case "light": return R.style.Light;
       case "black": return R.style.Black;
       case "altblack": return R.style.AltBlack;
@@ -284,8 +286,8 @@ public final class Config
       default:
       case "system":
         if ((night_mode & Configuration.UI_MODE_NIGHT_NO) != 0)
-          return R.style.Light;
-        return R.style.Dark;
+          return R.style.SoftLight;
+        return R.style.SoftDark;
     }
   }
 

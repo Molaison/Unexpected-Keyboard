@@ -200,7 +200,21 @@ public class Keyboard2 extends InputMethodService
       public void onCommitRaw() { _pinyin.commitRaw(); }
       public void onMoreCandidates() { _pinyin.showMoreCandidates(); }
       public void onSpellingSelected(int index) { _pinyin.selectSpelling(index); }
+      public void onClipboard() { open_clipboard(); }
+      public void onLayoutSwitch() { toggle_pinyin_layout(); }
     });
+  }
+
+  private void open_clipboard()
+  {
+    _voicePushToTalkActive = false;
+    _doubaoVoiceInput.cancel();
+    _pinyin.finish();
+    if (_clipboard_pane == null)
+      _clipboard_pane = (ViewGroup)inflate_view(R.layout.clipboard_pane);
+    ((ClipboardPaneView)_clipboard_pane).show(_keyboard_container_view.getHeight(),
+        () -> setInputView(_keyboard_container_view));
+    setInputView(_clipboard_pane);
   }
 
   private void toggle_pinyin_layout()
@@ -296,9 +310,7 @@ public class Keyboard2 extends InputMethodService
     _pinyin_candidates_view.setSpellingOptions(_pinyin.getSpellingOptions());
     _pinyin_candidates_view.setState(_pinyin.isChinese(), _pinyin.getDisplayText(),
         _pinyin.getCandidates(), _pinyin.hasMoreCandidates());
-    boolean hasContent = _pinyin.isComposing() || !_pinyin.getCandidates().isEmpty()
-      || _candidates_view.getVisibility() == View.VISIBLE;
-    _pinyin_candidates_view.setVisibility(_pinyin.isAvailable() && hasContent ? View.VISIBLE : View.GONE);
+    _pinyin_candidates_view.setVisibility(_pinyin.isAvailable() && !_config.editor_config.numeric_layout ? View.VISIBLE : View.GONE);
   }
 
   /** Might re-create the keyboard view. [_keyboard_layout_view.setKeyboard()] and
@@ -658,9 +670,7 @@ public class Keyboard2 extends InputMethodService
           break;
 
         case SWITCH_CLIPBOARD:
-          if (_clipboard_pane == null)
-            _clipboard_pane = (ViewGroup)inflate_view(R.layout.clipboard_pane);
-          setInputView(_clipboard_pane);
+          open_clipboard();
           break;
 
         case SWITCH_BACK_EMOJI:

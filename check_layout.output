@@ -32,3 +32,5 @@ latn_qzerty_it: Layout includes some ASCII punctuation but not all, missing: #, 
 urdu_phonetic_ur: Layout includes some ASCII punctuation but not all, missing: <, >, ?, `, |, ~
 zh_pinyin: Layout includes some ASCII punctuation but not all, missing: !, ", (, ), ,, ., :, ;, ?, [, ]
 zh_pinyin_9key: Layout includes some ASCII punctuation but not all, missing: !, ", #, $, %, &, (, ), *, +, ,, -, ., /, :, ;, <, =, >, ?, @, [, \, ], ^, _, `, {, |, }, ~
+zh_pinyin_9key: Missing important key, missing: loc capslock, shift
+zh_pinyin_9key: Layout redefines the bottom row but some important keys are missing, missing: config, ctrl, down, fn, left, loc alt, loc change_method, loc compose, loc end, loc home, loc meta, loc page_down, loc page_up, loc switch_clipboard, right, switch_backward, switch_forward, up

@@ -26,8 +26,8 @@ android {
     applicationId = "com.molaison.unexpectedkeyboard.doubao"
     minSdk = 21
     targetSdk { version = release(36) }
-    versionCode = 56
-    versionName = "2.1.0"
+    versionCode = 57
+    versionName = "2.1.1"
     testInstrumentationRunner = "juloo.keyboard2.PinyinSmokeTest"
     externalNativeBuild {
       ndkBuild {

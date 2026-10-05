@@ -1,23 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Nine phone positions, plus a narrow editing column; shared voice/space row.
      Taps are ambiguous pinyin events. Corner digits remain literal digits. -->
-<keyboard name="Chinese (Pinyin, 9-key)" script="latin" locale_extra_keys="false">
+<keyboard name="Chinese (Pinyin, 9-key)" script="latin" locale_extra_keys="false" bottom_row="false">
   <row>
     <key width="2.8" c="，" nw="。" ne="1" sw="？" se="！"/>
-    <key width="2.8" c="pinyin_2" nw="a" ne="2" sw="b" se="c"/>
-    <key width="2.8" c="pinyin_3" nw="d" ne="3" sw="e" se="f"/>
+    <key width="2.8" c="pinyin_2" ne="2"/>
+    <key width="2.8" c="pinyin_3" ne="3"/>
     <key width="1.6" role="action" c="backspace" ne="delete"/>
   </row>
   <row>
-    <key width="2.8" c="pinyin_4" nw="g" ne="4" sw="h" se="i"/>
-    <key width="2.8" c="pinyin_5" nw="j" ne="5" sw="k" se="l"/>
-    <key width="2.8" c="pinyin_6" nw="m" ne="6" sw="n" se="o"/>
+    <key width="2.8" c="pinyin_4" ne="4"/>
+    <key width="2.8" c="pinyin_5" ne="5"/>
+    <key width="2.8" c="pinyin_6" ne="6"/>
     <key width="1.6" role="action" c="switch_pinyin_layout" nw="loc esc" ne="loc tab"/>
   </row>
   <row>
-    <key width="2.8" c="pinyin_7" nw="p" ne="7" sw="q" se="r" s="s"/>
-    <key width="2.8" c="pinyin_8" nw="t" ne="8" sw="u" se="v"/>
-    <key width="2.8" c="pinyin_9" nw="w" ne="9" sw="x" se="y" s="z"/>
-    <key width="1.6" role="action" c="shift" nw="'" ne="loc capslock" sw="0"/>
+    <key width="2.8" c="pinyin_7" ne="7"/>
+    <key width="2.8" c="pinyin_8" ne="8"/>
+    <key width="2.8" c="pinyin_9" ne="9"/>
+    <key width="1.6" role="action" c="switch_clipboard" nw="'" sw="0"/>
+  </row>
+  <row height="0.95">
+    <key width="1.7" role="action" c="switch_numeric" ne="switch_emoji"/>
+    <key width="1.7" role="action" c="switch_pinyin" nw="loc ctrl"/>
+    <key width="3.6" role="space_bar" c="space" w="cursor_left" e="cursor_right"/>
+    <key width="1.3" role="action" c="voice_typing"/>
+    <key width="1.7" role="action" c="enter" ne="action"/>
   </row>
 </keyboard>
