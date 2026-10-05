@@ -32,6 +32,7 @@ public final class ClipboardPaneView extends LinearLayout
   private final Switch recording;
   private final BaseAdapter adapter;
   private boolean pinned;
+  private boolean synchronizingRecording;
   private String undoneText;
   private boolean undonePin;
   private int undonePosition;
@@ -41,6 +42,16 @@ public final class ClipboardPaneView extends LinearLayout
   {
     super(context, attrs);
     ui = new KeyboardUi(context);
+    if (android.os.Build.VERSION.SDK_INT >= 26)
+    {
+      android.content.res.TypedArray colors = context.obtainStyledAttributes(
+          new int[] { R.attr.windowLightNavigationBar });
+      int flags = getSystemUiVisibility();
+      setSystemUiVisibility(colors.getBoolean(0, false)
+          ? flags | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+          : flags & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+      colors.recycle();
+    }
     service = ClipboardHistoryService.get_service(context);
     setOrientation(VERTICAL);
     setBackgroundColor(ui.background);
@@ -81,6 +92,7 @@ public final class ClipboardPaneView extends LinearLayout
     recording.setPadding(ui.dp(12), 0, ui.dp(12), 0);
     recording.setChecked(Config.globalConfig().clipboard_history_enabled);
     recording.setOnCheckedChangeListener((v, checked) -> {
+      if (synchronizingRecording) return;
       ClipboardHistoryService.set_history_enabled(checked);
       refresh();
     });
@@ -160,7 +172,6 @@ public final class ClipboardPaneView extends LinearLayout
     back = onBack;
     setLayoutParams(new ViewGroup.LayoutParams(LayoutParams.MATCH_PARENT, Math.max(ui.dp(280), height)));
     undoneText = null;
-    recording.setChecked(Config.globalConfig().clipboard_history_enabled);
     if (service != null) service.capture_current_clip();
     refresh();
   }
@@ -204,6 +215,11 @@ public final class ClipboardPaneView extends LinearLayout
 
   private void refresh()
   {
+    // Reflect changes made in settings or the service without treating them as
+    // a new user toggle (which could otherwise clear or re-capture history).
+    synchronizingRecording = true;
+    try { recording.setChecked(Config.globalConfig().clipboard_history_enabled); }
+    finally { synchronizingRecording = false; }
     List<String> recent = service == null ? new ArrayList<>() : service.clear_expired_and_get_history();
     // A current, non-sensitive clip is usable even when recording is disabled.
     String current = service == null ? null : service.current_text();
