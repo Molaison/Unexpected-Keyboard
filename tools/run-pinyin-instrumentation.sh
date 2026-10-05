@@ -14,16 +14,26 @@ pinyin_ime="$pinyin_package/juloo.keyboard2.Keyboard2"
 "$pinyin_adb" -s "$pinyin_serial" install -r "$pinyin_root/build/outputs/apk/androidTest/debug/Unexpected-Keyboard-debug-androidTest.apk"
 pinyin_previous_ime="$("$pinyin_adb" -s "$pinyin_serial" shell settings get secure default_input_method | tr -d '\r')"
 restore_ime() {
+  pinyin_status=$?
+  "$pinyin_adb" -s "$pinyin_serial" logcat -d -v threadtime > "$pinyin_root/build/validation/logcat.txt" || true
+  "$pinyin_adb" -s "$pinyin_serial" shell dumpsys input_method > "$pinyin_root/build/validation/input-method.txt" || true
+  "$pinyin_adb" -s "$pinyin_serial" shell dumpsys window > "$pinyin_root/build/validation/window.txt" || true
+  "$pinyin_adb" -s "$pinyin_serial" exec-out screencap -p > "$pinyin_root/build/validation/final-screen.png" || true
   if [[ -n "$pinyin_previous_ime" && "$pinyin_previous_ime" != null ]]; then
-    "$pinyin_adb" -s "$pinyin_serial" shell ime set "$pinyin_previous_ime"
+    "$pinyin_adb" -s "$pinyin_serial" shell ime set "$pinyin_previous_ime" || true
   fi
+  return "$pinyin_status"
 }
 trap restore_ime EXIT
 "$pinyin_adb" -s "$pinyin_serial" shell ime enable "$pinyin_ime"
-"$pinyin_adb" -s "$pinyin_serial" shell ime set "$pinyin_ime"
+# Instrumentation restarts this app process. Select the IME inside the runner,
+# after that restart, rather than starting it and immediately killing it here.
 "$pinyin_adb" -s "$pinyin_serial" shell am instrument -w -r \
   "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/instrumentation.log"
 grep -q 'PINYIN_SMOKE_OK' "$pinyin_root/build/validation/instrumentation.log"
 grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/instrumentation.log"
 "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat cache/pinyin-keyboard.png \
   > "$pinyin_root/build/validation/pinyin-keyboard.png"
+
+"$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat cache/pinyin-nine-key.png \
+  > "$pinyin_root/build/validation/pinyin-nine-key.png"

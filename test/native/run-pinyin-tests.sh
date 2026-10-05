@@ -16,7 +16,13 @@ g++ -std=c++11 -O2 -I"$pinyin_root/vendor/pinyin/include" \
 "$pinyin_jdk/bin/javac" -encoding UTF-8 -d "$pinyin_build/classes" \
   "$pinyin_root/srcs/juloo.keyboard2/pinyin/PinyinDecoder.java" \
   "$pinyin_root/srcs/juloo.keyboard2/pinyin/PinyinSpelling.java" \
+  "$pinyin_root/srcs/juloo.keyboard2/pinyin/ChineseComposition.java" \
   "$pinyin_root/srcs/juloo.keyboard2/pinyin/PinyinComposition.java" \
+  "$pinyin_root/srcs/juloo.keyboard2/pinyin/NineKeyComposition.java" \
+  "$pinyin_root/srcs/juloo.keyboard2/pinyin/PredictionContext.java" \
+  "$pinyin_root/srcs/juloo.keyboard2/suggestions/SuggestionRanker.java" \
+  "$pinyin_root/test/native/NineKeyCompositionTest.java" \
+  "$pinyin_root/test/native/SuggestionRankingTest.java" \
   "$pinyin_root/test/native/PinyinDecoderTest.java" \
   "$pinyin_root/test/native/PinyinCompositionTest.java" \
   "$pinyin_root/test/native/PinyinToleranceTest.java"
@@ -29,3 +35,8 @@ g++ -std=c++11 -O2 -I"$pinyin_root/vendor/pinyin/include" \
 "$pinyin_jdk/bin/java" -ea -XX:ErrorFile="$pinyin_build/hs_err_pid%p.log" -Djava.library.path="$pinyin_build" \
   -cp "$pinyin_build/classes" juloo.keyboard2.pinyin.PinyinToleranceTest \
   "${1:-$pinyin_root/assets/pinyin/dict_pinyin.dat}" "$pinyin_build"
+
+"$pinyin_jdk/bin/java" -ea -Djava.library.path="$pinyin_build" \
+  -cp "$pinyin_build/classes" juloo.keyboard2.pinyin.NineKeyCompositionTest \
+  "${1:-$pinyin_root/assets/pinyin/dict_pinyin.dat}" "$pinyin_build"
+"$pinyin_jdk/bin/java" -ea -cp "$pinyin_build/classes" juloo.keyboard2.suggestions.SuggestionRankingTest

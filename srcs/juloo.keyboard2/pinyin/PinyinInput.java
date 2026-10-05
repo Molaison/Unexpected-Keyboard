@@ -27,7 +27,9 @@ public final class PinyinInput implements AutoCloseable
   private final Context context;
   private final Host host;
   private PinyinDecoder decoder;
-  private PinyinComposition composition;
+  private ChineseComposition composition;
+  private boolean nineKey;
+  private String predictionContext = "";
   private InputConnection composingConnection;
   private boolean available;
   private boolean chinese;
@@ -47,6 +49,7 @@ public final class PinyinInput implements AutoCloseable
 
   public boolean isAvailable() { return available; }
   public boolean isChinese() { return chinese; }
+  public boolean isNineKey() { return nineKey; }
   public boolean isComposing() { return composition != null && !composition.isEmpty(); }
   public boolean hasMoreCandidates() { return hasMore; }
   public List<String> getCandidates() { return Collections.unmodifiableList(candidates); }
@@ -74,10 +77,17 @@ public final class PinyinInput implements AutoCloseable
 
   public void start(EditorInfo info, boolean preferChinese)
   {
+    start(info, preferChinese, nineKey);
+  }
+
+  public void start(EditorInfo info, boolean preferChinese, boolean preferNineKey)
+  {
     InputConnection connection = host.getCurrentInputConnection();
     if (connection != null) connection.finishComposingText();
     // Never commit the preceding editor's pending text into this new editor.
     resetWithoutEditor();
+    nineKey = preferNineKey;
+    if (decoder != null) composition = newComposition();
     available = permitsChinese(info.inputType);
     chinese = available && preferChinese && !prefersLatin(info.inputType);
     inlineComposition = (info.inputType & InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT;
@@ -91,6 +101,49 @@ public final class PinyinInput implements AutoCloseable
     finish();
     chinese = available && enabled;
     publish();
+  }
+
+  public void setNineKey(boolean enabled)
+  {
+    if (nineKey == enabled) return;
+    finish();
+    nineKey = enabled;
+    if (decoder != null) composition = newComposition();
+    publish();
+  }
+
+  public List<String> getSpellingOptions()
+  {
+    return composition instanceof NineKeyComposition && isComposing()
+      ? ((NineKeyComposition)composition).getSpellings() : Collections.emptyList();
+  }
+
+  public void selectSpelling(int index)
+  {
+    if (!(composition instanceof NineKeyComposition) || !isComposing()) return;
+    host.beforeManualInput();
+    ((NineKeyComposition)composition).constrainSpelling(index);
+    candidateLimit = 32;
+    publish();
+  }
+
+  private ChineseComposition newComposition()
+  {
+    return nineKey ? new NineKeyComposition(decoder) : new PinyinComposition(decoder);
+  }
+
+  private boolean append(char c)
+  {
+    if (host.getCurrentInputConnection() == null) return false;
+    host.beforeManualInput();
+    ensureDecoder();
+    if (composition.isFull()) finish();
+    predictions = new String[0];
+    composition.append(c);
+    candidateLimit = 32;
+    updateEditor();
+    publish();
+    return true;
   }
 
   public boolean handleKey(KeyValue key, int metaState)
@@ -107,16 +160,7 @@ public final class PinyinInput implements AutoCloseable
         char c = key.getChar();
         if ((c >= 'a' && c <= 'z') || (c == '\'' && isComposing()))
         {
-          if (host.getCurrentInputConnection() == null) return false;
-          host.beforeManualInput();
-          ensureDecoder();
-          if (composition.isFull()) finish();
-          predictions = new String[0];
-          composition.append(c);
-          candidateLimit = 32;
-          updateEditor();
-          publish();
-          return true;
+          return append(c);
         }
         if (c == ' ' && isComposing()) { selectFirst(); return true; }
         break;
@@ -139,6 +183,21 @@ public final class PinyinInput implements AutoCloseable
         }
         break;
       case Event:
+        if (nineKey)
+        {
+          switch (key.getEvent())
+          {
+            case PINYIN_2: return append('2');
+            case PINYIN_3: return append('3');
+            case PINYIN_4: return append('4');
+            case PINYIN_5: return append('5');
+            case PINYIN_6: return append('6');
+            case PINYIN_7: return append('7');
+            case PINYIN_8: return append('8');
+            case PINYIN_9: return append('9');
+            default: break;
+          }
+        }
         if (key.getEvent() == KeyValue.Event.ACTION && isComposing())
         {
           commitRaw();
@@ -220,6 +279,7 @@ public final class PinyinInput implements AutoCloseable
   {
     if (!isComposing()) return;
     commit(composition.acceptRaw());
+    predictionContext = "";
     predictions = new String[0];
     publish();
   }
@@ -227,7 +287,7 @@ public final class PinyinInput implements AutoCloseable
   /** End composition before navigation, punctuation, another input source, or hiding. */
   public void finish()
   {
-    if (!isComposing() && predictions.length == 0) return;
+    if (!isComposing() && predictions.length == 0) { predictionContext = ""; return; }
     if (isComposing())
     {
       if (composingConnection != null && composingConnection != host.getCurrentInputConnection())
@@ -236,6 +296,7 @@ public final class PinyinInput implements AutoCloseable
         commit(composition.acceptBest());
     }
     predictions = new String[0];
+    predictionContext = "";
     if (decoder != null) decoder.flush();
     publish();
   }
@@ -243,6 +304,7 @@ public final class PinyinInput implements AutoCloseable
   public void cancel()
   {
     if (composition != null) composition.reset();
+    predictionContext = "";
     updateEditor();
     predictions = new String[0];
     publish();
@@ -251,7 +313,24 @@ public final class PinyinInput implements AutoCloseable
   public void selectionUpdated(int oldStart, int oldEnd, int start, int end,
                                int composingStart, int composingEnd)
   {
-    if (!isComposing()) return;
+    if (!isComposing())
+    {
+      if (predictions.length > 0)
+      {
+        InputConnection connection = host.getCurrentInputConnection();
+        CharSequence before = connection == null ? null : connection.getTextBeforeCursor(PredictionContext.LIMIT, 0);
+        // Our own commit also sends a selection update. Keep its predictions
+        // only while the editor still reports the same context and no selection.
+        if (start != end || (before != null && !predictionContext.equals(PredictionContext.tail(before)))
+            || (before == null && (start != oldStart || end != oldEnd)))
+        {
+          predictions = new String[0];
+          predictionContext = "";
+          publish();
+        }
+      }
+      return;
+    }
     boolean moved = inlineComposition
       ? start != composingEnd || end != composingEnd
       : start != oldStart || end != oldEnd;
@@ -268,6 +347,7 @@ public final class PinyinInput implements AutoCloseable
   {
     if (composition != null) composition.reset();
     composingConnection = null;
+    predictionContext = "";
     predictions = new String[0];
     candidates.clear();
     candidateIds.clear();
@@ -304,7 +384,12 @@ public final class PinyinInput implements AutoCloseable
   private void predict(String text)
   {
     decoder.reset();
-    predictions = text.isEmpty() ? new String[0] : decoder.predict(text);
+    InputConnection connection = host.getCurrentInputConnection();
+    CharSequence before = connection == null ? null
+      : connection.getTextBeforeCursor(PredictionContext.LIMIT, 0);
+    predictionContext = before == null ? PredictionContext.append(predictionContext, text)
+      : PredictionContext.tail(before);
+    predictions = predictionContext.isEmpty() ? new String[0] : decoder.predict(predictionContext);
   }
 
   private void publish()
@@ -349,7 +434,7 @@ public final class PinyinInput implements AutoCloseable
       throw new IllegalStateException("Cannot open the packaged pinyin dictionary", error);
     }
     decoder.setLearningEnabled(learningEnabled);
-    composition = new PinyinComposition(decoder);
+    composition = newComposition();
   }
 
   @Override

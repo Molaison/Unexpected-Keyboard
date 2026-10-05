@@ -95,6 +95,7 @@ public final class PinyinSmokeTest extends Instrumentation
       }
       focus(activity.plain);
       chinese(true);
+      nineKey(false);
       if (voiceMicrophone)
       {
         microphoneInput();
@@ -249,6 +250,7 @@ public final class PinyinSmokeTest extends Instrumentation
       key("space");
       text(activity.plain, "你好中国");
       passed("candidate UI screenshot and final commit");
+      nineKeyChecks();
       result.putString("stream", "\nPINYIN_SMOKE_OK checks=" + checks + "\n");
       finish(Activity.RESULT_OK, result);
     }
@@ -260,6 +262,120 @@ public final class PinyinSmokeTest extends Instrumentation
       result.putString("shortMsg", error.toString());
       finish(Activity.RESULT_CANCELED, result);
     }
+  }
+
+  private void nineKey(boolean enabled) throws Exception
+  {
+    if (onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey()) == enabled) return;
+    if (enabled)
+    {
+      float[] point = onMain(() -> keyPoint("shift", false));
+      swipe(point[0], point[1], point[2], point[3]);
+    }
+    else key("switch_pinyin_layout");
+    await("nine-key layout switch", () ->
+      ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey() == enabled);
+  }
+
+  private void nineKeys(String keys) throws Exception
+  {
+    for (char key : keys.toCharArray()) key("pinyin_" + key);
+  }
+
+  private void nineKeyChecks() throws Exception
+  {
+    clear();
+    nineKey(true);
+    nineKeys("64426");
+    text(activity.plain, "64426");
+    tapCandidate("你好");
+    text(activity.plain, "你好");
+    passed("real nine-key taps, raw preedit, Chinese candidate commit");
+
+    clear();
+    nineKeys("6442694664486");
+    tapCandidate("你好");
+    text(activity.plain, "你好94664486");
+    key("space");
+    text(activity.plain, "你好中国");
+    passed("nine-key partial choice preserves remaining digits");
+
+    clear();
+    nineKeys("64426");
+    key("backspace");
+    key("enter");
+    text(activity.plain, "6442");
+    passed("nine-key backspace and raw Enter");
+
+    clear();
+    nineKeys("6464");
+    View preedit = onMain(() -> (View)field(candidatesView(), "preedit"));
+    float[] point = onMain(() -> {
+      Rect r = new Rect();
+      if (!preedit.getGlobalVisibleRect(r)) throw new AssertionError("No nine-key preedit");
+      return new float[] {r.exactCenterX(), r.exactCenterY()};
+    });
+    long down = SystemClock.uptimeMillis();
+    injectTouch(down, MotionEvent.ACTION_DOWN, point[0], point[1]);
+    SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 150);
+    injectTouch(down, MotionEvent.ACTION_UP, point[0], point[1]);
+    idle();
+    android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
+    java.util.List<android.view.accessibility.AccessibilityNodeInfo> readings = root.findAccessibilityNodeInfosByText("ming");
+    if (readings.isEmpty())
+      throw new AssertionError("Nine-key reading picker did not offer ming");
+    // PopupMenu exposes the title as a non-clickable TextView; the containing
+    // menu row owns the click. Tap its visible text like a user instead.
+    Rect readingBounds = new Rect();
+    readings.get(0).getBoundsInScreen(readingBounds);
+    if (!readings.get(0).isVisibleToUser() || readingBounds.isEmpty())
+      throw new AssertionError("The ming reading is not visible");
+    down = SystemClock.uptimeMillis();
+    injectTouch(down, MotionEvent.ACTION_DOWN, readingBounds.exactCenterX(), readingBounds.exactCenterY());
+    injectTouch(down, MotionEvent.ACTION_UP, readingBounds.exactCenterX(), readingBounds.exactCenterY());
+    idle();
+    key("space");
+    text(activity.plain, "明");
+    passed("long-press preedit chooses an ambiguous reading");
+
+    onMain(() -> { activity.password.setText(""); return null; });
+    focus(activity.password);
+    type("nihao");
+    text(activity.password, "nihao");
+    if (onMain(() -> candidatesView().isShown())) throw new AssertionError("Nine-key candidates in password");
+    focus(activity.plain);
+    clear();
+    chinese(true);
+    await("nine-key preference restored", () -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
+    chinese(false);
+    type("hello");
+    chinese(true);
+    nineKeys("64426");
+    key("space");
+    text(activity.plain, "hello你好");
+    passed("nine-key preference survives password and English switches");
+
+    clear();
+    nineKeys("9674494664486736");
+    text(activity.plain, "9674494664486736");
+    File screenshot = new File(getTargetContext().getCacheDir(), "pinyin-nine-key.png");
+    Bitmap bitmap = getUiAutomation().takeScreenshot();
+    try (FileOutputStream output = new FileOutputStream(screenshot))
+    {
+      if (bitmap == null || !bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+        throw new AssertionError("Unable to save nine-key screenshot");
+    }
+    key("space");
+    text(activity.plain, "我是中国人");
+    // Native predictions see the entire editor context, not only the last choice.
+    String context = onMain(() -> (String)field(((KeyEventHandler)Config.globalConfig().handler)._pinyin, "predictionContext"));
+    if (!"我是中国人".equals(context)) throw new AssertionError("Truncated prediction context: " + context);
+    onMain(() -> { activity.plain.setSelection(0); return null; });
+    idle();
+    if (onMain(() -> !((KeyEventHandler)Config.globalConfig().handler)._pinyin.getCandidates().isEmpty()))
+      throw new AssertionError("Stale predictions survived cursor movement");
+    nineKey(false);
+    passed("nine-key sentence, context prediction, cursor invalidation and layout restoration");
   }
 
   /** Cold decoder timing on Android; separate from the real touch test. */
@@ -298,9 +414,13 @@ public final class PinyinSmokeTest extends Instrumentation
     await("editor window focus", () -> activity.hasWindowFocus());
     onMain(() -> {
       editor.requestFocus();
-      ((InputMethodManager)activity.getSystemService(Activity.INPUT_METHOD_SERVICE)).showSoftInput(editor, 0);
+      InputMethodManager manager = (InputMethodManager)activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
+      manager.restartInput(editor);
+      manager.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
       return null;
     });
+    // A real editor tap also handles asynchronous IME binding on a cold device.
+    tap(editor);
     await("IME window", () -> keyboard() != null && keyboard().isShown() && keyboard().getWidth() > 0);
     idle();
   }
