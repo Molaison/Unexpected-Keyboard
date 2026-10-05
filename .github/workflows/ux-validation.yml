@@ -22,11 +22,13 @@ jobs:
         run: |
           set -euo pipefail
           cp tools/.ux/export.py "$RUNNER_TEMP/export.py"
+          cp tools/.ux/followup.patch "$RUNNER_TEMP/followup.patch"
           cat tools/.ux/part* | xz -dc > "$RUNNER_TEMP/ux.patch"
           echo 'ea3f1815756583e6725893ec683a39f56206c4189bbf99025cef93fa4e8bafe7  '"$RUNNER_TEMP/ux.patch" | sha256sum -c
           git apply "$RUNNER_TEMP/ux.patch"
           git rm srcs/juloo.keyboard2/ClipboardHistoryView.java
           sed -i 's/ | tee/ 2>\&1 | tee/g' .github/workflows/ux-checks.yml
+          git apply "$RUNNER_TEMP/followup.patch"
           python3 tools/build_nine_key_lexicon.py --download
           echo '25d6e7e32968d0a1e2ba814bdbdd2657ec7f806a2776aeaa4950abc9b3a58471  assets/pinyin/nine_key.dat' | sha256sum -c
           git rm -r tools/.ux .github/workflows/ux-validation.yml

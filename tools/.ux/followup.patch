@@ -1,0 +1,197 @@
+diff --git a/androidTest/juloo.keyboard2/PinyinSmokeTest.java b/androidTest/juloo.keyboard2/PinyinSmokeTest.java
+index 705966c..05c6e27 100644
+--- a/androidTest/juloo.keyboard2/PinyinSmokeTest.java
++++ b/androidTest/juloo.keyboard2/PinyinSmokeTest.java
+@@ -267,6 +267,7 @@ public final class PinyinSmokeTest extends Instrumentation
+     }
+     catch (Throwable error)
+     {
++      try { screenshot("failure-ux.png"); } catch (Throwable screenshotError) { error.addSuppressed(screenshotError); }
+       String trace = Log.getStackTraceString(error);
+       Log.e("PinyinSmokeTest", "IME smoke test failed", error);
+       result.putString("stream", "\nPINYIN_SMOKE_FAILED\n" + trace);
+@@ -303,6 +304,20 @@ public final class PinyinSmokeTest extends Instrumentation
+     text(activity.plain, "你好");
+     passed("real nine-key taps, readable pinyin preedit, Chinese candidate commit");
+ 
++    onMain(() -> {
++      Object index = field(((KeyEventHandler)Config.globalConfig().handler)._pinyin, "lexicon");
++      if (!(index instanceof juloo.keyboard2.pinyin.NineKeyLexicon)
++          || ((juloo.keyboard2.pinyin.NineKeyLexicon)index).size() != 882585)
++        throw new AssertionError("The APK must actually map the full nine-key lexicon; fallback is not acceptance");
++      return null;
++    });
++    clear();
++    nineKeys("74363898394");
++    text(activity.plain, "shenduxuexi");
++    tapCandidate("深度学习");
++    text(activity.plain, "深度学习");
++    passed("packaged lexicon mapping and extended vocabulary through actual taps");
++
+     clear();
+     nineKeys("6442694664486");
+     tapCandidate("你好");
+@@ -411,6 +426,8 @@ public final class PinyinSmokeTest extends Instrumentation
+   private void clipboardChecks() throws Exception
+   {
+     clear();
++    if (!java.util.Arrays.asList(getTargetContext().getResources().getStringArray(R.array.pref_clipboard_duration_values)).contains("60"))
++      throw new AssertionError("Default clipboard retention must be selectable in settings");
+     ClipboardHistoryService service=onMain(() -> ClipboardHistoryService.get_service(getTargetContext()));
+     android.content.ClipboardManager cm=(android.content.ClipboardManager)getTargetContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+     onMain(() -> { ClipboardHistoryService.set_history_enabled(true); service.clear_history_and_current();
+@@ -451,6 +468,21 @@ public final class PinyinSmokeTest extends Instrumentation
+     tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clip_actions))));
+     menuText(getTargetContext().getString(R.string.ux_delete));
+     if(onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Pin was not removed");
++    onMain(() -> {
++      View undo = (View)field(clipboard(), "undoButton");
++      Rect bounds = new Rect();
++      if (!undo.getGlobalVisibleRect(bounds)) throw new AssertionError("Undo must be visible");
++      if (android.os.Build.VERSION.SDK_INT >= 35)
++      {
++        android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
++        undo.getDisplay().getRealMetrics(screen);
++        int nav = undo.getRootWindowInsets().getInsets(android.view.WindowInsets.Type.navigationBars()).bottom;
++        if (bounds.bottom > screen.heightPixels - nav)
++          throw new AssertionError("Undo overlaps the navigation bar: " + bounds);
++      }
++      return null;
++    });
++    screenshot("clipboard-undo.png");
+     tap(onMain(() -> (View)field(clipboard(),"undoButton")));
+     if(!onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Undo did not restore pin");
+     if(!getTargetContext().getSharedPreferences("pinned_clipboards",0).getString("pinned","").contains("A plain current clip"))
+diff --git a/res/values-zh-rCN/ux.xml b/res/values-zh-rCN/ux.xml
+index bd417e7..654440a 100644
+--- a/res/values-zh-rCN/ux.xml
++++ b/res/values-zh-rCN/ux.xml
+@@ -17,7 +17,7 @@
+   <string name="ux_deleted">已删除</string>
+   <string name="ux_undo">撤销</string>
+   <string name="ux_pins_empty">还没有固定内容\n点击卡片旁的 ☆，保留常用片段</string>
+-  <string name="ux_history_empty">在应用中复制文字，即可在这里粘贴\n敏感内容不记录、不预览</string>
++  <string name="ux_history_empty">在应用中复制文字，即可在这里粘贴\n不记录来源应用标记为敏感的内容</string>
+   <string name="ux_clipboard_privacy">最近记录仅在内存中暂存；固定内容保存在本机</string>
+   <string name="ux_unlock_to_pin">解锁设备后才能保存固定内容</string>
+   <string name="ux_clear_history_title">清空最近记录？</string>
+@@ -27,4 +27,5 @@
+   <string name="ux_layout_switch">切换九键／26键</string>
+   <string name="ux_theme_soft_light">柔和浅色</string>
+   <string name="ux_theme_soft_dark">柔和深色</string>
++  <string name="ux_history_duration_hour">1 小时</string>
+ </resources>
+diff --git a/res/values/arrays.xml b/res/values/arrays.xml
+index bf55051..acbe227 100644
+--- a/res/values/arrays.xml
++++ b/res/values/arrays.xml
+@@ -124,12 +124,14 @@
+     <item>@string/pref_clipboard_history_duration_1</item>
+     <item>@string/pref_clipboard_history_duration_5</item>
+     <item>@string/pref_clipboard_history_duration_30</item>
++    <item>@string/ux_history_duration_hour</item>
+     <item>@string/pref_clipboard_history_duration_stop</item>
+   </string-array>
+   <string-array name="pref_clipboard_duration_values">
+     <item>1</item>
+     <item>5</item>
+     <item>30</item>
++    <item>60</item>
+     <item>-1</item>
+   </string-array>
+   <string-array name="pref_change_method_key_replacement_entries">
+diff --git a/res/values/ux.xml b/res/values/ux.xml
+index 0ee2136..e81dfa0 100644
+--- a/res/values/ux.xml
++++ b/res/values/ux.xml
+@@ -17,7 +17,7 @@
+   <string name="ux_deleted">Deleted</string>
+   <string name="ux_undo">Undo</string>
+   <string name="ux_pins_empty">No pinned clips. Tap ☆ on a clip to keep it.</string>
+-  <string name="ux_history_empty">Copy text in an app to see it here. Sensitive clips are not saved or previewed.</string>
++  <string name="ux_history_empty">Copy text in an app, then paste it here\nClips marked sensitive by the source app are excluded</string>
+   <string name="ux_clipboard_privacy">Recent clips expire in memory; pinned clips stay on this device.</string>
+   <string name="ux_unlock_to_pin">Unlock your device before pinning clips.</string>
+   <string name="ux_clear_history_title">Clear recent clips?</string>
+@@ -27,4 +27,5 @@
+   <string name="ux_layout_switch">Switch 9-key / 26-key</string>
+   <string name="ux_theme_soft_light">Soft light</string>
+   <string name="ux_theme_soft_dark">Soft dark</string>
++  <string name="ux_history_duration_hour">1 hour</string>
+ </resources>
+diff --git a/srcs/juloo.keyboard2/ClipboardPaneView.java b/srcs/juloo.keyboard2/ClipboardPaneView.java
+index 99cfdfe..32c2b9f 100644
+--- a/srcs/juloo.keyboard2/ClipboardPaneView.java
++++ b/srcs/juloo.keyboard2/ClipboardPaneView.java
+@@ -165,6 +165,20 @@ public final class ClipboardPaneView extends LinearLayout
+     refresh();
+   }
+ 
++  @Override public android.view.WindowInsets onApplyWindowInsets(android.view.WindowInsets insets)
++  {
++    // Keyboard2's window draws behind system bars on API 35+. Unlike the key
++    // canvas, this replacement pane must reserve its own bottom/side insets.
++    // Otherwise the footer (including Undo) is covered by navigation buttons.
++    if (android.os.Build.VERSION.SDK_INT >= 35)
++    {
++      android.graphics.Insets safe = insets.getInsets(
++          android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
++      setPadding(ui.dp(8) + safe.left, 0, ui.dp(8) + safe.right, ui.dp(4) + safe.bottom);
++    }
++    return super.onApplyWindowInsets(insets);
++  }
++
+   @Override protected void onAttachedToWindow()
+   {
+     super.onAttachedToWindow();
+diff --git a/srcs/juloo.keyboard2/pinyin/PinyinInput.java b/srcs/juloo.keyboard2/pinyin/PinyinInput.java
+index c10c314..9eed1f5 100644
+--- a/srcs/juloo.keyboard2/pinyin/PinyinInput.java
++++ b/srcs/juloo.keyboard2/pinyin/PinyinInput.java
+@@ -135,8 +135,12 @@ public final class PinyinInput implements AutoCloseable
+     if (lexicon == null)
+     {
+       try (AssetFileDescriptor asset = context.getAssets().openFd("pinyin/nine_key.dat");
+-          java.io.FileInputStream input = asset.createInputStream())
++          android.os.ParcelFileDescriptor.AutoCloseInputStream input =
++            new android.os.ParcelFileDescriptor.AutoCloseInputStream(
++              android.os.ParcelFileDescriptor.dup(asset.getFileDescriptor())))
+       {
++        // Use a raw, owned duplicate: AssetFileDescriptor streams may expose
++        // asset-relative channels, while this mapping uses an absolute APK offset.
+         lexicon = new NineKeyLexicon(input.getChannel(), asset.getStartOffset(), asset.getLength());
+       }
+       catch (IOException error)
+diff --git a/tools/run-pinyin-instrumentation.sh b/tools/run-pinyin-instrumentation.sh
+index cd1c618..e090ed6 100755
+--- a/tools/run-pinyin-instrumentation.sh
++++ b/tools/run-pinyin-instrumentation.sh
+@@ -15,6 +15,14 @@ pinyin_ime="$pinyin_package/juloo.keyboard2.Keyboard2"
+ pinyin_previous_ime="$("$pinyin_adb" -s "$pinyin_serial" shell settings get secure default_input_method | tr -d '\r')"
+ restore_ime() {
+   pinyin_status=$?
++  for screenshot in pinyin-keyboard pinyin-nine-key clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
++    if "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" \
++        > "$pinyin_root/build/validation/$screenshot.png.tmp" 2>/dev/null; then
++      mv "$pinyin_root/build/validation/$screenshot.png.tmp" "$pinyin_root/build/validation/$screenshot.png"
++    else
++      rm -f "$pinyin_root/build/validation/$screenshot.png.tmp"
++    fi
++  done
+   "$pinyin_adb" -s "$pinyin_serial" logcat -d -v threadtime > "$pinyin_root/build/validation/logcat.txt" || true
+   "$pinyin_adb" -s "$pinyin_serial" shell dumpsys input_method > "$pinyin_root/build/validation/input-method.txt" || true
+   "$pinyin_adb" -s "$pinyin_serial" shell dumpsys window > "$pinyin_root/build/validation/window.txt" || true
+@@ -32,13 +40,3 @@ trap restore_ime EXIT
+   "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/instrumentation.log"
+ grep -q 'PINYIN_SMOKE_OK' "$pinyin_root/build/validation/instrumentation.log"
+ grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/instrumentation.log"
+-"$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat cache/pinyin-keyboard.png \
+-  > "$pinyin_root/build/validation/pinyin-keyboard.png"
+-
+-"$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat cache/pinyin-nine-key.png \
+-  > "$pinyin_root/build/validation/pinyin-nine-key.png"
+-
+-for screenshot in clipboard-light clipboard-dark nine-key-light nine-key-dark; do
+-  "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" \
+-    > "$pinyin_root/build/validation/$screenshot.png"
+-done
