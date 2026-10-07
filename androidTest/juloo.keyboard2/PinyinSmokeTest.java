@@ -397,6 +397,14 @@ public final class PinyinSmokeTest extends Instrumentation
       idle();
       englishCandidate("the");
       key("space");
+      // The keyboard's selection modifier maps a touched Space to cancel.
+      text(activity.plain, "teh");
+      onMain(() -> { activity.plain.setSelection(0, 3); return null; });
+      idle();
+      englishCandidate("the");
+      // Also exercise SPACE_BAR itself with a selection, without remapping.
+      onMain(() -> { Config.globalConfig().handler.key_up(
+        KeyValue.getKeyByName("space"), Pointers.Modifiers.EMPTY); return null; });
       text(activity.plain, " ");
       passed("autocomplete respects cursor position and selection");
 
@@ -975,7 +983,12 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void text(EditText editor, String expected) throws Exception
   {
-    await("text = " + expected, () -> editor.getText().toString().equals(expected));
+    try { await("text = " + expected, () -> editor.getText().toString().equals(expected)); }
+    catch (AssertionError error)
+    {
+      throw new AssertionError("Expected [" + expected + "] but was ["
+        + onMain(() -> editor.getText().toString()) + "]", error);
+    }
   }
 
   private void idle() throws Exception { waitForIdleSync(); getUiAutomation().waitForIdle(100, 15000); }
