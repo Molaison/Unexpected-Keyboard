@@ -28,6 +28,8 @@
     <string name="pref_extra_keys_title">选择要显示的按键</string>
     <string name="pref_extra_keys_custom">添加自定义按键</string>
     <string name="pref_extra_keys_internal">选择要添加到键盘的按键</string>
+    <string name="pref_suggestions_add_space_title">候选后自动加空格</string>
+    <string name="pref_suggestions_add_space_summary">选择英文候选词后添加一个空格</string>
     <string name="pref_category_typing">输入中输入</string>
     <string name="pref_swipe_dist_title">滑动触发距离</string>
     <string name="pref_swipe_dist_summary">输入按键四角的符号需要滑动的距离 (%s)</string>

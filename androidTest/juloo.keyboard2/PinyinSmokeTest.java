@@ -103,6 +103,7 @@ public final class PinyinSmokeTest extends Instrumentation
         finish(Activity.RESULT_OK, result);
         return;
       }
+      englishSuggestionChecks();
       if (!onMain(() -> candidatesView().isShown() && findText(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
         throw new AssertionError("Clipboard toolbar is not discoverable while idle");
       type("nihao");
@@ -274,6 +275,144 @@ public final class PinyinSmokeTest extends Instrumentation
       result.putString("shortMsg", error.toString());
       finish(Activity.RESULT_CANCELED, result);
     }
+  }
+
+  /** Exercise the production handler with real touches and editor state. The
+      candidate is deterministic, so this test needs no downloaded dictionary. */
+  private void englishSuggestionChecks() throws Exception
+  {
+    android.content.SharedPreferences prefs =
+      DirectBootAwarePreferences.get_shared_preferences(getTargetContext());
+    java.util.Map<String, ?> saved = prefs.getAll();
+    try
+    {
+      onMain(() -> { prefs.edit().remove("suggestions_add_space")
+        .putBoolean("space_bar_auto_complete", false).apply(); return null; });
+      if (onMain(() -> Config.globalConfig().suggestions_add_space))
+        throw new AssertionError("Automatic suggestion spacing must default to off");
+      chinese(false);
+      clear();
+      type("teh");
+      KeyEventHandler handler = onMain(() -> (KeyEventHandler)Config.globalConfig().handler);
+      onMain(() -> { prefs.edit().putBoolean("space_bar_auto_complete", true).apply(); return null; });
+      if (onMain(() -> Config.globalConfig().handler) != handler)
+        throw new AssertionError("Setting change unexpectedly recreated the input handler");
+      englishCandidate("the");
+      key("space");
+      text(activity.plain, "the ");
+      key("backspace");
+      text(activity.plain, "teh ");
+      type("x");
+      text(activity.plain, "teh x");
+      passed("autocomplete setting applies immediately and undo preserves the separator");
+
+      clear();
+      type("teh");
+      onMain(() -> { prefs.edit().putBoolean("space_bar_auto_complete", false).apply(); return null; });
+      englishCandidate("the");
+      key("space");
+      text(activity.plain, "teh ");
+      passed("disabling autocomplete applies without restarting the editor");
+
+      clear();
+      type("teh");
+      onMain(() -> { prefs.edit().putBoolean("space_bar_auto_complete", true).apply();
+        Config.globalConfig().handler.suggestion_entered("the"); return null; });
+      text(activity.plain, "the");
+      key("backspace");
+      text(activity.plain, "teh");
+      englishCandidate("the");
+      key("space");
+      text(activity.plain, "teh ");
+      passed("candidate callback keeps default spacing and Space does not repeat an undone correction");
+
+      clear();
+      type("teh");
+      onMain(() -> { prefs.edit().putBoolean("suggestions_add_space", true).apply();
+        Config.globalConfig().handler.suggestion_entered("the"); return null; });
+      text(activity.plain, "the ");
+      key("backspace");
+      text(activity.plain, "teh ");
+      key("backspace");
+      text(activity.plain, "teh");
+      key("backspace");
+      text(activity.plain, "te");
+      passed("optional spacing applies immediately, undo keeps it, and subsequent backspaces delete normally");
+
+      clear();
+      type("teh");
+      englishCandidate("the");
+      key("space");
+      text(activity.plain, "the ");
+      passed("Space autocomplete adds exactly one separator with optional spacing enabled");
+
+      clear();
+      type("teh");
+      onMain(() -> { activity.plain.setSelection(1); return null; });
+      idle();
+      englishCandidate("the");
+      key("space");
+      text(activity.plain, "t eh");
+      clear();
+      type("teh");
+      onMain(() -> { activity.plain.setSelection(0, 3); return null; });
+      idle();
+      englishCandidate("the");
+      key("space");
+      text(activity.plain, " ");
+      passed("autocomplete respects cursor position and selection");
+
+      chinese(true);
+      clear();
+      type("nihaoz");
+      key("backspace");
+      text(activity.plain, "nihao");
+      key("space");
+      text(activity.plain, "你好");
+      clear();
+      type("nihao");
+      tapCandidate("你好");
+      text(activity.plain, "你好");
+      englishCandidate("the");
+      key("space");
+      text(activity.plain, "你好 ");
+      passed("English options preserve full-pinyin composition, candidate selection, and Chinese Space");
+
+      clear();
+      nineKey(true);
+      nineKeys("64426");
+      key("space");
+      text(activity.plain, "你好");
+      key("backspace");
+      text(activity.plain, "你");
+      passed("English spacing and undo do not interfere with nine-key Space or backspace");
+    }
+    finally
+    {
+      onMain(() -> {
+        android.content.SharedPreferences.Editor editor = prefs.edit();
+        for (String key : new String[]{"suggestions_add_space", "space_bar_auto_complete"})
+        {
+          if (saved.containsKey(key)) editor.putBoolean(key, (Boolean)saved.get(key));
+          else editor.remove(key);
+        }
+        editor.apply();
+        return null;
+      });
+    }
+    nineKey(false);
+    clear();
+  }
+
+  private void englishCandidate(String word) throws Exception
+  {
+    onMain(() -> {
+      juloo.keyboard2.suggestions.Suggestions suggestions =
+        ((KeyEventHandler)Config.globalConfig().handler)._suggestions;
+      suggestions.suggestions[0] = word;
+      suggestions.count = 1;
+      return null;
+    });
   }
 
   private void nineKey(boolean enabled) throws Exception

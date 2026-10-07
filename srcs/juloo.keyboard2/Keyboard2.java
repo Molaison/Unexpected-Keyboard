@@ -113,7 +113,7 @@ public class Keyboard2 extends InputMethodService
     refresh_current_dictionary();
     refresh_candidates_view();
     _keyboard_layout_view.setKeyboard(current_layout());
-    _keyeventhandler.started(_config);
+    _keyeventhandler.started();
   }
 
   void incrTextLayout(int delta)
@@ -168,7 +168,7 @@ public class Keyboard2 extends InputMethodService
     _doubaoVoiceInput = new DoubaoVoiceInput(this, recvr);
     _suggestions = new Suggestions(recvr, _config);
     _pinyin = new PinyinInput(this, recvr);
-    _keyeventhandler = new KeyEventHandler(recvr, _suggestions, _pinyin);
+    _keyeventhandler = new KeyEventHandler(_config, recvr, _suggestions, _pinyin);
     KeyValue.Stateful._handler = recvr;
     _config.handler = _keyeventhandler;
     prefs.registerOnSharedPreferenceChangeListener(this);
@@ -226,7 +226,7 @@ public class Keyboard2 extends InputMethodService
     _preferences.edit().putBoolean("chinese_nine_key", _pinyin.isNineKey()).apply();
     _currentSpecialLayout = null;
     _keyboard_layout_view.setKeyboard(current_layout());
-    _keyeventhandler.started(_config);
+    _keyeventhandler.started();
     refresh_candidates_view();
   }
 
@@ -239,7 +239,7 @@ public class Keyboard2 extends InputMethodService
     _preferences.edit().putBoolean("chinese_mode", _pinyin.isChinese()).apply();
     _currentSpecialLayout = null;
     _keyboard_layout_view.setKeyboard(current_layout());
-    _keyeventhandler.started(_config);
+    _keyeventhandler.started();
     refresh_candidates_view();
   }
 
@@ -363,7 +363,7 @@ public class Keyboard2 extends InputMethodService
     refresh_config();
     _currentSpecialLayout = refresh_special_layout();
     _keyboard_layout_view.setKeyboard(current_layout());
-    _keyeventhandler.started(_config);
+    _keyeventhandler.started();
     setInputView(_keyboard_container_view);
     Logs.debug_startup_input_view(info, _config);
     if (_startVoiceAfterPermission)
@@ -586,7 +586,7 @@ public class Keyboard2 extends InputMethodService
         _preferences.edit().putBoolean("chinese_nine_key", _pinyin.isNineKey()).apply();
         _pinyin.setChinese(true);
         _preferences.edit().putBoolean("chinese_mode", true).apply();
-        _keyeventhandler.started(_config);
+        _keyeventhandler.started();
       }
     }
     _keyboard_layout_view.setKeyboard(current_layout());
