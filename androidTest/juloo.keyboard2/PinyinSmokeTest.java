@@ -328,6 +328,44 @@ public final class PinyinSmokeTest extends Instrumentation
 
       clear();
       type("teh");
+      onMain(() -> { Config.globalConfig().handler.suggestion_entered("the"); return null; });
+      text(activity.plain, "the");
+      onMain(() -> { activity.plain.setSelection(1); return null; });
+      idle();
+      key("backspace");
+      text(activity.plain, "he");
+      clear();
+      focus(activity.plain);
+      type("teh");
+      onMain(() -> { Config.globalConfig().handler.suggestion_entered("the"); return null; });
+      text(activity.plain, "the");
+      onMain(() -> { activity.plain.setSelection(0, 3); return null; });
+      idle();
+      key("backspace");
+      text(activity.plain, "");
+      passed("moving the caret or selecting text invalidates candidate undo");
+
+      clear();
+      focus(activity.plain);
+      type("teh");
+      onMain(() -> { Config.globalConfig().handler.suggestion_entered("the"); return null; });
+      text(activity.plain, "the");
+      onMain(() -> { ((KeyEventHandler)Config.globalConfig().handler).paste_from_clipboard_pane("xyz"); return null; });
+      text(activity.plain, "thexyz");
+      key("backspace");
+      text(activity.plain, "thexy");
+      clear();
+      focus(activity.plain);
+      type("teh");
+      onMain(() -> { Config.globalConfig().handler.suggestion_entered("😀"); return null; });
+      text(activity.plain, "😀");
+      key("backspace");
+      text(activity.plain, "teh");
+      passed("clipboard edits invalidate undo and emoji replacement uses UTF-16 cursor offsets");
+
+      clear();
+      focus(activity.plain);
+      type("teh");
       onMain(() -> { prefs.edit().putBoolean("suggestions_add_space", true).apply();
         Config.globalConfig().handler.suggestion_entered("the"); return null; });
       text(activity.plain, "the ");

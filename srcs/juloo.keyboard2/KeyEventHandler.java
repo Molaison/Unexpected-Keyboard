@@ -71,6 +71,14 @@ public final class KeyEventHandler
   /** Selection has been updated. */
   public void selection_updated(int oldSelStart, int newSelStart, int newSelEnd)
   {
+    // Normal replacement callbacks match the saved UTF-16 cursor position.
+    // Moving elsewhere must not apply the saved replacement to unrelated text.
+    if (_last_action == LastAction.SUGGESTION_ENTERED
+        && (newSelStart != newSelEnd || newSelStart != last_replacement_cursor))
+    {
+      _last_action = LastAction.OTHER;
+      last_replaced_word = null;
+    }
     _autocap.selection_updated(oldSelStart, newSelStart);
     _typedword.selection_updated(oldSelStart, newSelStart, newSelEnd);
   }
@@ -173,6 +181,8 @@ public final class KeyEventHandler
       text = text + " ";
     String old = _typedword.get();
     int cur_rel = _typedword.cursor_relative();
+    // Android selection offsets are UTF-16, including for emoji candidates.
+    last_replacement_cursor = _typedword._cursor - old.length() - cur_rel + text.length();
     replace_surrounding_text(old.length() + cur_rel, -cur_rel, text);
     last_replaced_word = old;
     last_replacement_word_len = text.length();
@@ -294,6 +304,9 @@ public final class KeyEventHandler
 
   void send_text(String text)
   {
+    // Clipboard paste and other direct edits may bypass key_up.
+    _last_action = LastAction.OTHER;
+    last_replaced_word = null;
     _recv.beforeManualInput();
     _pinyin.finish();
     InputConnection conn = _recv.getCurrentInputConnection();
@@ -589,6 +602,8 @@ public final class KeyEventHandler
   /** Length of the text before the cursor that should be replaced by
       backspace. */
   int last_replacement_word_len = 0;
+  /** Expected editor cursor after replacement, in UTF-16 chars. */
+  int last_replacement_cursor = 0;
   /** Preserve an inserted separator when undoing, without adding one to a
       suggestion selected with automatic spacing disabled. */
   boolean last_replacement_added_space = false;
