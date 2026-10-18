@@ -5,6 +5,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.text.InputType;
+import android.view.inputmethod.EditorInfo;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.ByteArrayOutputStream;
@@ -264,6 +266,138 @@ public class DoubaoProtocolTest
   private static String utf8(byte[] value)
   {
     return new String(value, StandardCharsets.UTF_8);
+  }
+
+  @Test
+  public void sessionConfigCarriesContextAndVadWindow()
+  {
+    DoubaoProtocol.SessionConfig config = new DoubaoProtocol.SessionConfig();
+    config.deviceId = "123";
+    config.context = "{\"before_context\":\"你好\"}";
+    config.endSmoothWindowMs = 650;
+
+    JsonObject extra = JsonParser.parseString(
+        DoubaoProtocol.buildSessionPayload(config)).getAsJsonObject()
+        .getAsJsonObject("extra");
+
+    assertEquals("{\"before_context\":\"你好\"}", extra.get("context").getAsString());
+    assertEquals(650, extra.get("end_smooth_window_ms").getAsInt());
+    assertTrue(extra.get("use_twopass_retry").getAsBoolean());
+    assertTrue(extra.has("network_change"));
+    assertTrue(extra.has("retry_server_code"));
+    assertTrue(extra.has("s2a_send_commands"));
+  }
+
+  @Test
+  public void sessionConfigOmitsKeysThatWouldBeEmpty()
+  {
+    JsonObject extra = JsonParser.parseString(
+        DoubaoProtocol.buildSessionPayload("123")).getAsJsonObject()
+        .getAsJsonObject("extra");
+
+    assertFalse(extra.has("context"));
+    assertFalse(extra.has("last_uid"));
+    assertFalse(extra.has("asr_params"));
+    assertFalse(extra.has("app_version"));
+  }
+
+  @Test
+  public void releaseFrameAsksForTwopassAndFinishesAudio()
+  {
+    byte[] request = DoubaoProtocol.buildAudioRequest("request",
+        new byte[]{9}, DoubaoProtocol.FRAME_LAST, 7, true, true);
+    String payload = utf8(decodeLengthDelimitedFields(request).get(6));
+
+    assertTrue(payload.contains("\"force_asr_twopass\":true"));
+    assertTrue(payload.contains("\"finish_audio\":true"));
+  }
+
+  @Test
+  public void plainAudioFrameKeepsAnEmptyExtra()
+  {
+    byte[] request = DoubaoProtocol.buildAudioRequest("request",
+        new byte[]{1}, DoubaoProtocol.FRAME_MIDDLE, 5);
+    String payload = utf8(decodeLengthDelimitedFields(request).get(6));
+
+    assertFalse(payload.contains("force_asr_twopass"));
+    assertFalse(payload.contains("finish_audio"));
+  }
+
+  @Test
+  public void textContextBuildsCursorAndHistory()
+  {
+    DoubaoTextContext context = new DoubaoTextContext();
+    context.setEditor("前面的话", "后面的话", "com.example.chat");
+    context.addTurn("昨天说了什么", false);
+    context.setHotwords(Arrays.asList("豆包", "语音输入"));
+
+    JsonObject root = JsonParser.parseString(context.build()).getAsJsonObject();
+    assertEquals("前面的话", root.get("before_context").getAsString());
+    assertEquals("后面的话", root.get("after_context").getAsString());
+    assertEquals(1, root.getAsJsonArray("chat").size());
+    assertEquals("com.example.chat", root.getAsJsonArray("chat").get(0)
+        .getAsJsonObject().get("app_apk_name").getAsString());
+    assertEquals(2, root.getAsJsonArray("hotwords").size());
+  }
+
+  @Test
+  public void textContextTruncatesAroundTheCursor()
+  {
+    DoubaoTextContext.Flags flags = new DoubaoTextContext.Flags();
+    flags.maxBeforeLength = 4;
+    flags.maxAfterLength = 4;
+    DoubaoTextContext context = new DoubaoTextContext(flags);
+    context.setEditor("0123456789", "abcdefghij", "app");
+
+    JsonObject root = JsonParser.parseString(context.build()).getAsJsonObject();
+    assertEquals("6789", root.get("before_context").getAsString());
+    assertEquals("abcd", root.get("after_context").getAsString());
+  }
+
+  @Test
+  public void cloudPayloadUsesUnpaddedBase64()
+  {
+    JsonObject inner = new JsonObject();
+    inner.addProperty("version", 0);
+    String encoded = DoubaoCloudPorts.base64Raw(inner);
+
+    assertEquals("eyJ2ZXJzaW9uIjowfQ", encoded);
+    assertFalse(encoded.endsWith("="));
+    assertTrue(encoded.length() % 4 != 1);
+  }
+
+  @Test
+  public void sensitiveEditorsNeverAllowContext()
+  {
+    for (int variation : new int[]{InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+        InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD})
+      assertFalse(DoubaoTextContext.allowsEditorContext(
+          InputType.TYPE_CLASS_TEXT | variation | InputType.TYPE_TEXT_FLAG_MULTI_LINE, 0));
+    assertFalse(DoubaoTextContext.allowsEditorContext(
+        InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD, 0));
+    assertFalse(DoubaoTextContext.allowsEditorContext(InputType.TYPE_CLASS_TEXT,
+        EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING));
+    assertFalse(DoubaoTextContext.allowsEditorContext(InputType.TYPE_NULL, 0));
+  }
+
+  @Test
+  public void ordinaryEditorsAllowContext()
+  {
+    assertTrue(DoubaoTextContext.allowsEditorContext(InputType.TYPE_CLASS_TEXT, 0));
+    assertTrue(DoubaoTextContext.allowsEditorContext(
+        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS, 0));
+    assertTrue(DoubaoTextContext.allowsEditorContext(InputType.TYPE_CLASS_NUMBER, 0));
+  }
+
+  @Test
+  public void cloudPortPathsMatchTheReferenceClient()
+  {
+    assertEquals("/api/v3/context/ime/user_words", DoubaoCloudPorts.PATH_USER_WORDS);
+    assertEquals("/api/v3/context/ime/ner", DoubaoCloudPorts.PATH_NER);
+    assertEquals("/api/v1/user/get_config", DoubaoCloudPorts.PATH_USER_CONFIG);
+    assertEquals("/obric/ime/cloud/gethotword", DoubaoCloudPorts.PATH_HOTWORD);
+    assertEquals("SYlxZr6LnvBaIVmF", DoubaoCloudPorts.API_APP_KEY);
   }
 
   private static final class TestProtoWriter

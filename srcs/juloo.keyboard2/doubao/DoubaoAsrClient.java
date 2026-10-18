@@ -120,6 +120,7 @@ public final class DoubaoAsrClient
     private volatile boolean recognizedText;
     private volatile boolean closed;
     private boolean started;
+    private String sessionContext = "";
     private boolean finishing;
     private int bufferedBytes;
     private long timestampOffset;
@@ -146,28 +147,48 @@ public final class DoubaoAsrClient
       catch (IOException error) { recover(error); }
     }
 
-    public void startSession() throws IOException
+    public void startSession() throws IOException { startSession(""); }
+
+    /**
+     * @param contextJson {@code extra.context}, built by
+     *        {@link DoubaoTextContext}; empty to omit
+     */
+    public void startSession(String contextJson) throws IOException
     {
+      sessionContext = contextJson == null ? "" : contextJson;
       started = true;
-      try { connection.startSession(); }
+      try { connection.startSession(sessionContext); }
       catch (IOException error) { recover(error); }
     }
 
     public void sendAudio(byte[] frame, int state, long timestampMs) throws IOException
+    {
+      sendAudio(frame, state, timestampMs, false, false);
+    }
+
+    /**
+     * @param forceTwopass {@code extra.force_asr_twopass}: the reference client
+     *        sets it on the frame sent when the key is released
+     * @param finishAudio  {@code extra.finish_audio} on the last frame
+     */
+    public void sendAudio(byte[] frame, int state, long timestampMs,
+        boolean forceTwopass, boolean finishAudio) throws IOException
     {
       if (cancelled) throw new IOException("Voice input was cancelled");
       if (!refreshUsed && !recognizedText)
       {
         if (bufferedBytes + frame.length > MAX_RECOVERY_BYTES)
           throw new IOException("No ASR response before the recovery audio buffer filled");
-        bufferedAudio.add(new AudioFrame(frame.clone(), state, timestampMs));
+        bufferedAudio.add(new AudioFrame(frame.clone(), state, timestampMs,
+            forceTwopass, finishAudio));
         bufferedBytes += frame.length;
       }
       else if (recognizedText) clearBufferedAudio();
       try
       {
         paceReplay(timestampMs);
-        connection.sendAudio(frame, state, timestampMs + timestampOffset);
+        connection.sendAudio(frame, state, timestampMs + timestampOffset,
+            forceTwopass, finishAudio);
       }
       catch (IOException error) { recover(error); }
     }
@@ -240,7 +261,7 @@ public final class DoubaoAsrClient
       if (cancelled) throw new IOException("Voice input was cancelled during credential refresh");
       connection = newConnection(replacement);
       connection.connectAndStartTask();
-      if (started) connection.startSession();
+      if (started) connection.startSession(sessionContext);
       if (!bufferedAudio.isEmpty())
       {
         firstReplayTimestamp = bufferedAudio.get(0).timestamp;
@@ -251,7 +272,8 @@ public final class DoubaoAsrClient
       {
         if (cancelled) throw new IOException("Voice input was cancelled during audio replay");
         paceReplay(audio.timestamp);
-        connection.sendAudio(audio.bytes, audio.state, audio.timestamp + timestampOffset);
+        connection.sendAudio(audio.bytes, audio.state, audio.timestamp + timestampOffset,
+            audio.forceTwopass, audio.finishAudio);
       }
       clearBufferedAudio();
       if (finishing) connection.finish();
@@ -302,8 +324,17 @@ public final class DoubaoAsrClient
       final byte[] bytes;
       final int state;
       final long timestamp;
-      AudioFrame(byte[] bytes, int state, long timestamp)
-      { this.bytes = bytes; this.state = state; this.timestamp = timestamp; }
+      final boolean forceTwopass;
+      final boolean finishAudio;
+      AudioFrame(byte[] bytes, int state, long timestamp, boolean forceTwopass,
+          boolean finishAudio)
+      {
+        this.bytes = bytes;
+        this.state = state;
+        this.timestamp = timestamp;
+        this.forceTwopass = forceTwopass;
+        this.finishAudio = finishAudio;
+      }
     }
   }
 
@@ -370,20 +401,30 @@ public final class DoubaoAsrClient
         .build();
     }
 
-    public void startSession() throws IOException
+    public void startSession() throws IOException { startSession(""); }
+
+    public void startSession(String contextJson) throws IOException
     {
-      send(DoubaoProtocol.buildStartSession(requestId, credentials.token,
-          credentials.deviceId));
+      DoubaoProtocol.SessionConfig config = new DoubaoProtocol.SessionConfig();
+      config.deviceId = credentials.deviceId;
+      config.context = contextJson == null ? "" : contextJson;
+      send(DoubaoProtocol.buildStartSession(requestId, credentials.token, config));
       awaitControl(DoubaoProtocol.ResponseType.SESSION_STARTED,
           HANDSHAKE_TIMEOUT_MS);
-      Log.i(TAG, "session_started");
+      Log.i(TAG, "session_started context_chars=" + config.context.length());
     }
 
     public void sendAudio(byte[] opusFrame, int frameState, long timestampMs)
         throws IOException
     {
+      sendAudio(opusFrame, frameState, timestampMs, false, false);
+    }
+
+    public void sendAudio(byte[] opusFrame, int frameState, long timestampMs,
+        boolean forceTwopass, boolean finishAudio) throws IOException
+    {
       send(DoubaoProtocol.buildAudioRequest(requestId, opusFrame, frameState,
-          timestampMs));
+          timestampMs, forceTwopass, finishAudio));
     }
 
     public void finish() throws IOException

@@ -2,6 +2,7 @@ package juloo.keyboard2.doubao;
 
 import android.app.Instrumentation;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.EditText;
@@ -10,6 +11,7 @@ import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -117,7 +119,11 @@ public final class DoubaoRegressionTest
 
     checkEditor(test);
     passed(test, "sentence boundaries keep recording; final revisions and subsequent utterances preserve editor text");
-    passed(test, "DOUBAO_REGRESSION_OK checks=6");
+    checkContextPrivacy(test);
+    passed(test, "context snapshots follow the cursor; private editors are never read");
+    checkLateCallbacks(test);
+    passed(test, "late callbacks and completion cannot modify a replacement editor or run");
+    passed(test, "DOUBAO_REGRESSION_OK checks=8");
   }
 
   private static void checkEditor(Instrumentation test) throws Exception
@@ -159,6 +165,100 @@ public final class DoubaoRegressionTest
     }
   }
 
+  /** No start/open calls: this exercises the actual Android cursor API offline. */
+  private static void checkContextPrivacy(Instrumentation test) throws Exception
+  {
+    try (Editor editor = new Editor(test, "beforeAFTER"))
+    {
+      Method build = DoubaoVoiceInput.class.getDeclaredMethod("buildContextJson", InputConnection.class);
+      build.setAccessible(true);
+      EditorInfo info = new EditorInfo();
+      info.inputType = InputType.TYPE_CLASS_TEXT;
+      AtomicReference<String> context = new AtomicReference<>();
+      test.runOnMainSync(() -> {
+        editor.view.setSelection(6);
+        editor.voice.setEditorInfo(info);
+        editor.voice.setAppPackage("test.editor");
+        try { context.set((String)build.invoke(editor.voice, editor.run.connection)); }
+        catch (Exception error) { throw new AssertionError(error); }
+      });
+      com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(context.get()).getAsJsonObject();
+      if (!"before".equals(json.get("before_context").getAsString())
+          || !"AFTER".equals(json.get("after_context").getAsString()))
+        throw new AssertionError("Context did not use the current cursor: " + context.get());
+
+      InputConnection forbidden = (InputConnection)Proxy.newProxyInstance(
+          InputConnection.class.getClassLoader(), new Class<?>[] {InputConnection.class},
+          (proxy, method, args) -> { throw new AssertionError("Private editor was accessed: " + method.getName()); });
+      int[] privateTypes = {
+        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD,
+        InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD,
+        InputType.TYPE_NULL
+      };
+      test.runOnMainSync(() -> {
+        try
+        {
+          for (int inputType : privateTypes)
+          {
+            info.inputType = inputType;
+            editor.voice.setEditorInfo(info);
+            if (!"".equals(build.invoke(editor.voice, forbidden)))
+              throw new AssertionError("Private editor retained context");
+          }
+          info.inputType = InputType.TYPE_CLASS_TEXT;
+          info.imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
+          editor.voice.setEditorInfo(info);
+          if (!"".equals(build.invoke(editor.voice, forbidden)))
+            throw new AssertionError("No-personalized-learning editor retained context");
+          editor.voice.setEditorInfo(null);
+          if (!"".equals(build.invoke(editor.voice, forbidden)))
+            throw new AssertionError("Unknown editor retained context");
+        }
+        catch (Exception error) { throw new AssertionError(error); }
+      });
+    }
+  }
+
+  private static void checkLateCallbacks(Instrumentation test) throws Exception
+  {
+    try (Editor editor = new Editor(test, "original"))
+    {
+      DoubaoVoiceInput.SessionRun old = editor.run;
+      test.runOnMainSync(() -> editor.voice.cancel());
+      DoubaoVoiceInput.SessionRun replacement = editor.voice.new SessionRun(old.connection);
+      set(editor.voice, "activeRun", replacement);
+      old.onResponse(response(finalJson("stale")));
+      editor.complete(); // Completion from the cancelled run must not clear replacement.
+      if (!editor.voice.isActive() || !editor.text().equals("original"))
+        throw new AssertionError("A cancelled run affected its replacement");
+      replacement.onResponse(response(finalJson("current")));
+      if (!editor.text().equals("originalcurrent"))
+        throw new AssertionError("The replacement stopped receiving results");
+      AtomicReference<EditText> next = new AtomicReference<>();
+      test.runOnMainSync(() -> {
+        EditText view = new EditText(test.getTargetContext());
+        view.setText("new editor");
+        view.setSelection(view.length());
+        next.set(view);
+        editor.currentConnection = view.onCreateInputConnection(new EditorInfo());
+      });
+      replacement.onResponse(response(finalJson("wrong editor")));
+      test.waitForIdleSync();
+      if (editor.voice.isActive() || editor.failures.size() != 1
+          || !editor.failures.get(0).contains("target editor changed"))
+        throw new AssertionError("A changed editor did not invalidate the voice run");
+      editor.failures.clear();
+      test.runOnMainSync(() -> {
+        if (!"new editor".equals(next.get().getText().toString()))
+          throw new AssertionError("A stale voice callback changed the next editor");
+      });
+      if (!editor.text().equals("originalcurrent"))
+        throw new AssertionError("A stale voice callback changed the previous editor");
+    }
+  }
+
   private static String finalJson(String text)
   {
     return finalJson(text, 0);
@@ -182,6 +282,7 @@ public final class DoubaoRegressionTest
     EditText view;
     DoubaoVoiceInput voice;
     DoubaoVoiceInput.SessionRun run;
+    InputConnection currentConnection;
 
     Editor(Instrumentation test, String prefix) throws Exception
     {
@@ -191,8 +292,9 @@ public final class DoubaoRegressionTest
         view.setText(prefix);
         view.setSelection(view.length());
         InputConnection connection = view.onCreateInputConnection(new EditorInfo());
+        currentConnection = connection;
         voice = new DoubaoVoiceInput(test.getTargetContext(), new DoubaoVoiceInput.Host() {
-          @Override public InputConnection getCurrentInputConnection() { return connection; }
+          @Override public InputConnection getCurrentInputConnection() { return currentConnection; }
           @Override public void onVoiceStateChanged(DoubaoVoiceInput.State state) { }
           @Override public void onVoiceFailure(String message) { failures.add(message); }
         });
