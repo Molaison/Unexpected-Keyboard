@@ -265,6 +265,11 @@ public class Keyboard2 extends InputMethodService
     _voicePushToTalkActive = false;
     _doubaoVoiceInput.cancel();
     _config.editor_config.refresh(info, getResources());
+    // Feed the editor identity into the ASR session: the server uses the text
+    // around the cursor plus the target package to re-rank the transcript, which
+    // is the single biggest accuracy factor in the reference implementation.
+    _doubaoVoiceInput.setEditorInfo(info);
+    _doubaoVoiceInput.setAppPackage(info != null ? info.packageName : null);
     refresh_config();
     _currentSpecialLayout = refresh_special_layout();
     _keyboard_layout_view.setKeyboard(current_layout());

@@ -10,19 +10,38 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.util.Log;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import androidx.core.content.ContextCompat;
 import io.github.jaredmdobson.concentus.OpusApplication;
 import io.github.jaredmdobson.concentus.OpusEncoder;
 import io.github.jaredmdobson.concentus.OpusException;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Coordinates microphone capture, streaming ASR, and InputConnection updates. */
+/**
+ * Coordinates microphone capture, streaming ASR, and InputConnection updates.
+ *
+ * <p>Result handling mirrors {@code AsrProcess.onTextResponse} and the
+ * {@code c1} text assembler of the reference implementation:
+ *
+ * <ul>
+ *   <li>each interim/batch result carries the whole current segment, so the
+ *       composing text is replaced rather than appended;</li>
+ *   <li>a VAD-finished segment is folded into {@code committedPrefix} and can
+ *       still be rewritten by the later {@code twopass}/{@code threepass}
+ *       passes, which is why the commit boundary is tracked;</li>
+ *   <li>after the key is released the socket stays open for
+ *       {@code finish_wait_timeout} while the final pass runs, surfaced as
+ *       {@link State#OPTIMIZING}.</li>
+ * </ul>
+ */
 public final class DoubaoVoiceInput
 {
   private static final String TAG = "Unexpected/DoubaoASR";
@@ -30,7 +49,8 @@ public final class DoubaoVoiceInput
   private static final int SAMPLES_PER_FRAME = 320;
   private static final int PCM_BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2;
   private static final int FRAME_DURATION_MS = 20;
-  private static final long FINAL_DRAIN_TIMEOUT_MS = 1500;
+  /** {@code finish_wait_timeout} of the reference client. */
+  private static final long DEFAULT_OPTIMIZE_TIMEOUT_MS = 10000;
   private static final long INTERIM_UPDATE_INTERVAL_NS = 150000000L;
 
   public enum State
@@ -38,7 +58,8 @@ public final class DoubaoVoiceInput
     IDLE,
     CONNECTING,
     LISTENING,
-    FINISHING
+    /** Key released; waiting for the final pass. "识别优化中". */
+    OPTIMIZING
   }
 
   public interface Host
@@ -52,11 +73,15 @@ public final class DoubaoVoiceInput
   private final Host host;
   private final Handler mainHandler;
   private final DoubaoAsrClient asrClient;
+  private final DoubaoTextContext textContext = new DoubaoTextContext();
   private final ExecutorService executor;
   private final Object lock = new Object();
 
   private SessionRun activeRun;
   private boolean destroyed;
+  private long optimizeTimeoutMs = DEFAULT_OPTIMIZE_TIMEOUT_MS;
+  private EditorInfo pendingEditor;
+  private String pendingAppPackage = "";
 
   public DoubaoVoiceInput(Context context, Host host)
   {
@@ -74,6 +99,39 @@ public final class DoubaoVoiceInput
         return thread;
       }
     });
+  }
+
+  /** Shared context store; callers keep it fed with editor snapshots. */
+  public DoubaoTextContext textContext()
+  {
+    return textContext;
+  }
+
+  public DoubaoAsrClient client()
+  {
+    return asrClient;
+  }
+
+  public void setOptimizeTimeoutMs(long timeoutMs)
+  {
+    if (timeoutMs > 0)
+      optimizeTimeoutMs = timeoutMs;
+  }
+
+  /**
+   * Records the editor that will receive the transcript. Mirrors the
+   * {@code EditorViewInfo} the official client feeds into
+   * {@code AsrContext.C()}; call it whenever the input field changes.
+   */
+  public void setEditorInfo(EditorInfo info)
+  {
+    pendingEditor = info;
+  }
+
+  /** Package name used for the {@code app_apk_name} field of chat history. */
+  public void setAppPackage(String packageName)
+  {
+    pendingAppPackage = packageName == null ? "" : packageName;
   }
 
   public boolean isActive()
@@ -167,6 +225,9 @@ public final class DoubaoVoiceInput
       throw new IllegalStateException("No active InputConnection for voice input");
 
     SessionRun run = new SessionRun(connection);
+    run.editor = pendingEditor;
+    textContext.setEditor(textBeforeCursor(connection), textAfterCursor(connection),
+        pendingAppPackage);
     activeRun = run;
     Log.i(TAG, "voice_start_requested");
     host.onVoiceStateChanged(State.CONNECTING);
@@ -178,14 +239,24 @@ public final class DoubaoVoiceInput
     if (activeRun.stopRequested)
       return;
     activeRun.stopRequested = true;
-    host.onVoiceStateChanged(State.FINISHING);
+    host.onVoiceStateChanged(State.OPTIMIZING);
   }
 
-  private void handleTranscript(SessionRun run,
-      DoubaoProtocol.Response response)
+  // ---------------------------------------------------------------- results
+
+  /**
+   * Applies one server result to the editor.
+   *
+   * <p>Live traffic shows that {@code results[0]} is always the merged, full
+   * transcript for the session so far, so every update replaces the composing
+   * text outright. {@code stableText} is the part the server already froze; it
+   * is only used for logging and for the chat history.
+   */
+  private void applyResult(SessionRun run, DoubaoProtocol.Response response,
+      boolean commitFinal)
   {
     mainHandler.post(() -> {
-      if (!isCurrent(run) || run.cancelled || response.text.isEmpty())
+      if (!isCurrent(run) || run.cancelled)
         return;
       if (host.getCurrentInputConnection() != run.connection)
       {
@@ -193,24 +264,33 @@ public final class DoubaoVoiceInput
         return;
       }
 
+      final String display = response.text;
+      if (display.isEmpty())
+        return;
+
       final boolean accepted;
-      if (response.type == DoubaoProtocol.ResponseType.FINAL_RESULT)
+      if (commitFinal)
       {
-        accepted = run.connection.commitText(response.text, 1);
+        // The whole utterance is final: commit it and close the composing span.
+        accepted = run.connection.setComposingText(display, 1)
+            && run.connection.finishComposingText();
         run.hasComposingText = false;
-        run.latestInterim = "";
+        run.committedPrefix = display;
+        run.liveSegment = "";
       }
       else
       {
-        accepted = run.connection.setComposingText(response.text, 1);
+        accepted = run.connection.setComposingText(display, 1);
         run.hasComposingText = true;
-        run.latestInterim = response.text;
+        run.liveSegment = display;
       }
+      run.lastStableText = response.stableText;
       if (!accepted)
         failInputConnection(run, "The target editor rejected voice text");
       else
-        Log.i(TAG, "transcript_applied final=" + response.isFinal
-            + " chars=" + response.text.length());
+        Log.i(TAG, "transcript_applied final=" + commitFinal
+            + " stableChars=" + response.stableText.length()
+            + " chars=" + display.length());
     });
   }
 
@@ -236,7 +316,7 @@ public final class DoubaoVoiceInput
     if (!run.connection.finishComposingText())
       host.onVoiceFailure("The target editor rejected the final voice text");
     run.hasComposingText = false;
-    run.latestInterim = "";
+    run.liveSegment = "";
   }
 
   private void complete(SessionRun run, Throwable problem)
@@ -250,6 +330,8 @@ public final class DoubaoVoiceInput
       }
       if (run.hasComposingText)
         finishComposingText(run);
+      if (!run.committedPrefix.isEmpty())
+        textContext.addTurn(run.committedPrefix, true);
       if (problem != null)
       {
         Log.e(TAG, "Voice input failed", problem);
@@ -269,6 +351,34 @@ public final class DoubaoVoiceInput
     }
   }
 
+  private static String textBeforeCursor(InputConnection connection)
+  {
+    final CharSequence text;
+    try
+    {
+      text = connection.getTextBeforeCursor(256, 0);
+    }
+    catch (RuntimeException e)
+    {
+      return "";
+    }
+    return text == null ? "" : text.toString();
+  }
+
+  private static String textAfterCursor(InputConnection connection)
+  {
+    final CharSequence text;
+    try
+    {
+      text = connection.getTextAfterCursor(256, 0);
+    }
+    catch (RuntimeException e)
+    {
+      return "";
+    }
+    return text == null ? "" : text.toString();
+  }
+
   private void requireMainThread()
   {
     if (Looper.myLooper() != Looper.getMainLooper())
@@ -283,19 +393,39 @@ public final class DoubaoVoiceInput
     return message;
   }
 
+  private void applySessionConfig(SessionRun run)
+  {
+    DoubaoProtocol.SessionConfig config = run.session.sessionConfig();
+    config.context = textContext.build();
+    config.inputMode = "tool";
+    if (run.editor != null)
+      config.removeSpaceBetweenHanNum
+          = (run.editor.inputType & EditorInfo.TYPE_CLASS_NUMBER) == 0;
+    Log.i(TAG, "session_context_chars=" + config.context.length());
+  }
+
   final class SessionRun implements Runnable, DoubaoAsrClient.Listener
   {
     final InputConnection connection;
     final AtomicReference<IOException> asyncFailure =
         new AtomicReference<IOException>();
+    final List<String> committedSegments = new ArrayList<String>();
 
     volatile DoubaoAsrClient.Session session;
     volatile AudioRecord recorder;
     volatile boolean stopRequested;
     volatile boolean cancelled;
+    volatile EditorInfo editor;
 
+    DoubaoAsrClient.Credentials credentials;
     boolean hasComposingText;
-    String latestInterim = "";
+    /** Text already folded in from earlier VAD-finished segments. */
+    String committedPrefix = "";
+    /** Current mutable segment; replaced on every server result. */
+    String liveSegment = "";
+    /** Last {@code results[i].text} the server reported as frozen. */
+    String lastStableText = "";
+    long lastSeqId = -1L;
     long lastInterimUpdateNs;
 
     SessionRun(InputConnection connection)
@@ -312,6 +442,7 @@ public final class DoubaoVoiceInput
       {
         session = asrClient.open(this);
         throwIfCancelledOrFailed();
+        applySessionConfig(this);
         session.startSession();
         throwIfCancelledOrFailed();
         mainHandler.post(() -> {
@@ -322,10 +453,14 @@ public final class DoubaoVoiceInput
         streamAudio();
         throwIfCancelledOrFailed();
         session.finish();
-        boolean receivedFinal = session.awaitFinalOrFinished(
-            FINAL_DRAIN_TIMEOUT_MS);
-        if (!receivedFinal)
-          Log.w(TAG, "Final ASR drain timed out; keeping the latest transcript");
+        mainHandler.post(() -> {
+          if (isCurrent(this) && !cancelled)
+            host.onVoiceStateChanged(State.OPTIMIZING);
+        });
+        boolean refined = session.awaitOptimized(optimizeTimeoutMs);
+        if (!refined)
+          Log.w(TAG, "Refinement window elapsed without a new result");
+        session.awaitFinalOrFinished(1000L);
       }
       catch (Throwable error)
       {
@@ -411,8 +546,11 @@ public final class DoubaoVoiceInput
         audioRecord.stop();
         Arrays.fill(pcmFrame, (short)0);
         byte[] finalOpus = encoder.encode(pcmFrame);
+        // The last frame carries extra.finish_audio and requests the two-pass
+        // refinement pass, exactly like SAMICoreBlock.extra in the reference
+        // client after the key is released.
         session.sendAudio(finalOpus, DoubaoProtocol.FRAME_LAST,
-            startedAtMs + frameIndex * FRAME_DURATION_MS);
+            startedAtMs + frameIndex * FRAME_DURATION_MS, true, true);
         Log.i(TAG, "audio_last_sent frames=" + frameIndex);
       }
     }
@@ -483,19 +621,25 @@ public final class DoubaoVoiceInput
       switch (response.type)
       {
         case INTERIM_RESULT:
+        {
           long now = System.nanoTime();
-          if (now - lastInterimUpdateNs >= INTERIM_UPDATE_INTERVAL_NS)
+          boolean newSeq = response.seqId >= 0 && response.seqId != lastSeqId;
+          if (newSeq || now - lastInterimUpdateNs >= INTERIM_UPDATE_INTERVAL_NS)
           {
             lastInterimUpdateNs = now;
-            handleTranscript(this, response);
+            applyResult(this, response, false);
           }
-          if (response.vadFinished)
-            stopRequested = true;
+          lastSeqId = response.seqId;
+          break;
+        }
+        case STABLE_RESULT:
+          // A segment was frozen by VAD. The text may still be rewritten by the
+          // final pass, so it stays in the composing span.
+          applyResult(this, response, false);
+          committedSegments.add(response.text);
           break;
         case FINAL_RESULT:
-          handleTranscript(this, response);
-          if (response.vadFinished)
-            stopRequested = true;
+          applyResult(this, response, true);
           break;
         case SESSION_FINISHED:
           stopRequested = true;
