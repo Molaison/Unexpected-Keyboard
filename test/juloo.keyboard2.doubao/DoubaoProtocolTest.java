@@ -5,6 +5,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.text.InputType;
+import android.view.inputmethod.EditorInfo;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.ByteArrayOutputStream;
@@ -359,8 +361,33 @@ public class DoubaoProtocolTest
     inner.addProperty("version", 0);
     String encoded = DoubaoCloudPorts.base64Raw(inner);
 
+    assertEquals("eyJ2ZXJzaW9uIjowfQ", encoded);
     assertFalse(encoded.endsWith("="));
     assertTrue(encoded.length() % 4 != 1);
+  }
+
+  @Test
+  public void sensitiveEditorsNeverAllowContext()
+  {
+    for (int variation : new int[]{InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+        InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD})
+      assertFalse(DoubaoTextContext.allowsEditorContext(
+          InputType.TYPE_CLASS_TEXT | variation | InputType.TYPE_TEXT_FLAG_MULTI_LINE, 0));
+    assertFalse(DoubaoTextContext.allowsEditorContext(
+        InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD, 0));
+    assertFalse(DoubaoTextContext.allowsEditorContext(InputType.TYPE_CLASS_TEXT,
+        EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING));
+    assertFalse(DoubaoTextContext.allowsEditorContext(InputType.TYPE_NULL, 0));
+  }
+
+  @Test
+  public void ordinaryEditorsAllowContext()
+  {
+    assertTrue(DoubaoTextContext.allowsEditorContext(InputType.TYPE_CLASS_TEXT, 0));
+    assertTrue(DoubaoTextContext.allowsEditorContext(
+        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS, 0));
+    assertTrue(DoubaoTextContext.allowsEditorContext(InputType.TYPE_CLASS_NUMBER, 0));
   }
 
   @Test

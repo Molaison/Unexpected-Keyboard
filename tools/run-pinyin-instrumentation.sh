@@ -40,3 +40,11 @@ trap restore_ime EXIT
   "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/instrumentation.log"
 grep -q 'PINYIN_SMOKE_OK' "$pinyin_root/build/validation/instrumentation.log"
 grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/instrumentation.log"
+
+# This suite uses only fake WebSockets and local EditTexts. Never enable the
+# separate voice_live/voice_microphone modes in credential-free PR CI.
+"$pinyin_adb" -s "$pinyin_serial" shell am instrument -w -r \
+  -e voice_regression true \
+  "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/doubao-regression.log"
+grep -q 'DOUBAO_REGRESSION_OK' "$pinyin_root/build/validation/doubao-regression.log"
+grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/doubao-regression.log"

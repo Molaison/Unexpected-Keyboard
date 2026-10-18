@@ -175,6 +175,13 @@ public final class DoubaoVoiceInput
 
   private String buildContextJson(InputConnection connection)
   {
+    // Never read or transmit surrounding text from sensitive/private editors.
+    if (pendingEditor == null || !DoubaoTextContext.allowsEditorContext(
+        pendingEditor.inputType, pendingEditor.imeOptions))
+    {
+      textContext.clear();
+      return "";
+    }
     textContext.setEditor(cursorText(connection, true), cursorText(connection, false),
         pendingAppPackage);
     return textContext.build();

@@ -172,6 +172,7 @@ public interface InputConnection {
 "android/view/inputmethod/EditorInfo.java": """
 package android.view.inputmethod;
 public class EditorInfo {
+  public static final int IME_FLAG_NO_PERSONALIZED_LEARNING = 0x1000000;
   public static final int TYPE_CLASS_TEXT = 0x00000001;
   public static final int TYPE_CLASS_NUMBER = 0x00000002;
   public static final int TYPE_CLASS_PHONE = 0x00000003;
@@ -182,6 +183,23 @@ public class EditorInfo {
   public String packageName;
   public int fieldId;
   public String fieldName;
+}
+""",
+
+"android/text/InputType.java": """
+package android.text;
+public interface InputType {
+  int TYPE_NULL = 0;
+  int TYPE_MASK_CLASS = 0xf;
+  int TYPE_MASK_VARIATION = 0xff0;
+  int TYPE_CLASS_TEXT = 1;
+  int TYPE_CLASS_NUMBER = 2;
+  int TYPE_TEXT_VARIATION_EMAIL_ADDRESS = 0x20;
+  int TYPE_TEXT_VARIATION_PASSWORD = 0x80;
+  int TYPE_TEXT_VARIATION_VISIBLE_PASSWORD = 0x90;
+  int TYPE_TEXT_VARIATION_WEB_PASSWORD = 0xe0;
+  int TYPE_NUMBER_VARIATION_PASSWORD = 0x10;
+  int TYPE_TEXT_FLAG_MULTI_LINE = 0x20000;
 }
 """,
 

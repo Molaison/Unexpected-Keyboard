@@ -1,5 +1,7 @@
 package juloo.keyboard2.doubao;
 
+import android.text.InputType;
+import android.view.inputmethod.EditorInfo;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import java.util.ArrayDeque;
@@ -31,6 +33,22 @@ import java.util.List;
  */
 public final class DoubaoTextContext
 {
+  /** Checks editor privacy flags before any surrounding text is read. */
+  static boolean allowsEditorContext(int inputType, int imeOptions)
+  {
+    if ((imeOptions & EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0)
+      return false;
+    int inputClass = inputType & InputType.TYPE_MASK_CLASS;
+    int variation = inputType & InputType.TYPE_MASK_VARIATION;
+    if (inputClass == InputType.TYPE_CLASS_TEXT)
+      return variation != InputType.TYPE_TEXT_VARIATION_PASSWORD
+          && variation != InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+          && variation != InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD;
+    if (inputClass == InputType.TYPE_CLASS_NUMBER)
+      return variation != InputType.TYPE_NUMBER_VARIATION_PASSWORD;
+    return false;
+  }
+
   /** Mirrors the per-key toggles the official client applies. */
   public static final class Flags
   {

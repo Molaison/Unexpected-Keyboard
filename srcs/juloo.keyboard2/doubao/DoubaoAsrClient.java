@@ -120,6 +120,7 @@ public final class DoubaoAsrClient
     private volatile boolean recognizedText;
     private volatile boolean closed;
     private boolean started;
+    private String sessionContext = "";
     private boolean finishing;
     private int bufferedBytes;
     private long timestampOffset;
@@ -154,8 +155,9 @@ public final class DoubaoAsrClient
      */
     public void startSession(String contextJson) throws IOException
     {
+      sessionContext = contextJson == null ? "" : contextJson;
       started = true;
-      try { connection.startSession(contextJson); }
+      try { connection.startSession(sessionContext); }
       catch (IOException error) { recover(error); }
     }
 
@@ -259,7 +261,7 @@ public final class DoubaoAsrClient
       if (cancelled) throw new IOException("Voice input was cancelled during credential refresh");
       connection = newConnection(replacement);
       connection.connectAndStartTask();
-      if (started) connection.startSession();
+      if (started) connection.startSession(sessionContext);
       if (!bufferedAudio.isEmpty())
       {
         firstReplayTimestamp = bufferedAudio.get(0).timestamp;
@@ -399,21 +401,17 @@ public final class DoubaoAsrClient
         .build();
     }
 
-    /** Remembered so the credential-recovery reconnect keeps the same context. */
-    private String sessionContext = "";
-
-    public void startSession() throws IOException { startSession(sessionContext); }
+    public void startSession() throws IOException { startSession(""); }
 
     public void startSession(String contextJson) throws IOException
     {
-      sessionContext = contextJson == null ? "" : contextJson;
       DoubaoProtocol.SessionConfig config = new DoubaoProtocol.SessionConfig();
       config.deviceId = credentials.deviceId;
-      config.context = sessionContext;
+      config.context = contextJson == null ? "" : contextJson;
       send(DoubaoProtocol.buildStartSession(requestId, credentials.token, config));
       awaitControl(DoubaoProtocol.ResponseType.SESSION_STARTED,
           HANDSHAKE_TIMEOUT_MS);
-      Log.i(TAG, "session_started context_chars=" + sessionContext.length());
+      Log.i(TAG, "session_started context_chars=" + config.context.length());
     }
 
     public void sendAudio(byte[] opusFrame, int frameState, long timestampMs)

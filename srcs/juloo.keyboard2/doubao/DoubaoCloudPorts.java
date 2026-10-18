@@ -308,9 +308,7 @@ public final class DoubaoCloudPorts
    */
   static String base64Raw(JsonObject value)
   {
-    String encoded = android.util.Base64.encodeToString(
-        value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8),
-        android.util.Base64.NO_WRAP);
+    String encoded = okio.ByteString.encodeUtf8(value.toString()).base64();
     int end = encoded.length();
     while (end > 0 && encoded.charAt(end - 1) == '=')
       end--;
