@@ -156,8 +156,8 @@
     <string name="launcher_button_dictionaries">安装词典</string>
     <string name="pref_slider_sensitivity_title">空格键滑动灵敏度</string>
     <string name="toast_no_voice_input">未安装语音输入程序</string>
-    <string name="pref_category_clipboard">剪切板</string>
-    <string name="pref_clipboard_history_duration">剪切板保存时间</string>
+    <string name="pref_category_clipboard">剪贴板</string>
+    <string name="pref_clipboard_history_duration">剪贴板保存时间</string>
     <string name="pref_clipboard_history_duration_1">最多一分钟</string>
     <string name="pref_clipboard_history_duration_5">最多五分钟</string>
     <string name="pref_clipboard_history_duration_30">最多半小时</string>

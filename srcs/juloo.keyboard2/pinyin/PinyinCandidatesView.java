@@ -2,12 +2,14 @@ package juloo.keyboard2.pinyin;
 
 import android.content.Context;
 import android.graphics.Typeface;
+import android.graphics.PorterDuff;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
@@ -57,11 +59,18 @@ public final class PinyinCandidatesView extends LinearLayout
     setPadding(ui.dp(6), 0, ui.dp(6), 0);
     LinearLayout header = new LinearLayout(context);
     header.setGravity(Gravity.CENTER_VERTICAL);
-    TextView clipboard = ui.button(context.getString(R.string.ux_clipboard), () -> {
+    ImageButton clipboard = new ImageButton(context);
+    clipboard.setImageResource(R.drawable.ic_clipboard_paste);
+    clipboard.setColorFilter(ui.text, PorterDuff.Mode.SRC_IN);
+    clipboard.setContentDescription(context.getString(R.string.ux_clipboard));
+    clipboard.setBackground(ui.round(ui.background, 10));
+    clipboard.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
+    clipboard.setMinimumWidth(ui.dp(48));
+    clipboard.setMinimumHeight(ui.dp(48));
+    clipboard.setOnClickListener(v -> {
       if (listener != null) listener.onClipboard();
     });
-    clipboard.setContentDescription(context.getString(R.string.ux_clipboard));
-    header.addView(clipboard);
+    header.addView(clipboard, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
     preedit = ui.label("", 15, false);
     preedit.setSingleLine(true);
     preedit.setEllipsize(TextUtils.TruncateAt.START);
@@ -71,10 +80,11 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setOnClickListener(v -> { if (listener != null && !previousComposition.isEmpty()) listener.onCommitRaw(); });
     preedit.setOnLongClickListener(v -> { showReadings(); return !spellingOptions.isEmpty(); });
     header.addView(preedit, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
-    readings = ui.button("9 / 26", () -> {
+    readings = ui.button("⌄", () -> {
       if (spellingOptions.isEmpty()) { if (listener != null) listener.onLayoutSwitch(); }
       else showReadings();
     });
+    readings.setTextSize(18);
     header.addView(readings);
     addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
 
@@ -131,18 +141,25 @@ public final class PinyinCandidatesView extends LinearLayout
     this.hasMore = hasMore;
     boolean changed = !composition.equals(previousComposition);
     if (changed) expanded = false;
-    preedit.setText(composition.isEmpty() ? (chinese ? "中文" : "ABC") : composition);
-    preedit.setContentDescription(composition.isEmpty() ? preedit.getText()
+    // Keep the preedit slot empty when idle. The mode is conveyed by the
+    // keyboard itself and remains available to accessibility services here.
+    preedit.setText(composition);
+    preedit.setContentDescription(composition.isEmpty()
+      ? getContext().getString(chinese ? R.string.pinyin_mode_chinese : R.string.pinyin_mode_english)
       : getContext().getString(R.string.pinyin_commit_raw, composition));
-    readings.setText(spellingOptions.isEmpty() ? "9 / 26" : getContext().getString(R.string.ux_readings));
+    readings.setText(spellingOptions.isEmpty() ? "⌨" : "⌄");
     readings.setContentDescription(getContext().getString(spellingOptions.isEmpty()
         ? R.string.ux_layout_switch : R.string.pinyin_choose_spelling));
-    readings.setVisibility(chinese ? VISIBLE : GONE);
+    // INVISIBLE reserves the same width while the user switches languages.
+    readings.setVisibility(chinese ? VISIBLE : INVISIBLE);
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
     candidateScroll.setVisibility(chinese ? VISIBLE : GONE);
-    more.setVisibility(chinese && !candidates.isEmpty() ? VISIBLE : GONE);
-    row.setVisibility(chinese ? (!candidates.isEmpty() ? VISIBLE : GONE)
-        : (latinCandidates != null && latinCandidates.getVisibility() == VISIBLE ? VISIBLE : GONE));
+    // The candidate strip is a reserved row. Only its contents change, so
+    // every keystroke has the same keyboard origin and cannot move the editor.
+    more.setVisibility(chinese ? VISIBLE : INVISIBLE);
+    more.setEnabled(chinese && !candidates.isEmpty());
+    more.setAlpha(chinese && !candidates.isEmpty() ? 1f : .35f);
+    row.setVisibility(VISIBLE);
     boolean appended = !changed && candidates.size() >= previousCandidates.size()
       && candidates.subList(0, previousCandidates.size()).equals(previousCandidates);
     int scroll = appended ? candidateScroll.getScrollX() : 0;
@@ -177,6 +194,8 @@ public final class PinyinCandidatesView extends LinearLayout
   private void renderExpanded()
   {
     more.setText(expanded ? "⌃" : "⌄");
+    more.setEnabled(!previousCandidates.isEmpty());
+    more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
     expandedScroll.setVisibility(expanded ? VISIBLE : GONE);
     if (!expanded) return;
     expandedItems.removeAllViews();
