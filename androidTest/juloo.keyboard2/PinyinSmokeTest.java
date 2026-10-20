@@ -104,10 +104,16 @@ public final class PinyinSmokeTest extends Instrumentation
         return;
       }
       englishSuggestionChecks();
-      if (!onMain(() -> candidatesView().isShown() && findText(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
+      if (!onMain(() -> candidatesView().isShown()
+          && findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
         throw new AssertionError("Clipboard toolbar is not discoverable while idle");
+      int idlePinyinHeight = onMain(() -> candidatesView().getHeight());
       type("nihao");
-      if (onMain(() -> candidatesView().getHeight()) > Math.round(
+      int composingPinyinHeight = onMain(() -> candidatesView().getHeight());
+      if (composingPinyinHeight != idlePinyinHeight)
+        throw new AssertionError("Pinyin strip height changed while composing: "
+            + idlePinyinHeight + " -> " + composingPinyinHeight);
+      if (composingPinyinHeight > Math.round(
             96 * getTargetContext().getResources().getDisplayMetrics().density))
         throw new AssertionError("Chinese preedit and candidates exceed two separate rows");
       text(activity.plain, "nihao");
@@ -634,7 +640,7 @@ public final class PinyinSmokeTest extends Instrumentation
     onMain(() -> { ClipboardHistoryService.set_history_enabled(false);
       cm.setPrimaryClip(android.content.ClipData.newPlainText("test","A plain current clip")); return null; });
     idle();
-    tap(onMain(() -> findText(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
+    tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
     await("clipboard panel", () -> clipboard()!=null && clipboard().isShown());
     tap(onMain(() -> findText(clipboard(),"A plain current clip")));
     text(activity.plain,"A plain current clip");
@@ -700,7 +706,7 @@ public final class PinyinSmokeTest extends Instrumentation
     onMain(() -> { DirectBootAwarePreferences.get_shared_preferences(getTargetContext()).edit().putString("theme","soft_dark").apply(); return null; });
     idle(); focus(activity.plain); clear(); nineKeys("64426");
     screenshot("nine-key-dark.png");
-    tap(onMain(() -> findText(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
+    tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
     await("dark clipboard panel", () -> clipboard().isShown());
     screenshot("clipboard-dark.png");
     tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));
