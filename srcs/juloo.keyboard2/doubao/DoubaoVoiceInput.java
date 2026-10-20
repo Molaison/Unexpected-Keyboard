@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.util.Log;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import androidx.core.content.ContextCompat;
 import java.io.IOException;
@@ -57,6 +58,9 @@ public final class DoubaoVoiceInput
 
   private SessionRun activeRun;
   private boolean destroyed;
+  private final DoubaoTextContext textContext = new DoubaoTextContext();
+  private EditorInfo pendingEditor;
+  private String pendingAppPackage = "";
 
   public DoubaoVoiceInput(Context context, Host host)
   {
@@ -154,6 +158,43 @@ public final class DoubaoVoiceInput
     asrClient.shutdown();
   }
 
+  /** Shared context store; hotwords and correction pairs can be fed here. */
+  public DoubaoTextContext textContext() { return textContext; }
+
+  /**
+   * Records the editor that will receive the transcript. Call it from
+   * {@code onStartInputView}; the server re-ranks the transcript with the text
+   * around the cursor and the target package.
+   */
+  public void setEditorInfo(EditorInfo info) { pendingEditor = info; }
+
+  public void setAppPackage(String packageName)
+  {
+    pendingAppPackage = packageName == null ? "" : packageName;
+  }
+
+  private String buildContextJson(InputConnection connection)
+  {
+    textContext.setEditor(cursorText(connection, true), cursorText(connection, false),
+        pendingAppPackage);
+    return textContext.build();
+  }
+
+  private static String cursorText(InputConnection connection, boolean before)
+  {
+    final CharSequence text;
+    try
+    {
+      text = before ? connection.getTextBeforeCursor(256, 0)
+                    : connection.getTextAfterCursor(256, 0);
+    }
+    catch (RuntimeException error)
+    {
+      return "";
+    }
+    return text == null ? "" : text.toString();
+  }
+
   private void startLocked()
   {
     if (destroyed)
@@ -167,6 +208,7 @@ public final class DoubaoVoiceInput
       throw new IllegalStateException("No active InputConnection for voice input");
 
     SessionRun run = new SessionRun(connection);
+    run.contextJson = buildContextJson(connection);
     activeRun = run;
     Log.i(TAG, "voice_start_requested");
     host.onVoiceStateChanged(State.CONNECTING);
@@ -286,6 +328,8 @@ public final class DoubaoVoiceInput
   final class SessionRun implements Runnable, DoubaoAsrClient.Listener
   {
     final InputConnection connection;
+    /** {@code extra.context} captured on the main thread when the run starts. */
+    String contextJson = "";
     final AtomicReference<IOException> asyncFailure =
         new AtomicReference<IOException>();
 
@@ -315,7 +359,7 @@ public final class DoubaoVoiceInput
       {
         session = asrClient.open(this);
         throwIfCancelledOrFailed();
-        session.startSession();
+        session.startSession(contextJson);
         throwIfCancelledOrFailed();
         streamAudio();
         throwIfCancelledOrFailed();
@@ -475,8 +519,10 @@ public final class DoubaoVoiceInput
         if (!cancelled && !session.isFinished())
         {
           byte[] finalOpus = encoder.encode(new short[SAMPLES_PER_FRAME]);
+          // Ask for the two-pass refinement on the release frame, exactly like
+          // SAMICoreBlock.extra in the reference client.
           session.sendAudio(finalOpus, DoubaoProtocol.FRAME_LAST,
-              startedAtMs + frameIndex * FRAME_DURATION_MS);
+              startedAtMs + frameIndex * FRAME_DURATION_MS, true, true);
           Log.i(TAG, "audio_last_sent frames=" + frameIndex);
         }
       }

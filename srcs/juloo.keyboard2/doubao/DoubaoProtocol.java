@@ -93,6 +93,56 @@ public final class DoubaoProtocol
 
   private DoubaoProtocol() {}
 
+  /**
+   * Session parameters, mirroring the {@code extra} object the reference client
+   * builds in {@code SdkImpl.l()}. Reversed from doubaoime 1.5.1; see
+   * {@code outputs/doubao-ime-ports-reverse.md} §5.
+   */
+  public static final class SessionConfig
+  {
+    public String deviceId = "";
+    public String appName = APP_NAME;
+    public String inputMode = "tool";
+    public String appVersion = "";
+    public String romOsVersion = "";
+    public String hwVendorModel = "";
+    public String hwVendorBrand = "";
+
+    /** Context JSON produced by {@link DoubaoTextContext}; empty to omit. */
+    public String context = "";
+
+    /** 停顿后的二次校正。 */
+    public boolean enableTwopass = true;
+    /** 结束后的整场定稿。 */
+    public boolean enableThreepass = true;
+    /** 二次校正失败时重试。 */
+    public boolean useTwopassRetry = true;
+
+    /** VAD smoothing window, {@code end_smooth_window_ms}. */
+    public int endSmoothWindowMs = 800;
+    public boolean removeSpaceBetweenHanNum;
+    public boolean removeSpaceBetweenHanEng;
+    public boolean formatSpaceAtNewline = true;
+    public boolean enablePrintChinese = false;
+
+    public int cellCompressRate = 8;
+    public int finishWaitOfflineTime;
+    public int offlineWaitOnlineTime;
+    public int maxWaitSwitchOfflineTime;
+    public int offlineWaitOnlineIntervalTime;
+    public int switchNetworkQualityThreshold;
+    public int switchNetworkRttThreshold;
+    public int switchNetworkPingTimeout;
+
+    public boolean disableUserWords;
+    public boolean strongDdc;
+    public String asrParams = "";
+    public boolean s2aSendEnable;
+    public java.util.List<String> s2aSendCommands = java.util.Collections.emptyList();
+    public java.util.List<Integer> retryServerCodes = java.util.Collections.emptyList();
+    public String lastUid = "";
+  }
+
   public static byte[] buildStartTask(String requestId, String token)
   {
     requireNonEmpty(requestId, "requestId");
@@ -103,11 +153,21 @@ public final class DoubaoProtocol
   public static byte[] buildStartSession(String requestId, String token,
       String deviceId)
   {
+    requireNonEmpty(deviceId, "deviceId");
+    SessionConfig config = new SessionConfig();
+    config.deviceId = deviceId;
+    return buildStartSession(requestId, token, config);
+  }
+
+  public static byte[] buildStartSession(String requestId, String token,
+      SessionConfig config)
+  {
     requireNonEmpty(requestId, "requestId");
     requireNonEmpty(token, "token");
-    requireNonEmpty(deviceId, "deviceId");
+    if (config == null)
+      throw new IllegalArgumentException("config must not be null");
     return request(requestId, token, "StartSession",
-        buildSessionPayload(deviceId), null, FRAME_UNSPECIFIED);
+        buildSessionPayload(config), null, FRAME_UNSPECIFIED);
   }
 
   public static byte[] buildFinishSession(String requestId, String token)
@@ -121,6 +181,19 @@ public final class DoubaoProtocol
   public static byte[] buildAudioRequest(String requestId, byte[] opusFrame,
       int frameState, long timestampMs)
   {
+    return buildAudioRequest(requestId, opusFrame, frameState, timestampMs,
+        false, false);
+  }
+
+  /**
+   * @param forceTwopass mirrors {@code extra.force_asr_twopass}; the reference
+   *        client sets it on the frame sent when the key is released
+   * @param finishAudio  mirrors {@code extra.finish_audio} on the last frame
+   */
+  public static byte[] buildAudioRequest(String requestId, byte[] opusFrame,
+      int frameState, long timestampMs, boolean forceTwopass,
+      boolean finishAudio)
+  {
     requireNonEmpty(requestId, "requestId");
     if (opusFrame == null || opusFrame.length == 0)
       throw new IllegalArgumentException("opusFrame must not be empty");
@@ -128,8 +201,14 @@ public final class DoubaoProtocol
         && frameState != FRAME_LAST)
       throw new IllegalArgumentException("Invalid frameState: " + frameState);
 
+    JsonObject extra = new JsonObject();
+    if (forceTwopass)
+      extra.addProperty("force_asr_twopass", true);
+    if (finishAudio)
+      extra.addProperty("finish_audio", true);
+
     JsonObject payload = new JsonObject();
-    payload.add("extra", new JsonObject());
+    payload.add("extra", extra);
     payload.addProperty("timestamp_ms", timestampMs);
     return request(requestId, "", "TaskRequest", payload.toString(),
         opusFrame, frameState);
@@ -138,29 +217,87 @@ public final class DoubaoProtocol
   public static String buildSessionPayload(String deviceId)
   {
     requireNonEmpty(deviceId, "deviceId");
+    SessionConfig config = new SessionConfig();
+    config.deviceId = deviceId;
+    return buildSessionPayload(config);
+  }
 
+  public static String buildSessionPayload(SessionConfig config)
+  {
     JsonObject audioInfo = new JsonObject();
     audioInfo.addProperty("channel", 1);
     audioInfo.addProperty("format", "speech_opus");
     audioInfo.addProperty("sample_rate", 16000);
 
-    JsonObject extra = new JsonObject();
-    extra.addProperty("app_name", APP_NAME);
-    extra.addProperty("cell_compress_rate", 8);
-    extra.addProperty("did", deviceId);
-    extra.addProperty("enable_asr_threepass", true);
-    extra.addProperty("enable_asr_twopass", true);
-    extra.addProperty("input_mode", "tool");
-    extra.addProperty("interim_results", true);
+    JsonObject networkChange = new JsonObject();
+    networkChange.addProperty("switch_network_quality_threshold",
+        config.switchNetworkQualityThreshold);
+    networkChange.addProperty("switch_network_rtt_threshold",
+        config.switchNetworkRttThreshold);
+    networkChange.addProperty("switch_network_ping_timeout",
+        config.switchNetworkPingTimeout);
 
-    JsonObject config = new JsonObject();
-    config.add("audio_info", audioInfo);
-    config.addProperty("enable_punctuation", true);
-    config.addProperty("enable_speech_rejection", false);
-    config.addProperty("enable_vad", true);
-    config.addProperty("low_latency", false);
-    config.add("extra", extra);
-    return config.toString();
+    JsonObject extra = new JsonObject();
+    extra.addProperty("app_name", config.appName);
+    extra.addProperty("cell_compress_rate", config.cellCompressRate);
+    if (!config.deviceId.isEmpty())
+      extra.addProperty("did", config.deviceId);
+    extra.addProperty("enable_asr_threepass", config.enableThreepass);
+    extra.addProperty("enable_asr_twopass", config.enableTwopass);
+    extra.addProperty("use_twopass_retry", config.useTwopassRetry);
+    extra.addProperty("input_mode", config.inputMode);
+    extra.addProperty("interim_results", true);
+    extra.addProperty("end_smooth_window_ms", config.endSmoothWindowMs);
+    extra.addProperty("remove_space_between_han_num",
+        config.removeSpaceBetweenHanNum);
+    extra.addProperty("remove_space_between_han_eng",
+        config.removeSpaceBetweenHanEng);
+    extra.addProperty("format_space_at_newline", config.formatSpaceAtNewline);
+    extra.addProperty("enable_print_chinese", config.enablePrintChinese);
+    extra.addProperty("finish_wait_offline_time", config.finishWaitOfflineTime);
+    extra.addProperty("offline_wait_online_time", config.offlineWaitOnlineTime);
+    extra.addProperty("max_wait_switch_offline_time",
+        config.maxWaitSwitchOfflineTime);
+    extra.addProperty("offline_wait_online_interval_time",
+        config.offlineWaitOnlineIntervalTime);
+    extra.add("network_change", networkChange);
+    extra.addProperty("disable_user_words", config.disableUserWords);
+    extra.addProperty("strong_ddc", config.strongDdc);
+    extra.addProperty("s2a_send_enable", config.s2aSendEnable);
+
+    if (!config.asrParams.isEmpty())
+      extra.addProperty("asr_params", config.asrParams);
+    if (!config.appVersion.isEmpty())
+      extra.addProperty("app_version", config.appVersion);
+    if (!config.romOsVersion.isEmpty())
+      extra.addProperty("rom_os_version", config.romOsVersion);
+    if (!config.hwVendorModel.isEmpty())
+      extra.addProperty("hw_vendor_model", config.hwVendorModel);
+    if (!config.hwVendorBrand.isEmpty())
+      extra.addProperty("hw_vendor_brand", config.hwVendorBrand);
+    if (!config.context.isEmpty())
+      extra.addProperty("context", config.context);
+    if (!config.lastUid.isEmpty())
+      extra.addProperty("last_uid", config.lastUid);
+
+    com.google.gson.JsonArray commands = new com.google.gson.JsonArray();
+    for (String command : config.s2aSendCommands)
+      commands.add(command);
+    extra.add("s2a_send_commands", commands);
+
+    com.google.gson.JsonArray retryCodes = new com.google.gson.JsonArray();
+    for (Integer code : config.retryServerCodes)
+      retryCodes.add(code);
+    extra.add("retry_server_code", retryCodes);
+
+    JsonObject root = new JsonObject();
+    root.add("audio_info", audioInfo);
+    root.addProperty("enable_punctuation", true);
+    root.addProperty("enable_speech_rejection", false);
+    root.addProperty("enable_vad", true);
+    root.addProperty("low_latency", false);
+    root.add("extra", extra);
+    return root.toString();
   }
 
   public static Response parseResponse(byte[] data) throws ProtocolException

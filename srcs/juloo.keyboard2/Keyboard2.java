@@ -358,6 +358,10 @@ public class Keyboard2 extends InputMethodService
     _voicePushToTalkActive = false;
     _doubaoVoiceInput.cancel();
     _config.editor_config.refresh(info, getResources());
+    // The server re-ranks the transcript with the text around the cursor and
+    // the target package: feed both into the ASR session on every start.
+    _doubaoVoiceInput.setEditorInfo(info);
+    _doubaoVoiceInput.setAppPackage(info != null ? info.packageName : null);
     _pinyin.start(info, _preferences.getBoolean("chinese_mode", true),
         _preferences.getBoolean("chinese_nine_key", false));
     refresh_config();
