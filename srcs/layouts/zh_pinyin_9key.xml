@@ -19,7 +19,7 @@
     <key width="3.33" c="pinyin_9" ne="9"/>
   </row>
   <row height="0.95">
-    <key width="1.5" role="action" c="switch_numeric" nw="loc switch_clipboard" ne="switch_emoji"/>
+    <key width="1.5" role="action" c="switch_numeric" sw="switch_clipboard" ne="switch_emoji"/>
     <key width="1.5" role="action" c="switch_pinyin" nw="loc ctrl"/>
     <key width="3.4" role="space_bar" c="space" w="cursor_left" e="cursor_right"/>
     <key width="1.4" role="action" c="backspace" ne="delete"/>
