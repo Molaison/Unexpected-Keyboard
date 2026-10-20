@@ -475,7 +475,7 @@ public final class PinyinSmokeTest extends Instrumentation
       float[] point = onMain(() -> keyPoint("shift", false));
       swipe(point[0], point[1], point[2], point[3]);
     }
-    else key("switch_pinyin_layout");
+    else tap(onMain(() -> (android.view.View)field(candidatesView(), "readings")));
     await("nine-key layout switch", () ->
       ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey() == enabled);
   }
