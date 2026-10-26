@@ -110,8 +110,8 @@ public final class Config
     // static values
     marginTop = res.getDimension(R.dimen.margin_top);
     keyPadding = res.getDimension(R.dimen.key_padding);
-    labelTextSize = 0.33f;
-    sublabelTextSize = 0.22f;
+    labelTextSize = 0.36f;
+    sublabelTextSize = 0.19f;
     // from prefs
     refresh(res, foldableUnfolded, dicts);
     // initialized later
