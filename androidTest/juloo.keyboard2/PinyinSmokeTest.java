@@ -116,11 +116,18 @@ public final class PinyinSmokeTest extends Instrumentation
           && findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
         throw new AssertionError("Clipboard toolbar is not discoverable while idle");
       int idlePinyinHeight = onMain(() -> candidatesView().getHeight());
+      float idleKeyY = onMain(() -> keyPoint("n", false)[1]);
+      if (candidateRowVisibility() != View.GONE)
+        throw new AssertionError("An empty candidate row still occupies idle space");
       type("nihao");
       int composingPinyinHeight = onMain(() -> candidatesView().getHeight());
-      if (composingPinyinHeight != idlePinyinHeight)
-        throw new AssertionError("Pinyin strip height changed while composing: "
-            + idlePinyinHeight + " -> " + composingPinyinHeight);
+      int visibleRowHeight = onMain(() -> ((View)field(candidatesView(), "row")).getHeight());
+      if (candidateRowVisibility() != View.VISIBLE || visibleRowHeight <= 0
+          || composingPinyinHeight != idlePinyinHeight + visibleRowHeight)
+        throw new AssertionError("Composing must add exactly the visible candidate row");
+      float composingKeyY = onMain(() -> keyPoint("n", false)[1]);
+      if (Math.abs(composingKeyY - idleKeyY) > 1f || !onMain(() -> activity.plain.hasFocus()))
+        throw new AssertionError("Candidate row expansion moved a key or stole editor focus");
       if (composingPinyinHeight > Math.round(
             96 * getTargetContext().getResources().getDisplayMetrics().density))
         throw new AssertionError("Chinese preedit and candidates exceed two separate rows");
