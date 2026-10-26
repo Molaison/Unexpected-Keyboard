@@ -363,11 +363,11 @@ public final class PinyinCandidatesView extends LinearLayout
   {
     if (latinItem == null) return;
     ViewGroup.LayoutParams lp = latinItem.getLayoutParams();
-    if (lp instanceof MarginLayoutParams)
+    if (lp instanceof LayoutParams)
     {
-      MarginLayoutParams mp = (MarginLayoutParams)lp;
-      mp.width = latinInHeader ? 0 : MATCH_PARENT;
-      mp.height = latinInHeader ? MATCH_PARENT : latinRowHeight;
+      LayoutParams mp = (LayoutParams)lp;
+      mp.width = latinInHeader ? 0 : LayoutParams.MATCH_PARENT;
+      mp.height = latinInHeader ? LayoutParams.MATCH_PARENT : latinRowHeight;
       mp.weight = latinInHeader ? 1 : 0;
       latinItem.setLayoutParams(mp);
     }

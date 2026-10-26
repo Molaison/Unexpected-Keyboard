@@ -795,7 +795,7 @@ public final class PinyinSmokeTest extends Instrumentation
       }
       catch (Throwable restoreError)
       {
-        result.putString("shortMsg", "locale restore failed: " + restoreError);
+        throw new AssertionError("Unable to restore application locale", restoreError);
       }
     }
   }
