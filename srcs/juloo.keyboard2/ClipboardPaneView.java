@@ -79,10 +79,13 @@ public final class ClipboardPaneView extends LinearLayout
     addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
 
     LinearLayout tabs = line();
+    tabs.setBackground(ui.round(ui.action, 24));
     recentTab = ui.button("", () -> { pinned = false; refresh(); });
     pinnedTab = ui.button("", () -> { pinned = true; refresh(); });
-    tabs.addView(recentTab, new LayoutParams(0, ui.dp(48), 1));
-    tabs.addView(pinnedTab, new LayoutParams(0, ui.dp(48), 1));
+    recentTab.setPadding(ui.dp(4), 0, ui.dp(4), 0);
+    pinnedTab.setPadding(ui.dp(4), 0, ui.dp(4), 0);
+    tabs.addView(recentTab, new LayoutParams(0, ui.dp(44), 1));
+    tabs.addView(pinnedTab, new LayoutParams(0, ui.dp(44), 1));
     addView(tabs);
     recording = new Switch(context);
     recording.setText(R.string.ux_record_history);
@@ -101,8 +104,9 @@ public final class ClipboardPaneView extends LinearLayout
     android.widget.FrameLayout body = new android.widget.FrameLayout(context);
     ListView list = new ListView(context);
     list.setDivider(null);
-    list.setClipToPadding(false);
-    list.setPadding(0, ui.dp(4), 0, ui.dp(4));
+    list.setDividerHeight(ui.dp(6));
+    list.setClipToPadding(true);
+    list.setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(8));
     adapter = new BaseAdapter() {
       public int getCount() { return entries.size(); }
       public Object getItem(int position) { return entries.get(position); }
@@ -114,17 +118,16 @@ public final class ClipboardPaneView extends LinearLayout
         else
         {
           card = line();
-          card.setPadding(ui.dp(12), ui.dp(3), ui.dp(4), ui.dp(3));
+          card.setPadding(ui.dp(12), ui.dp(2), ui.dp(4), ui.dp(2));
           card.setBackground(ui.round(ui.surface, 12));
-          TextView content = ui.label("", 15, false);
-          content.setMinHeight(ui.dp(68));
-          content.setMaxLines(3);
+          TextView content = ui.label("", 16, false);
+          content.setMinHeight(ui.dp(56));
+          content.setMaxLines(2);
           content.setEllipsize(TextUtils.TruncateAt.END);
-          content.setPadding(0, ui.dp(10), ui.dp(6), ui.dp(10));
+          content.setPadding(0, ui.dp(8), ui.dp(6), ui.dp(8));
           card.addView(content, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
-          card.addView(ui.button("☆", () -> {}), new LayoutParams(ui.dp(48), ui.dp(56)));
-          card.addView(ui.button("⋮", () -> {}), new LayoutParams(ui.dp(48), ui.dp(56)));
-          list.setDividerHeight(ui.dp(6));
+          card.addView(ui.button("☆", () -> {}), new LayoutParams(ui.dp(48), ui.dp(48)));
+          card.addView(ui.button("⋮", () -> {}), new LayoutParams(ui.dp(48), ui.dp(48)));
         }
         final String clip = entries.get(position); // Capture content, never a stale index.
         TextView content = (TextView)card.getChildAt(0);
@@ -228,10 +231,14 @@ public final class ClipboardPaneView extends LinearLayout
     entries.addAll(pinned ? pins : recent);
     recentTab.setText(getContext().getString(R.string.ux_recent_count, recent.size()));
     pinnedTab.setText(getContext().getString(R.string.ux_pinned_count, pins.size()));
-    recentTab.setTextColor(!pinned ? ui.accent : ui.secondary);
-    pinnedTab.setTextColor(pinned ? ui.accent : ui.secondary);
-    ui.touchBackground(recentTab, !pinned ? ui.surface : ui.background);
-    ui.touchBackground(pinnedTab, pinned ? ui.surface : ui.background);
+    recentTab.setTextColor(!pinned ? ui.text : ui.secondary);
+    pinnedTab.setTextColor(pinned ? ui.text : ui.secondary);
+    recentTab.setTypeface(android.graphics.Typeface.create("sans-serif", !pinned
+        ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL));
+    pinnedTab.setTypeface(android.graphics.Typeface.create("sans-serif", pinned
+        ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL));
+    ui.touchBackground(recentTab, !pinned ? ui.surface : ui.action);
+    ui.touchBackground(pinnedTab, pinned ? ui.surface : ui.action);
     empty.setText(pinned ? R.string.ux_pins_empty : R.string.ux_history_empty);
     status.setText(undoneText != null ? R.string.ux_deleted : R.string.ux_clipboard_privacy);
     undoButton.setVisibility(undoneText == null ? GONE : VISIBLE);
