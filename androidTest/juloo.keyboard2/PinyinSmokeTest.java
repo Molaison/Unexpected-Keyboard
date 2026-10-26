@@ -1070,6 +1070,11 @@ public final class PinyinSmokeTest extends Instrumentation
   /** Same geometry as the existing emoji entry probe. */
   private float[] emojiEntryPoint() throws Exception
   {
+    return directionalEntryPoint("switch_emoji");
+  }
+
+  private float[] directionalEntryPoint(String name) throws Exception
+  {
     Keyboard2View view = keyboard();
     KeyboardData data = (KeyboardData)field(view, "_keyboard");
     Theme.Computed theme = (Theme.Computed)field(view, "_tc");
@@ -1088,7 +1093,7 @@ public final class PinyinSmokeTest extends Instrumentation
         float w = unit*key.width-theme.horizontal_margin;
         float h = row.height*theme.row_height-theme.vertical_margin;
         for (int i=1; i<9; i++)
-          if (KeyValue.getKeyByName("switch_emoji").equals(key.keys[i]))
+          if (KeyValue.getKeyByName(name).equals(key.keys[i]))
           {
             float dx = Keyboard2View.LABEL_POSITION_H[i] == android.graphics.Paint.Align.LEFT ? -.45f
               : Keyboard2View.LABEL_POSITION_H[i] == android.graphics.Paint.Align.RIGHT ? .45f : 0;
@@ -1101,7 +1106,7 @@ public final class PinyinSmokeTest extends Instrumentation
       }
       y += row.height*theme.row_height;
     }
-    throw new AssertionError("Emoji gesture entry is absent");
+    throw new AssertionError("Directional key is absent: " + name);
   }
 
   /** Real numeric page reached through its existing switch_numeric mapping. */
@@ -1111,7 +1116,8 @@ public final class PinyinSmokeTest extends Instrumentation
     nineKey(false);
     await("idle pinyin strip", () -> candidateRowVisibility() == View.GONE);
     logLayoutMetrics("qwerty");
-    key("switch_numeric");
+    float[] numericEntry = onMain(() -> directionalEntryPoint("switch_numeric"));
+    swipe(numericEntry[0], numericEntry[1], numericEntry[2], numericEntry[3]);
     await("numeric page", () -> hasKey("switch_greekmath"));
     screenshot("ui-zh-numbers.png");
     passed("zh numeric page captured through switch_numeric");
