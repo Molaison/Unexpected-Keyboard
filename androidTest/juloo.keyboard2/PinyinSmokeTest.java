@@ -293,6 +293,7 @@ public final class PinyinSmokeTest extends Instrumentation
       nineKeyChecks();
       clipboardChecks();
       candidateGeometryChecks();
+      narrowKeyboardChecks();
       result.putString("stream", "\nPINYIN_SMOKE_OK checks=" + checks + "\n");
       finish(Activity.RESULT_OK, result);
     }
@@ -666,6 +667,9 @@ public final class PinyinSmokeTest extends Instrumentation
     idle();
     tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
     await("clipboard panel", () -> clipboard()!=null && clipboard().isShown());
+    if (!onMain(() -> ((View)field(clipboard(), "recentTab")).isSelected()
+        && !((View)field(clipboard(), "pinnedTab")).isSelected()))
+      throw new AssertionError("Clipboard recent tab must expose its selected state");
     tap(onMain(() -> findText(clipboard(),"A plain current clip")));
     text(activity.plain,"A plain current clip");
     if(!onMain(() -> clipboard().isShown())) throw new AssertionError("Pasting unexpectedly closed the clipboard panel");
@@ -675,6 +679,9 @@ public final class PinyinSmokeTest extends Instrumentation
     tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_pin))));
     if(!onMain(() -> "A plain current clip".equals(service.current_text()))) throw new AssertionError("Pinning erased the system clipboard");
     tap(onMain(() -> (View)field(clipboard(),"pinnedTab")));
+    if (!onMain(() -> ((View)field(clipboard(), "pinnedTab")).isSelected()
+        && !((View)field(clipboard(), "recentTab")).isSelected()))
+      throw new AssertionError("Clipboard pinned tab must expose its selected state");
     tap(onMain(() -> findText(clipboard(),"A plain current clip")));
     text(activity.plain,"A plain current clipA plain current clip");
     tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clip_actions))));
@@ -928,6 +935,45 @@ public final class PinyinSmokeTest extends Instrumentation
       });
     }
     passed("Android font-scale 1/2 measurement and wide-to-narrow candidate reflow");
+  }
+
+  private void narrowKeyboardChecks() throws Exception
+  {
+    onMain(() -> {
+      Keyboard2View canvas = new Keyboard2View(keyboard().getContext(), null);
+      KeyboardData data = (KeyboardData)field(keyboard(), "_keyboard");
+      canvas.setKeyboard(data);
+      int narrow = Math.round(240 * canvas.getResources().getDisplayMetrics().density);
+      for (int mode : new int[] {View.MeasureSpec.EXACTLY, View.MeasureSpec.AT_MOST})
+      {
+        canvas.measure(View.MeasureSpec.makeMeasureSpec(narrow, mode),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        if (canvas.getMeasuredWidth() != narrow) throw new AssertionError("Keyboard ignored the parent's narrow width");
+        Theme.Computed theme = (Theme.Computed)field(canvas, "_tc");
+        float unit = (Float)field(canvas, "_keyWidth");
+        float left = (Float)field(canvas, "_marginLeft");
+        float y = Config.globalConfig().marginTop;
+        java.lang.reflect.Method hit = Keyboard2View.class.getDeclaredMethod("getKeyAtPosition", float.class, float.class);
+        hit.setAccessible(true);
+        for (KeyboardData.Row row : data.rows)
+        {
+          y += row.shift * theme.row_height;
+          float x = left;
+          for (KeyboardData.Key key : row.keys)
+          {
+            x += key.shift * unit;
+            if (x < 0 || x + key.width*unit > canvas.getMeasuredWidth() + 1)
+              throw new AssertionError("A narrow key lies outside the measured canvas");
+            if (hit.invoke(canvas, x + key.width*unit/2, y + row.height*theme.row_height/2) != key)
+              throw new AssertionError("Narrow keyboard drawing and hit regions disagree");
+            x += key.width * unit;
+          }
+          y += row.height * theme.row_height;
+        }
+      }
+      return null;
+    });
+    passed("narrow parent measurement preserves every key center hit region");
   }
 
   private void clear() throws Exception

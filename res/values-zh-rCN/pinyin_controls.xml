@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="ux_collapse_candidates">收起候选词</string>
+  <string name="ux_compact_candidate_paging">收起候选词；长按加载更多候选词</string>
+</resources>

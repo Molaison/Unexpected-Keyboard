@@ -76,7 +76,7 @@ public final class ClipboardPaneView extends LinearLayout
     title.setGravity(Gravity.CENTER);
     header.addView(title, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
     header.addView(ui.button(context.getString(R.string.ux_clear), this::confirmClear));
-    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, Math.max(ui.dp(48), ui.rowHeight(18))));
 
     LinearLayout tabs = line();
     tabs.setBackground(ui.round(ui.action, 24));
@@ -84,14 +84,14 @@ public final class ClipboardPaneView extends LinearLayout
     pinnedTab = ui.button("", () -> { pinned = true; refresh(); });
     recentTab.setPadding(ui.dp(4), 0, ui.dp(4), 0);
     pinnedTab.setPadding(ui.dp(4), 0, ui.dp(4), 0);
-    tabs.addView(recentTab, new LayoutParams(0, ui.dp(44), 1));
-    tabs.addView(pinnedTab, new LayoutParams(0, ui.dp(44), 1));
+    tabs.addView(recentTab, new LayoutParams(0, Math.max(ui.dp(48), ui.rowHeight(14)), 1));
+    tabs.addView(pinnedTab, new LayoutParams(0, Math.max(ui.dp(48), ui.rowHeight(14)), 1));
     addView(tabs);
     recording = new Switch(context);
     recording.setText(R.string.ux_record_history);
     recording.setTextColor(ui.secondary);
     recording.setTextSize(13);
-    recording.setMinHeight(ui.dp(48));
+    recording.setMinHeight(Math.max(ui.dp(48), ui.rowHeight(13)));
     recording.setPadding(ui.dp(12), 0, ui.dp(12), 0);
     recording.setChecked(Config.globalConfig().clipboard_history_enabled);
     recording.setOnCheckedChangeListener((v, checked) -> {
@@ -99,7 +99,8 @@ public final class ClipboardPaneView extends LinearLayout
       ClipboardHistoryService.set_history_enabled(checked);
       refresh();
     });
-    addView(recording, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    // Wrapped text must not be clipped: the row grows with the font scale.
+    addView(recording, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
     android.widget.FrameLayout body = new android.widget.FrameLayout(context);
     ListView list = new ListView(context);
@@ -161,13 +162,19 @@ public final class ClipboardPaneView extends LinearLayout
     addView(body, new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1));
 
     LinearLayout footer = line();
+    // The footer only takes the height its content needs: an idle status line
+    // must not permanently reserve a key row from the clip list.
     status = ui.label("", 12, false);
     status.setTextColor(ui.secondary);
-    status.setMaxLines(2);
-    footer.addView(status, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
+    // Ellipsized visually; the full string stays on [status] for TalkBack.
+    status.setSingleLine(true);
+    status.setEllipsize(TextUtils.TruncateAt.END);
+    status.setPadding(0, ui.dp(6), ui.dp(8), ui.dp(6));
+    footer.addView(status, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1));
     undoButton = ui.button(context.getString(R.string.ux_undo), this::undo);
-    footer.addView(undoButton);
-    addView(footer, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    footer.addView(undoButton, new LayoutParams(LayoutParams.WRAP_CONTENT,
+        Math.max(ui.dp(48), ui.rowHeight(14))));
+    addView(footer, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
   }
 
   public void show(int height, Runnable onBack)
@@ -231,6 +238,8 @@ public final class ClipboardPaneView extends LinearLayout
     entries.addAll(pinned ? pins : recent);
     recentTab.setText(getContext().getString(R.string.ux_recent_count, recent.size()));
     pinnedTab.setText(getContext().getString(R.string.ux_pinned_count, pins.size()));
+    recentTab.setSelected(!pinned);
+    pinnedTab.setSelected(pinned);
     recentTab.setTextColor(!pinned ? ui.text : ui.secondary);
     pinnedTab.setTextColor(pinned ? ui.text : ui.secondary);
     recentTab.setTypeface(android.graphics.Typeface.create("sans-serif", !pinned

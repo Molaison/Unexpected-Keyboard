@@ -277,7 +277,9 @@ public class Keyboard2View extends View
   public void onMeasure(int wSpec, int hSpec)
   {
     DisplayMetrics dm = getContext().getResources().getDisplayMetrics();
-    int width = dm.widthPixels;
+    // Use the width the parent actually gives us, so drawing, hit testing and
+    // the measured width all agree in split or freeform windows.
+    int width = resolveSize(dm.widthPixels, wSpec);
     _marginLeft = Math.max(_config.horizontal_margin, _insets_left);
     _marginRight = Math.max(_config.horizontal_margin, _insets_right);
     _marginBottom = _config.margin_bottom + _insets_bottom;

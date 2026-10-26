@@ -108,6 +108,11 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setPadding(ui.dp(10), 0, ui.dp(6), 0);
     preedit.setOnClickListener(v -> { if (listener != null && !previousComposition.isEmpty()) listener.onCommitRaw(); });
     preedit.setOnLongClickListener(v -> { showReadings(); return !spellingOptions.isEmpty(); });
+    // Never take focus from the editor, but only accept taps and long presses
+    // when there is something to act on.
+    preedit.setFocusable(false);
+    preedit.setLongClickable(false);
+    preedit.setClickable(false);
     header.addView(preedit, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
     readings = ui.button("⌄", () -> {
       if (spellingOptions.isEmpty()) { if (listener != null) listener.onLayoutSwitch(); }
@@ -130,6 +135,11 @@ public final class PinyinCandidatesView extends LinearLayout
       renderExpanded();
     });
     more.setContentDescription(context.getString(R.string.ux_more_candidates));
+    more.setOnLongClickListener(v -> {
+      if (!expanded || !hasMore || listener == null) return false;
+      listener.onMoreCandidates();
+      return true;
+    });
     row.addView(more, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
     addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
     expandedPanel = new LinearLayout(context);
@@ -199,7 +209,7 @@ public final class PinyinCandidatesView extends LinearLayout
           config.screenHeightPixels / 2);
     int screen = config.screenHeightPixels > 0
       ? config.screenHeightPixels : keyboard * 2;
-    int available = Math.max(action + 1, screen - keyboard - header - text);
+    int available = Math.max(0, screen - keyboard - header - text);
     // Keep the paging target intact; short screens scroll a partial candidate
     // row rather than forcing two extra rows beyond the window.
     int budget = Math.min(Math.max(ui.dp(EXPANDED_BUDGET_DP), text + action), available);
@@ -246,6 +256,10 @@ public final class PinyinCandidatesView extends LinearLayout
     readings.setText(spellingOptions.isEmpty() ? "⌨" : "⌄");
     readings.setContentDescription(getContext().getString(spellingOptions.isEmpty()
         ? R.string.ux_layout_switch : R.string.pinyin_choose_spelling));
+    // The preedit is only actionable while composing; a long press opens the
+    // readings menu when the nine-key composition offers alternatives.
+    preedit.setClickable(!composition.isEmpty());
+    preedit.setLongClickable(!spellingOptions.isEmpty());
     // INVISIBLE reserves the same width while the user switches languages.
     readings.setVisibility(chinese ? VISIBLE : INVISIBLE);
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
@@ -350,12 +364,16 @@ public final class PinyinCandidatesView extends LinearLayout
     boolean open = expanded;
     // The footer follows its own 14sp text row; a tight budget meters it down
     // so it never takes more than half of the panel.
-    int footer = Math.min(ui.rowHeight(FOOTER_SP), expandedBudget - 1);
-    boolean showFooter = open && hasMore;
+    int footer = ui.rowHeight(FOOTER_SP);
+    boolean showFooter = open && hasMore && expandedBudget >= footer + expandedRowHeight;
     more.setText(open ? "⌃" : "⌄");
+    more.setContentDescription(getContext().getString(!open ? R.string.ux_more_candidates
+        : hasMore && !showFooter ? R.string.ux_compact_candidate_paging : R.string.ux_collapse_candidates));
+    // Selected state complements the explicit action label.
+    more.setSelected(open);
     more.setEnabled(!previousCandidates.isEmpty());
     more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
-    expandedPanel.setVisibility(open ? VISIBLE : GONE);
+    expandedPanel.setVisibility(open && expandedBudget > 0 ? VISIBLE : GONE);
     expandedPanel.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, expandedBudget));
     // The remaining height is scrollable content, without an overflow floor.
     expandedFooter.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, footer));
