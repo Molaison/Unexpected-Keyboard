@@ -42,8 +42,19 @@ public final class PinyinCandidatesView extends LinearLayout
   private final TextView more;
   private final HorizontalScrollView candidateScroll;
   private final LinearLayout items;
+  private final LinearLayout expandedPanel;
   private final ScrollView expandedScroll;
   private final LinearLayout expandedItems;
+  // Paging lives outside the scroller so a swipe never moves it away from the
+  // finger. It shares the fixed expanded budget instead of adding height.
+  private final LinearLayout expandedFooter;
+  private static final int EXPANDED_BUDGET_DP = 144;
+  private static final int EXPANDED_FOOTER_DP = 48;
+  private boolean previousHasMore;
+  private String renderedComposition;
+  private List<String> renderedCandidates = new ArrayList<>();
+  private boolean renderedHasMore;
+  private int renderedWidth = -1;
   private View latinCandidates;
   private boolean expanded;
   private boolean hasMore;
@@ -103,12 +114,26 @@ public final class PinyinCandidatesView extends LinearLayout
     more.setContentDescription(context.getString(R.string.ux_more_candidates));
     row.addView(more, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
     addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    expandedPanel = new LinearLayout(context);
+    expandedPanel.setOrientation(VERTICAL);
     expandedScroll = new ScrollView(context);
     expandedItems = new LinearLayout(context);
     expandedItems.setOrientation(VERTICAL);
     expandedScroll.addView(expandedItems);
-    expandedScroll.setVisibility(GONE);
-    addView(expandedScroll, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(144)));
+    expandedPanel.addView(expandedScroll,
+        new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(EXPANDED_BUDGET_DP - EXPANDED_FOOTER_DP)));
+    expandedFooter = new LinearLayout(context);
+    expandedFooter.setOrientation(VERTICAL);
+    // The empty footer must not steal taps from the content above it.
+    expandedFooter.setVisibility(GONE);
+    // Built once; visibility alone decides whether it is reachable.
+    expandedFooter.addView(ui.button(context.getString(R.string.pinyin_more_candidates), () -> {
+      if (listener != null) listener.onMoreCandidates();
+    }), new LayoutParams(-1, -1));
+    expandedPanel.addView(expandedFooter,
+        new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(EXPANDED_FOOTER_DP)));
+    expandedPanel.setVisibility(GONE);
+    addView(expandedPanel, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(EXPANDED_BUDGET_DP)));
   }
 
   private void showReadings()
@@ -160,8 +185,21 @@ public final class PinyinCandidatesView extends LinearLayout
     more.setEnabled(chinese && !candidates.isEmpty());
     more.setAlpha(chinese && !candidates.isEmpty() ? 1f : .35f);
     row.setVisibility(VISIBLE);
+    // A paging request that found nothing new reports the same state. Reuse
+    // the existing cells instead of rebuilding the strip and resetting scroll.
+    boolean identical = composition.equals(previousComposition)
+      && candidates.equals(previousCandidates);
     boolean appended = !changed && candidates.size() >= previousCandidates.size()
       && candidates.subList(0, previousCandidates.size()).equals(previousCandidates);
+    previousComposition = composition;
+    previousCandidates = new ArrayList<>(candidates);
+    previousHasMore = hasMore;
+    if (!chinese) expanded = false;
+    if (identical)
+    {
+      renderExpanded();
+      return;
+    }
     int scroll = appended ? candidateScroll.getScrollX() : 0;
     items.removeAllViews();
     for (int i = 0; i < candidates.size(); i++)
@@ -170,10 +208,7 @@ public final class PinyinCandidatesView extends LinearLayout
       TextView item = candidate(candidates.get(i), index);
       items.addView(item, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT));
     }
-    previousComposition = composition;
-    previousCandidates = new ArrayList<>(candidates);
     candidateScroll.post(() -> candidateScroll.scrollTo(scroll, 0));
-    if (!chinese) expanded = false;
     renderExpanded();
   }
 
@@ -193,16 +228,21 @@ public final class PinyinCandidatesView extends LinearLayout
 
   private void renderExpanded()
   {
-    more.setText(expanded ? "⌃" : "⌄");
-    more.setEnabled(!previousCandidates.isEmpty());
-    more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
-    expandedScroll.setVisibility(expanded ? VISIBLE : GONE);
+    applyExpandedLayout();
     if (!expanded) return;
+    int available = Math.max(1, getWidth() - getPaddingLeft() - getPaddingRight());
+    boolean sameData = previousComposition.equals(renderedComposition)
+      && previousCandidates.equals(renderedCandidates) && previousHasMore == renderedHasMore
+      && available == renderedWidth;
+    if (sameData && expandedItems.getChildCount() > 0) return;
+    renderedComposition = previousComposition;
+    renderedCandidates = new ArrayList<>(previousCandidates);
+    renderedHasMore = hasMore;
+    renderedWidth = available;
     expandedItems.removeAllViews();
     // Whole phrases get a whole row; short words share a row without tiny targets.
     LinearLayout line = null;
     int width = 0;
-    int available = Math.max(ui.dp(240), getWidth() - getPaddingLeft() - getPaddingRight());
     for (int i = 0; i < previousCandidates.size(); i++)
     {
       TextView v = candidate(previousCandidates.get(i), i);
@@ -217,9 +257,26 @@ public final class PinyinCandidatesView extends LinearLayout
       line.addView(v, new LayoutParams(need, -1));
       width += need;
     }
-    if (hasMore)
-      expandedItems.addView(ui.button(getContext().getString(R.string.pinyin_more_candidates), () -> {
-        if (listener != null) listener.onMoreCandidates();
-      }), new LayoutParams(-1, ui.dp(48)));
+  }
+
+  @Override protected void onSizeChanged(int w, int h, int oldw, int oldh)
+  {
+    super.onSizeChanged(w, h, oldw, oldh);
+    if (w != oldw && expanded) renderExpanded();
+  }
+
+  // The fixed footer only appears when paging is still possible. Without it
+  // the scroller takes the whole budget instead of leaving an empty strip.
+  private void applyExpandedLayout()
+  {
+    boolean open = expanded;
+    boolean footer = open && hasMore;
+    more.setText(open ? "⌃" : "⌄");
+    more.setEnabled(!previousCandidates.isEmpty());
+    more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
+    expandedPanel.setVisibility(open ? VISIBLE : GONE);
+    expandedScroll.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT,
+        ui.dp(open && footer ? EXPANDED_BUDGET_DP - EXPANDED_FOOTER_DP : EXPANDED_BUDGET_DP)));
+    expandedFooter.setVisibility(footer ? VISIBLE : GONE);
   }
 }

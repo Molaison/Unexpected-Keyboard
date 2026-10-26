@@ -226,19 +226,42 @@ public final class PinyinSmokeTest extends Instrumentation
       int beforeMore = onMain(() -> ((ViewGroup)field(candidatesView(), "items")).getChildCount());
       tap(onMain(() -> (View)field(candidatesView(), "more")));
       await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
-      View loadMore = onMain(() -> findText((View)field(candidatesView(), "expandedItems"), getTargetContext().getString(R.string.pinyin_more_candidates)));
-      for (int attempt=0; !onMain(() -> loadMore.getGlobalVisibleRect(new Rect())); attempt++)
-      {
-        if (attempt >= 30) throw new AssertionError("More candidates button is unreachable");
-        Rect r = onMain(() -> { Rect b=new Rect(); ((View)field(candidatesView(), "expandedScroll")).getGlobalVisibleRect(b); return b; });
-        swipe(r.exactCenterX(), r.bottom-10, r.exactCenterX(), r.top+10);
-      }
+      // Paging is a fixed action beside the scrolling candidate content. A
+      // visible sliver in a moving ScrollView is not a reliable tap target.
+      View loadMore = onMain(() -> findText(candidatesView(), getTargetContext().getString(R.string.pinyin_more_candidates)));
+      if (loadMore == null) throw new AssertionError("More candidates action is missing");
+      Rect pageBounds = onMain(() -> { Rect b=new Rect(); loadMore.getGlobalVisibleRect(b); return b; });
+      Rect scrollBounds = onMain(() -> { Rect b=new Rect(); ((View)field(candidatesView(), "expandedScroll")).getGlobalVisibleRect(b); return b; });
+      if (pageBounds.height() < Math.round(48 * getTargetContext().getResources().getDisplayMetrics().density)
+          || Rect.intersects(pageBounds, scrollBounds))
+        throw new AssertionError("Paging must have a full, stationary 48dp target outside the scroller");
       tap(loadMore);
       await("additional candidate cells", () ->
           ((ViewGroup)field(candidatesView(), "items")).getChildCount() > beforeMore);
+      passed("stationary pagination adds real candidate cells");
       key("enter");
       text(activity.plain, "shi");
-      passed("scrolling to and loading additional candidates");
+
+      clear();
+      type("shi");
+      tap(onMain(() -> (View)field(candidatesView(), "more")));
+      await("expanded candidates for scrolling", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
+      TextView lastCandidate = onMain(() -> {
+        ViewGroup lines = (ViewGroup)field(candidatesView(), "expandedItems");
+        ViewGroup lastLine = (ViewGroup)lines.getChildAt(lines.getChildCount()-1);
+        return (TextView)lastLine.getChildAt(lastLine.getChildCount()-1);
+      });
+      String lastText = onMain(() -> lastCandidate.getText().toString());
+      for (int attempt=0; !onMain(() -> lastCandidate.getGlobalVisibleRect(new Rect())); attempt++)
+      {
+        if (attempt >= 30) throw new AssertionError("Last candidate is unreachable by scrolling");
+        Rect r = onMain(() -> { Rect b=new Rect(); ((View)field(candidatesView(), "expandedScroll")).getGlobalVisibleRect(b); return b; });
+        swipe(r.exactCenterX(), r.bottom-10, r.exactCenterX(), r.top+10);
+      }
+      screenshot("pinyin-candidates-expanded.png");
+      tap(lastCandidate);
+      text(activity.plain, lastText);
+      passed("scrolling expanded content selects the actual last candidate");
 
       clear();
       type("nihao");

@@ -15,10 +15,16 @@ pinyin_ime="$pinyin_package/juloo.keyboard2.Keyboard2"
 pinyin_previous_ime="$("$pinyin_adb" -s "$pinyin_serial" shell settings get secure default_input_method | tr -d '\r')"
 restore_ime() {
   pinyin_status=$?
-  for screenshot in pinyin-keyboard pinyin-nine-key clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
+  for screenshot in pinyin-keyboard pinyin-nine-key pinyin-candidates-expanded clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
     if "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" \
         > "$pinyin_root/build/validation/$screenshot.png.tmp" 2>/dev/null; then
-      mv "$pinyin_root/build/validation/$screenshot.png.tmp" "$pinyin_root/build/validation/$screenshot.png"
+      # Some adb versions report success even when run-as cat prints an error.
+      # Retain only real PNGs, never a missing-file diagnostic with a .png suffix.
+      if [[ "$(od -An -tx1 -N8 "$pinyin_root/build/validation/$screenshot.png.tmp" | tr -d ' \n')" == 89504e470d0a1a0a ]]; then
+        mv "$pinyin_root/build/validation/$screenshot.png.tmp" "$pinyin_root/build/validation/$screenshot.png"
+      else
+        rm -f "$pinyin_root/build/validation/$screenshot.png.tmp"
+      fi
     else
       rm -f "$pinyin_root/build/validation/$screenshot.png.tmp"
     fi

@@ -2,6 +2,10 @@ package juloo.keyboard2;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.content.res.TypedArray;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.util.AttributeSet;
 import android.view.ContextThemeWrapper;
 import android.view.View;
@@ -27,6 +31,7 @@ public class EmojiGridView extends GridView
 
   private List<Emoji> _emojiArray;
   private HashMap<Emoji, Integer> _lastUsed;
+  private int _group = GROUP_LAST_USE;
 
   /*
    ** TODO: adapt column width and emoji size
@@ -41,11 +46,28 @@ public class EmojiGridView extends GridView
     setEmojiGroup((_lastUsed.size() == 0) ? 0 : GROUP_LAST_USE);
   }
 
+  /** Every cell is at least 48dp, whatever [columnWidth] scales to. */
+  @Override public void onMeasure(int widthSpec, int heightSpec)
+  {
+    Emoji.init(getContext().getResources());
+    setColumnWidth(Math.max(getColumnWidth(), dp(48)));
+    super.onMeasure(widthSpec, heightSpec);
+  }
+
+  private int dp(float n)
+  {
+    return Math.round(n * getResources().getDisplayMetrics().density);
+  }
+
   public void setEmojiGroup(int group)
   {
+    _group = group;
     _emojiArray = (group == GROUP_LAST_USE) ? getLastEmojis() : Emoji.getEmojisByGroup(group);
     setAdapter(new EmojiViewAdpater(getContext(), _emojiArray));
   }
+
+  /** The group currently shown, including the group picked in the constructor. */
+  public int current_group() { return _group; }
 
   public void onItemClick(AdapterView<?> parent, View v, int pos, long id)
   {
@@ -114,6 +136,19 @@ public class EmojiGridView extends GridView
     public EmojiView(Context context)
     {
       super(context);
+      // The cell is the touch target: never below 48dp, with a themed ripple
+      // instead of the platform button chrome.
+      int min = Math.round(48 * context.getResources().getDisplayMetrics().density);
+      setMinHeight(min);
+      setMinimumHeight(min);
+      TypedArray colors = context.obtainStyledAttributes(
+          new int[] { R.attr.colorLabelActivated });
+      int ripple = colors.getColor(0, 0xff3399ff);
+      colors.recycle();
+      GradientDrawable base = new GradientDrawable();
+      base.setColor(0);
+      setBackground(new RippleDrawable(
+          ColorStateList.valueOf((ripple & 0xffffff) | 0x33000000), base, null));
     }
 
     public void setEmoji(Emoji emoji)
@@ -154,7 +189,6 @@ public class EmojiGridView extends GridView
     public View getView(int pos, View convertView, ViewGroup parent)
     {
       EmojiView view = (EmojiView)convertView;
-
       if (view == null)
         view = new EmojiView(_button_context);
       view.setEmoji(_emojiArray.get(pos));
