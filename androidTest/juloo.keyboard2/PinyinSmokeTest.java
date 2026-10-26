@@ -782,9 +782,13 @@ public final class PinyinSmokeTest extends Instrumentation
       getTargetContext().getSystemService(android.app.LocaleManager.class);
     if (locales == null) throw new AssertionError("LocaleManager is unavailable");
     final android.os.LocaleList saved = locales.getApplicationLocales();
+    final android.content.SharedPreferences preferences =
+      DirectBootAwarePreferences.get_shared_preferences(getTargetContext());
+    final String savedTheme = preferences.getString("theme", null);
     try
     {
       installZhResources(locales);
+      onMain(() -> { preferences.edit().putString("theme", "soft_light").apply(); return null; });
       launchFixture();
       chinese(true);
       nineKey(false);
@@ -802,7 +806,13 @@ public final class PinyinSmokeTest extends Instrumentation
     {
       try
       {
-        onMain(() -> { locales.setApplicationLocales(saved); return null; });
+        onMain(() -> {
+          android.content.SharedPreferences.Editor restore = preferences.edit();
+          if (savedTheme == null) restore.remove("theme"); else restore.putString("theme", savedTheme);
+          restore.apply();
+          locales.setApplicationLocales(saved);
+          return null;
+        });
       }
       catch (Throwable restoreError)
       {
@@ -826,10 +836,27 @@ public final class PinyinSmokeTest extends Instrumentation
   /** Start the debug editor fixture, reselect this IME and focus its editor. */
   private void launchFixture() throws Exception
   {
+    String ime = getTargetContext().getPackageName() + "/juloo.keyboard2.Keyboard2";
+    InputMethodManager manager = (InputMethodManager)getTargetContext()
+      .getSystemService(Activity.INPUT_METHOD_SERVICE);
+    String alternate = null;
+    for (android.view.inputmethod.InputMethodInfo info : manager.getEnabledInputMethodList())
+      if (!info.getPackageName().equals(getTargetContext().getPackageName()))
+      { alternate = info.getId(); break; }
+    if (alternate == null) throw new AssertionError("The emulator needs its enabled fallback IME");
+    // Each am instrument invocation restarts the process hosting this IME.
+    // Selecting the already-selected id can retain a dead binding; changing
+    // ids first explicitly starts a fresh binding generation on the emulator.
+    selectFixtureIme(alternate);
+    selectFixtureIme(ime);
     Intent intent = new Intent(getTargetContext(), PinyinTestActivity.class);
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
     activity = (PinyinTestActivity)startActivitySync(intent);
-    String ime = getTargetContext().getPackageName() + "/juloo.keyboard2.Keyboard2";
+    focus(activity.plain);
+  }
+
+  private void selectFixtureIme(String ime) throws Exception
+  {
     try (android.os.ParcelFileDescriptor.AutoCloseInputStream output =
         new android.os.ParcelFileDescriptor.AutoCloseInputStream(
           getUiAutomation().executeShellCommand("ime set " + ime)))
@@ -841,7 +868,6 @@ public final class PinyinSmokeTest extends Instrumentation
       String status = bytes.toString("UTF-8");
       if (!status.contains("selected")) throw new AssertionError(status);
     }
-    focus(activity.plain);
   }
 
   /** Idle -> composition -> backspace clear with a stable key origin. */
@@ -892,10 +918,10 @@ public final class PinyinSmokeTest extends Instrumentation
     // The normal fixture intentionally opts out of Latin suggestions. Use a
     // real editor that permits them for this asynchronous-publication test;
     // never bypass production editor policy by forcing a view visible.
-    onMain(() -> { activity.plain.setInputType(android.text.InputType.TYPE_CLASS_TEXT); return null; });
-    focus(activity.plain);
     try
     {
+      onMain(() -> { activity.plain.setInputType(android.text.InputType.TYPE_CLASS_TEXT); return null; });
+      focus(activity.plain);
     chinese(false);
     clear();
     KeyEventHandler handler = onMain(() -> (KeyEventHandler)Config.globalConfig().handler);
