@@ -1659,6 +1659,9 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private <T> T onMain(Callable<T> action) throws Exception
   {
+    // Conditions already run on the UI thread; nested helpers must not dispatch
+    // synchronously back onto that same thread.
+    if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return action.call();
     AtomicReference<T> result = new AtomicReference<>();
     AtomicReference<Throwable> failure = new AtomicReference<>();
     runOnMainSync(() -> { try { result.set(action.call()); } catch (Throwable error) { failure.set(error); } });
