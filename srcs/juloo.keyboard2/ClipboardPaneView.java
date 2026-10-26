@@ -33,7 +33,8 @@ public final class ClipboardPaneView extends LinearLayout
   private LinearLayout firstRow, actions, tabSlot;
   private int rowHeight;
   private boolean single_row = true;
-  private TextView clearButton, backButton, moreButton;
+  private TextView backButton, moreButton;
+  private android.widget.ImageButton clearButton;
   private boolean pinned;
   private String undoneText;
   private boolean undonePin;
@@ -84,7 +85,16 @@ public final class ClipboardPaneView extends LinearLayout
     tabSlot = line();
     firstRow.addView(tabSlot, new LayoutParams(0, rowHeight, 1));
     actions = line();
-    clearButton = ui.button("\u00d7", this::confirmClear);
+    clearButton = new android.widget.ImageButton(context);
+    clearButton.setImageResource(android.R.drawable.ic_menu_delete);
+    clearButton.setColorFilter(ui.text);
+    clearButton.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+    clearButton.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
+    clearButton.setBackground(new android.graphics.drawable.RippleDrawable(
+        android.content.res.ColorStateList.valueOf((ui.accent & 0xffffff) | 0x33000000),
+        ui.round(ui.background, 10), null));
+    clearButton.setFocusable(false);
+    clearButton.setOnClickListener(v -> confirmClear());
     clearButton.setContentDescription(context.getString(R.string.ux_clear));
     actions.addView(clearButton, new LayoutParams(ui.dp(48), rowHeight));
     moreButton = ui.button("\u22EE", this::showHistoryMenu);

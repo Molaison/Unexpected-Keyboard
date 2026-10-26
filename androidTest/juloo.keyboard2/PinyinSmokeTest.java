@@ -888,6 +888,14 @@ public final class PinyinSmokeTest extends Instrumentation
       candidate published asynchronously, then empty again. */
   private void englishRealCandidates() throws Exception
   {
+    int originalInputType = onMain(() -> activity.plain.getInputType());
+    // The normal fixture intentionally opts out of Latin suggestions. Use a
+    // real editor that permits them for this asynchronous-publication test;
+    // never bypass production editor policy by forcing a view visible.
+    onMain(() -> { activity.plain.setInputType(android.text.InputType.TYPE_CLASS_TEXT); return null; });
+    focus(activity.plain);
+    try
+    {
     chinese(false);
     clear();
     KeyEventHandler handler = onMain(() -> (KeyEventHandler)Config.globalConfig().handler);
@@ -909,6 +917,12 @@ public final class PinyinSmokeTest extends Instrumentation
     if (stale != null && onMain(() -> stale.isShown()))
       throw new AssertionError("Cleared English candidate remains visible");
     passed("English suggestion delivery empty -> async candidate -> empty updates the visible row");
+    }
+    finally
+    {
+      onMain(() -> { activity.plain.setInputType(originalInputType); return null; });
+      focus(activity.plain);
+    }
   }
 
   private juloo.keyboard2.suggestions.Suggestions testSuggestions(KeyEventHandler handler, String word)
