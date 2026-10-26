@@ -1,6 +1,7 @@
 package juloo.keyboard2.suggestions;
 
 import android.content.Context;
+import android.graphics.Paint;
 import android.os.Build.VERSION;
 import android.text.InputType;
 import android.util.AttributeSet;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import juloo.keyboard2.Config;
+import juloo.keyboard2.KeyboardUi;
 import juloo.keyboard2.KeyValue;
 import juloo.keyboard2.Pointers;
 import juloo.keyboard2.R;
@@ -59,6 +61,34 @@ public class CandidatesView extends LinearLayout
     _lang_name_view = (TextView)findViewById(R.id.candidates_lang_name);
   }
 
+  /** Called after the visible suggestion content changes, so the parent row
+      can react without inspecting child visibility. Null by default. */
+  public interface ContentListener
+  {
+    void onCandidatesContentChanged();
+  }
+
+  ContentListener _content_listener;
+
+  public void set_content_listener(ContentListener listener)
+  {
+    _content_listener = listener;
+  }
+
+  /** Whether any suggestion or emoji candidate is currently shown. Dictionary
+      and language controls are not candidate content. */
+  public boolean hasCandidates()
+  {
+    for (String item : _items)
+      if (item != null) return true;
+    return false;
+  }
+
+  private void notify_content_changed()
+  {
+    if (_content_listener != null) _content_listener.onCandidatesContentChanged();
+  }
+
   public void set_candidates(Suggestions s)
   {
     int s_count = s.count;
@@ -85,6 +115,7 @@ public class CandidatesView extends LinearLayout
       (should_show_dictionary_switch && s.count == 0) ? View.VISIBLE : View.GONE;
     _dictionary_switch_button.setVisibility(dict_vis);
     _lang_name_view.setVisibility(dict_vis);
+    notify_content_changed();
   }
 
   void clear_candidates()
@@ -94,6 +125,7 @@ public class CandidatesView extends LinearLayout
       _items[i] = null;
       _item_views[i].setVisibility(View.GONE);
     }
+    notify_content_changed();
   }
 
   public void refresh_config(Config config)
@@ -113,28 +145,40 @@ public class CandidatesView extends LinearLayout
     else
       _lang_name_view.setText(
           sd.get_display_name(config.current_dictionary_name));
+    notify_content_changed();
   }
 
   /** Set the height of the suggestion row and the text size. */
   void set_sizes(Config config)
   {
-    // Make the candidates view about as high as a keyboard row.
-    float row_height = config.keyboard_rows_height_pixels * (1 - config.key_vertical_margin);
+    // Candidate text is content: keep it in sp so the system font scale applies.
+    float text_size = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+        18, getResources().getDisplayMetrics());
+    // Tall enough for the scaled glyphs plus the cells' own vertical margins,
+    // never less than the compact 48dp row. The margins live on the child
+    // views, so this view's own vertical margins stay untouched.
+    Paint text_paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    text_paint.setTextSize(text_size);
+    Paint.FontMetricsInt fm = text_paint.getFontMetricsInt();
+    int needed = (int)Math.ceil(fm.bottom - fm.top)
+      + 2 * getResources().getDimensionPixelSize(R.dimen.candidates_margin_vertical)
+      + _item_views[0].getPaddingTop() + _item_views[0].getPaddingBottom();
+    int row_height = Math.max(new KeyboardUi(getContext()).dp(48), needed);
     ViewGroup.MarginLayoutParams p =
       (ViewGroup.MarginLayoutParams)getLayoutParams();
-    p.height = (int)row_height;
+    p.height = row_height;
     setLayoutParams(p);
-    // Match the size of labels on the keyboard.
-    float text_size = row_height * config.characterSize * config.labelTextSize;
+    // Shrink only for genuinely long words, and never below a readable 12sp.
+    int min_size = (int)TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+        12, getResources().getDisplayMetrics());
     for (int i = 0; i < NUM_CANDIDATES; i++)
     {
       TextView v = _item_views[i];
-      // Set text size and enable auto size if supported.
       if (VERSION.SDK_INT < 26)
         v.setTextSize(TypedValue.COMPLEX_UNIT_PX, text_size);
       else
         v.setAutoSizeTextTypeUniformWithConfiguration(
-            (int)(text_size / 2.), (int)text_size, 1, TypedValue.COMPLEX_UNIT_PX);
+            min_size, (int)text_size, 1, TypedValue.COMPLEX_UNIT_PX);
     }
   }
 

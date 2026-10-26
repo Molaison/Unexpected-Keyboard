@@ -2,7 +2,14 @@ package juloo.keyboard2;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.content.res.TypedArray;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.text.TextPaint;
 import android.util.AttributeSet;
+import android.util.DisplayMetrics;
+import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,27 +32,85 @@ public class EmojiGridView extends GridView
 
   private static final String LAST_USE_PREF = "emoji_last_use";
 
+  /** The glyph size asked for, in sp, before fitting it to the cell height. */
+  private static final float GLYPH_SP = 30f;
+  /** Room kept around the glyph inside a cell. */
+  private static final float GLYPH_PADDING_DP = 12f;
+
   private List<Emoji> _emojiArray;
   private HashMap<Emoji, Integer> _lastUsed;
+  private int _group = GROUP_LAST_USE;
+  private int _column_width = -1;
+  private int _cell_min_height = -1;
+  private float _glyph_pixels = -1;
 
-  /*
-   ** TODO: adapt column width and emoji size
-   ** TODO: use ArraySet instead of Emoji[]
-   */
   public EmojiGridView(Context context, AttributeSet attrs)
   {
     super(context, attrs);
     Emoji.init(context.getResources());
     setOnItemClickListener(this);
     loadLastUsed();
+    update_cell_metrics();
     setEmojiGroup((_lastUsed.size() == 0) ? 0 : GROUP_LAST_USE);
+  }
+
+  /**
+   * A cell is at least 48dp wide and tall, and wide enough for the glyph at
+   * the current font scale, so a 2x font is not clipped or squeezed.
+   */
+  private void update_cell_metrics()
+  {
+    DisplayMetrics dm = getResources().getDisplayMetrics();
+    float glyphPixels = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, GLYPH_SP, dm);
+    if (_column_width > 0 && _cell_min_height > 0 && _glyph_pixels == glyphPixels) return;
+    _glyph_pixels = glyphPixels;
+    TextPaint paint = new TextPaint();
+    paint.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, GLYPH_SP, dm));
+    float glyph = Math.max(paint.measureText("\uD83D\uDE00"),
+        -paint.ascent() + paint.descent());
+    int padding = Math.round(GLYPH_PADDING_DP * dm.density);
+    _column_width = Math.max(Math.round(48 * dm.density), Math.round(glyph) + padding);
+    _cell_min_height = Math.max(Math.round(48 * dm.density), Math.round(glyph) + padding);
+    setColumnWidth(_column_width);
+  }
+
+  @Override protected void onMeasure(int widthSpec, int heightSpec)
+  {
+    // Sized once per configuration: applying it while measuring re-requested
+    // layout on every pass.
+    if (_column_width <= 0 || _cell_min_height <= 0)
+      update_cell_metrics();
+    super.onMeasure(widthSpec, heightSpec);
+  }
+
+  @Override protected void onConfigurationChanged(android.content.res.Configuration newConfig)
+  {
+    super.onConfigurationChanged(newConfig);
+    _column_width = -1;
+    _cell_min_height = -1;
+    update_cell_metrics();
+    setEmojiGroup(_group);
+    requestLayout();
+  }
+
+  @Override protected void onAttachedToWindow()
+  {
+    super.onAttachedToWindow();
+    int oldHeight = _cell_min_height;
+    int oldWidth = _column_width;
+    update_cell_metrics();
+    if (oldHeight != _cell_min_height || oldWidth != _column_width) setEmojiGroup(_group);
   }
 
   public void setEmojiGroup(int group)
   {
+    _group = group;
     _emojiArray = (group == GROUP_LAST_USE) ? getLastEmojis() : Emoji.getEmojisByGroup(group);
-    setAdapter(new EmojiViewAdpater(getContext(), _emojiArray));
+    setAdapter(new EmojiViewAdpater(getContext(), _emojiArray, _cell_min_height));
   }
+
+  /** The group currently shown, including the group picked in the constructor. */
+  public int current_group() { return _group; }
 
   public void onItemClick(AdapterView<?> parent, View v, int pos, long id)
   {
@@ -111,14 +176,46 @@ public class EmojiGridView extends GridView
 
   static class EmojiView extends TextView
   {
+    private int _cell_height = 0;
+
     public EmojiView(Context context)
     {
       super(context);
+      // The cell is the touch target: never below 48dp, with a themed ripple
+      // instead of the platform button chrome.
+      int min = Math.round(48 * context.getResources().getDisplayMetrics().density);
+      setMinHeight(min);
+      setMinimumHeight(min);
+      TypedArray colors = context.obtainStyledAttributes(
+          new int[] { R.attr.colorLabelActivated });
+      int ripple = colors.getColor(0, 0xff3399ff);
+      colors.recycle();
+      GradientDrawable base = new GradientDrawable();
+      base.setColor(0);
+      setBackground(new RippleDrawable(
+          ColorStateList.valueOf((ripple & 0xffffff) | 0x33000000), base, null));
+    }
+
+    /** The row height the grid uses; the glyph is scaled to fit inside it. */
+    void setCellHeight(int height)
+    {
+      _cell_height = height;
     }
 
     public void setEmoji(Emoji emoji)
     {
       setText(emoji.kv().getString());
+      if (_cell_height <= 0)
+        return;
+      DisplayMetrics dm = getResources().getDisplayMetrics();
+      float requested = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, GLYPH_SP, dm);
+      // The font scale is kept; the glyph is only reduced when it cannot fit
+      // the cell at the current row height.
+      float allowed = _cell_height - Math.round(GLYPH_PADDING_DP * dm.density);
+      if (allowed > 0 && requested > allowed)
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, allowed);
+      else
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, GLYPH_SP);
     }
   }
 
@@ -128,10 +225,13 @@ public class EmojiGridView extends GridView
 
     List<Emoji> _emojiArray;
 
-    public EmojiViewAdpater(Context context, List<Emoji> emojiArray)
+    final int _cell_height;
+
+    public EmojiViewAdpater(Context context, List<Emoji> emojiArray, int cellHeight)
     {
       _button_context = new ContextThemeWrapper(context, R.style.emojiGridButton);
       _emojiArray = emojiArray;
+      _cell_height = cellHeight;
     }
 
     public int getCount()
@@ -154,9 +254,9 @@ public class EmojiGridView extends GridView
     public View getView(int pos, View convertView, ViewGroup parent)
     {
       EmojiView view = (EmojiView)convertView;
-
       if (view == null)
         view = new EmojiView(_button_context);
+      view.setCellHeight(_cell_height);
       view.setEmoji(_emojiArray.get(pos));
       return view;
     }

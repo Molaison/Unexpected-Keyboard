@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="emoji_group_recent">Recently used emojis</string>
+  <string name="emoji_group_smileys">Smileys</string>
+  <string name="emoji_group_people">People and body</string>
+  <string name="emoji_group_animals">Animals and nature</string>
+  <string name="emoji_group_food">Food and drink</string>
+  <string name="emoji_group_activities">Activities and sport</string>
+  <string name="emoji_group_travel">Travel and places</string>
+  <string name="emoji_group_objects">Objects</string>
+  <string name="emoji_group_symbols">Symbols</string>
+  <string name="emoji_group_flags">Flags</string>
+</resources>

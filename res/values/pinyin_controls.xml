@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Candidate toolbar states. ux_more_candidates names the collapsed action;
+       this names the same control once the panel is open. -->
+  <string name="ux_collapse_candidates">Collapse candidates</string>
+  <string name="ux_compact_candidate_paging">Collapse candidates. Hold to load more candidates.</string>
+</resources>

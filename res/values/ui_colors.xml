@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="ui_light_canvas">#E8E8EC</color>
+  <color name="ui_light_key">#FFFFFF</color>
+  <color name="ui_light_function">#D9D9E0</color>
+  <color name="ui_light_space">#F9F9FB</color>
+  <color name="ui_light_pressed">#D2DEFF</color>
+  <color name="ui_light_text">#1C2024</color>
+  <color name="ui_light_secondary">#565A63</color>
+  <color name="ui_light_accent_text">#3451B2</color>
+  <color name="ui_dark_canvas">#18191B</color>
+  <color name="ui_dark_key">#272A2D</color>
+  <color name="ui_dark_function">#212225</color>
+  <color name="ui_dark_space">#2E3135</color>
+  <color name="ui_dark_pressed">#253974</color>
+  <color name="ui_dark_text">#EDEEF0</color>
+  <color name="ui_dark_secondary">#B0B4BA</color>
+  <color name="ui_dark_accent_text">#9EB1FF</color>
+  <color name="ui_primary">#3E63DD</color>
+  <color name="ui_on_primary">#FFFFFF</color>
+</resources>

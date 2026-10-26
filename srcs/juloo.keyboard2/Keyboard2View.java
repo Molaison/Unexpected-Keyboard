@@ -277,7 +277,9 @@ public class Keyboard2View extends View
   public void onMeasure(int wSpec, int hSpec)
   {
     DisplayMetrics dm = getContext().getResources().getDisplayMetrics();
-    int width = dm.widthPixels;
+    // Use the width the parent actually gives us, so drawing, hit testing and
+    // the measured width all agree in split or freeform windows.
+    int width = resolveSize(dm.widthPixels, wSpec);
     _marginLeft = Math.max(_config.horizontal_margin, _insets_left);
     _marginRight = Math.max(_config.horizontal_margin, _insets_right);
     _marginBottom = _config.margin_bottom + _insets_bottom;
@@ -387,13 +389,15 @@ public class Keyboard2View extends View
             case Normal: tc_key = _tc.key; break;
           }
         drawKeyFrame(canvas, x, y, keyW, keyH, tc_key);
-        if (k.keys[0] != null)
-          drawLabel(canvas, k.keys[0], keyW / 2f + x, y, keyH, isKeyDown, tc_key);
+        // Draw secondary legends first so the primary character remains the
+        // visual anchor when a compact key carries several corner symbols.
         for (int i = 1; i < 9; i++)
         {
           if (k.keys[i] != null)
             drawSubLabel(canvas, k.keys[i], x, y, keyW, keyH, i, isKeyDown, tc_key);
         }
+        if (k.keys[0] != null)
+          drawLabel(canvas, k.keys[0], keyW / 2f + x, y, keyW, keyH, isKeyDown, tc_key);
         drawIndication(canvas, k, x, y, keyW, keyH, _tc);
         x += _keyWidth * k.width;
       }
@@ -465,14 +469,18 @@ public class Keyboard2View extends View
   }
 
   private void drawLabel(Canvas canvas, KeyValue kv, float x, float y,
-      float keyH, boolean isKeyDown, Theme.Computed.Key tc)
+      float keyW, float keyH, boolean isKeyDown, Theme.Computed.Key tc)
   {
     kv = modifyKey(kv, _mods);
     if (kv == null)
       return;
     float textSize = scaleTextSize(kv, true);
     Paint p = tc.label_paint(kv.hasFlagsAny(KeyValue.FLAG_KEY_FONT), labelColor(kv, isKeyDown, false), textSize);
+    // Squeeze the full glyph instead of letting it bleed over the key edges.
+    p.setTextScaleX(fitTextScale(p, kv.getString(),
+          Math.max(keyW - 2f * _config.keyPadding, 0f)));
     canvas.drawText(kv.getString(), x, (keyH - p.ascent() - p.descent()) / 2f + y, p);
+    p.setTextScaleX(1f);
   }
 
   private void drawSubLabel(Canvas canvas, KeyValue kv, float x, float y,
@@ -496,11 +504,22 @@ public class Keyboard2View extends View
     else
       x += (a == Paint.Align.LEFT) ? subPadding : keyW - subPadding;
     String label = kv.getString();
-    int label_len = label.length();
-    // Limit the label of string keys to 3 characters
-    if (label_len > 3 && kv.getKind() == KeyValue.Kind.String)
-      label_len = 3;
-    canvas.drawText(label, 0, label_len, x, y, p);
+    // Keep every character: scale horizontally into the corner slot that the
+    // primary glyph leaves free, never cut the string.
+    float subMaxWidth = Math.max(keyW / 2f - subPadding, 0f);
+    p.setTextScaleX(fitTextScale(p, label, subMaxWidth));
+    canvas.drawText(label, 0, label.length(), x, y, p);
+    p.setTextScaleX(1f);
+  }
+
+  /** Horizontal scale that keeps [text] within [maxWidth] and leaves text that
+      already fits untouched. */
+  private static float fitTextScale(Paint p, String text, float maxWidth)
+  {
+    float w = p.measureText(text);
+    if (w <= maxWidth || w <= 0f)
+      return 1f;
+    return maxWidth / w;
   }
 
   private void drawIndication(Canvas canvas, KeyboardData.Key k, float x,

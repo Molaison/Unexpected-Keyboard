@@ -17,7 +17,7 @@
   <string name="ux_deleted">已删除</string>
   <string name="ux_undo">撤销</string>
   <string name="ux_pins_empty">还没有固定内容\n点击卡片旁的 ☆，保留常用片段</string>
-  <string name="ux_history_empty">在应用中复制文字，即可在这里粘贴\n不记录来源应用标记为敏感的内容</string>
+  <string name="ux_history_empty">复制的文字会显示在这里\n来源应用标记为敏感的内容不会被记录</string>
   <string name="ux_clipboard_privacy">最近记录仅在内存中暂存；固定内容保存在本机</string>
   <string name="ux_unlock_to_pin">解锁设备后才能保存固定内容</string>
   <string name="ux_clear_history_title">清空最近记录？</string>
@@ -28,4 +28,5 @@
   <string name="ux_theme_soft_light">柔和浅色</string>
   <string name="ux_theme_soft_dark">柔和深色</string>
   <string name="ux_history_duration_hour">1 小时</string>
+  <string name="ux_clipboard_menu">剪贴板选项</string>
 </resources>
