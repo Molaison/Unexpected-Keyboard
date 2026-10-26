@@ -883,6 +883,7 @@ public final class PinyinSmokeTest extends Instrumentation
   {
     clear();
     chinese(true);
+    int keyboardHeight = onMain(() -> ((View)keyboard().getParent()).getHeight());
     float[] entry = onMain(() -> {
       Keyboard2View view = keyboard();
       KeyboardData data = (KeyboardData)field(view, "_keyboard");
@@ -918,6 +919,7 @@ public final class PinyinSmokeTest extends Instrumentation
     });
     swipe(entry[0], entry[1], entry[2], entry[3]);
     await("emoji pane", () -> emojiPane() != null && emojiPane().isShown());
+    await("emoji pane preserves keyboard height", () -> emojiPane().getHeight() == keyboardHeight);
     EmojiGroupButtonsBar bar = onMain(() -> (EmojiGroupButtonsBar)emojiPane().getChildAt(0));
     ViewGroup groups = onMain(() -> (ViewGroup)field(bar, "_strip"));
     tap(onMain(() -> groups.getChildAt(1)));
@@ -990,7 +992,9 @@ public final class PinyinSmokeTest extends Instrumentation
             TextView cell = (TextView)line.getChildAt(i);
             android.graphics.Paint.FontMetricsInt fm = cell.getPaint().getFontMetricsInt();
             if (cell.getHeight() < fm.bottom-fm.top || cell.getRight() > lines.getWidth())
-              throw new AssertionError("Candidate clipped at fontScale="+fontScale+" row="+rowIndex);
+              throw new AssertionError("Candidate clipped at fontScale="+fontScale+" row="+rowIndex
+                  +" cellHeight="+cell.getHeight()+" fontHeight="+(fm.bottom-fm.top)
+                  +" cellRight="+cell.getRight()+" contentWidth="+lines.getWidth());
           }
         }
         Bitmap render = Bitmap.createBitmap(panel.getWidth(), panel.getHeight(), Bitmap.Config.ARGB_8888);

@@ -35,6 +35,14 @@ All reported final blocker/high items are resolved at the source-review boundary
 
 Next owner/action: parent commits and pushes the four-round batch to the same PR branch, monitors the existing full CI/UX workflow, downloads artifacts, visually inspects valid PNGs and supplies runtime results to these same three independent reviewers. Keep PR #8 Draft. Until those results exist, Android test additions and screenshot paths are pending, not pass claims.
 
+### First actual Android acceptance and correction
+
+Code `0cd7f6b`: APK and generated checks pass. [UX run 40332545258](https://github.com/Molaison/Unexpected-Keyboard/actions/runs/40332545258) builds the actual app/test APKs and reaches PASS 38: strict additional candidate cells (PASS 22), scrolling last-candidate commit (23), nine-key/editor tests, clipboard (33–37), and real emoji gesture/drag/commit/focus return (38). Then the new Android widget reflow assertion fails at fontScale 1, row 0. This is not the original timeout and is not accepted as a green UX run.
+
+Parent correction: width-dependent row rebuilding now occurs before child measurement in `onMeasure`, instead of creating unmeasured cells from `onSizeChanged` during layout. Keep the clipping assertion and both font-scale cases; add actual cell/font/bounds dimensions to failure diagnostics. Logs retained in `build/validation/round4-ci-failed.log`, artifact download under `build/validation/candidate-0cd7f6b/`. Corrected candidate must rerun the same UX workflow.
+
+Actual screenshot inspection found an additional high defect missed by source-only reviews: `emoji-panel.png` fills the screen and overlaps the editor/status bar, despite the successful touch/commit test. Parent verified [AOSP InputMethodService.setInputView](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/core/java/android/inputmethodservice/InputMethodService.java): it replaces the supplied layout params with MATCH_PARENT/WRAP_CONTENT. R2's pre-attachment height was ineffective. Original panel worker owns the correction in `Keyboard2.setInputView`: preserve explicit nonnegative pane height after the superclass attaches it, retaining the framework's FrameLayout params; also give emoji root an opaque themed canvas. Parent adds a real-window assertion that emoji height equals the originating keyboard height. This is the observed owner boundary, not the earlier unproven clipboard collapse theory.
+
 ## 5. Coverage and remaining limits
 
 | Requested area | Evidence route / current boundary |

@@ -425,10 +425,18 @@ public class Keyboard2 extends InputMethodService
   @Override
   public void setInputView(View v)
   {
+    // InputMethodService swaps in a fresh
+    // FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT) when it adopts the
+    // view, discarding any height the caller set on it. Capture it first.
+    ViewGroup.LayoutParams captured = v.getLayoutParams();
+    int requestedHeight = captured == null
+        ? ViewGroup.LayoutParams.WRAP_CONTENT : captured.height;
     ViewParent parent = v.getParent();
     if (parent != null && parent instanceof ViewGroup)
       ((ViewGroup)parent).removeView(v);
     super.setInputView(v);
+    if (requestedHeight >= 0)
+      updateLayoutHeightOf(v, requestedHeight);
     updateSoftInputWindowLayoutParams();
     v.requestApplyInsets();
   }

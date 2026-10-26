@@ -358,9 +358,13 @@ public final class PinyinCandidatesView extends LinearLayout
 
   private void renderExpanded()
   {
+    renderExpanded(Math.max(1, getWidth() - getPaddingLeft() - getPaddingRight()));
+  }
+
+  private void renderExpanded(int available)
+  {
     applyExpandedLayout();
     if (!expanded) return;
-    int available = Math.max(1, getWidth() - getPaddingLeft() - getPaddingRight());
     boolean sameData = previousComposition.equals(renderedComposition)
       && previousCandidates.equals(renderedCandidates) && previousHasMore == renderedHasMore
       && available == renderedWidth && expandedRowHeight == renderedRowHeight
@@ -391,6 +395,17 @@ public final class PinyinCandidatesView extends LinearLayout
       line.addView(v, new LayoutParams(need, -1));
       width += need;
     }
+  }
+
+  @Override protected void onMeasure(int widthSpec, int heightSpec)
+  {
+    int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
+      ? getResources().getDisplayMetrics().widthPixels : MeasureSpec.getSize(widthSpec);
+    int available = Math.max(1, width - getPaddingLeft() - getPaddingRight());
+    // Rebuild rows before measuring their children. Doing this in onSizeChanged
+    // alone creates unmeasured cells during the layout that changed the width.
+    if (expanded && available != renderedWidth) renderExpanded(available);
+    super.onMeasure(widthSpec, heightSpec);
   }
 
   @Override protected void onSizeChanged(int w, int h, int oldw, int oldh)
