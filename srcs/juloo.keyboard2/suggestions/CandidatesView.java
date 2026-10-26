@@ -1,6 +1,7 @@
 package juloo.keyboard2.suggestions;
 
 import android.content.Context;
+import android.graphics.Paint;
 import android.os.Build.VERSION;
 import android.text.InputType;
 import android.util.AttributeSet;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import juloo.keyboard2.Config;
+import juloo.keyboard2.KeyboardUi;
 import juloo.keyboard2.KeyValue;
 import juloo.keyboard2.Pointers;
 import juloo.keyboard2.R;
@@ -118,26 +120,34 @@ public class CandidatesView extends LinearLayout
   /** Set the height of the suggestion row and the text size. */
   void set_sizes(Config config)
   {
-    // Keep suggestions within a compact, predictable toolbar slot. The
-    // old full-key-height row made the keyboard feel top-heavy on tall phones.
-    float row_height = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
-        48, getResources().getDisplayMetrics());
-    ViewGroup.MarginLayoutParams p =
-      (ViewGroup.MarginLayoutParams)getLayoutParams();
-    p.height = (int)row_height;
-    setLayoutParams(p);
-    // Candidate text is content, not a corner hint: give it a stable readable size.
+    // Candidate text is content: keep it in sp so the system font scale applies.
     float text_size = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
         18, getResources().getDisplayMetrics());
+    // Tall enough for the scaled glyphs plus the cells' own vertical margins,
+    // never less than the compact 48dp row. The margins live on the child
+    // views, so this view's own vertical margins stay untouched.
+    Paint text_paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    text_paint.setTextSize(text_size);
+    Paint.FontMetricsInt fm = text_paint.getFontMetricsInt();
+    int needed = (int)Math.ceil(fm.bottom - fm.top)
+      + 2 * getResources().getDimensionPixelSize(R.dimen.candidates_margin_vertical)
+      + _item_views[0].getPaddingTop() + _item_views[0].getPaddingBottom();
+    int row_height = Math.max(new KeyboardUi(getContext()).dp(48), needed);
+    ViewGroup.MarginLayoutParams p =
+      (ViewGroup.MarginLayoutParams)getLayoutParams();
+    p.height = row_height;
+    setLayoutParams(p);
+    // Shrink only for genuinely long words, and never below a readable 12sp.
+    int min_size = (int)TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+        12, getResources().getDisplayMetrics());
     for (int i = 0; i < NUM_CANDIDATES; i++)
     {
       TextView v = _item_views[i];
-      // Set text size and enable auto size if supported.
       if (VERSION.SDK_INT < 26)
         v.setTextSize(TypedValue.COMPLEX_UNIT_PX, text_size);
       else
         v.setAutoSizeTextTypeUniformWithConfiguration(
-            (int)(text_size / 2.), (int)text_size, 1, TypedValue.COMPLEX_UNIT_PX);
+            min_size, (int)text_size, 1, TypedValue.COMPLEX_UNIT_PX);
     }
   }
 

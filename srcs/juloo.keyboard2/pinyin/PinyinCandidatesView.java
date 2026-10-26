@@ -50,11 +50,23 @@ public final class PinyinCandidatesView extends LinearLayout
   private final LinearLayout expandedFooter;
   private static final int EXPANDED_BUDGET_DP = 144;
   private static final int EXPANDED_FOOTER_DP = 48;
+  private static final float CANDIDATE_SP = 20;
+  private static final float HEADER_SP = 18;
+  private static final float FOOTER_SP = 14;
+
   private boolean previousHasMore;
   private String renderedComposition;
   private List<String> renderedCandidates = new ArrayList<>();
   private boolean renderedHasMore;
   private int renderedWidth = -1;
+  // Row height depends on the scaled font, so a font-scale or theme change must
+  // invalidate the cached expanded layout exactly like a width change does.
+  private int renderedRowHeight = -1;
+  private int renderedHeaderHeight = -1;
+  private int headerHeight;
+  private int expandedBudget;
+  private int candidateRowHeight;
+  private int expandedRowHeight;
   private View latinCandidates;
   private boolean expanded;
   private boolean hasMore;
@@ -67,6 +79,10 @@ public final class PinyinCandidatesView extends LinearLayout
     ui = new KeyboardUi(context);
     setOrientation(VERTICAL);
     setLayoutDirection(LAYOUT_DIRECTION_LTR);
+    headerHeight = ui.rowHeight(HEADER_SP);
+    expandedBudget = ui.dp(EXPANDED_BUDGET_DP);
+    candidateRowHeight = ui.rowHeight(CANDIDATE_SP);
+    expandedRowHeight = ui.rowHeight(CANDIDATE_SP);
     setPadding(ui.dp(6), 0, ui.dp(6), 0);
     LinearLayout header = new LinearLayout(context);
     header.setGravity(Gravity.CENTER_VERTICAL);
@@ -82,7 +98,9 @@ public final class PinyinCandidatesView extends LinearLayout
       if (listener != null) listener.onClipboard();
     });
     header.addView(clipboard, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
-    preedit = ui.label("", 15, false);
+    // The preedit is the header's dominant text, so it uses the header size
+    // and keeps the 48dp row from clipping its ascent.
+    preedit = ui.label("", HEADER_SP, false);
     preedit.setSingleLine(true);
     preedit.setEllipsize(TextUtils.TruncateAt.START);
     preedit.setTextColor(ui.accent);
@@ -95,9 +113,9 @@ public final class PinyinCandidatesView extends LinearLayout
       if (spellingOptions.isEmpty()) { if (listener != null) listener.onLayoutSwitch(); }
       else showReadings();
     });
-    readings.setTextSize(18);
+    readings.setTextSize(HEADER_SP);
     header.addView(readings);
-    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, headerHeight));
 
     row = new LinearLayout(context);
     row.setGravity(Gravity.CENTER_VERTICAL);
@@ -113,7 +131,7 @@ public final class PinyinCandidatesView extends LinearLayout
     });
     more.setContentDescription(context.getString(R.string.ux_more_candidates));
     row.addView(more, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
-    addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
     expandedPanel = new LinearLayout(context);
     expandedPanel.setOrientation(VERTICAL);
     expandedScroll = new ScrollView(context);
@@ -127,9 +145,11 @@ public final class PinyinCandidatesView extends LinearLayout
     // The empty footer must not steal taps from the content above it.
     expandedFooter.setVisibility(GONE);
     // Built once; visibility alone decides whether it is reachable.
-    expandedFooter.addView(ui.button(context.getString(R.string.pinyin_more_candidates), () -> {
+    TextView loadMore = ui.button(context.getString(R.string.pinyin_more_candidates), () -> {
       if (listener != null) listener.onMoreCandidates();
-    }), new LayoutParams(-1, -1));
+    });
+    loadMore.setTextSize(FOOTER_SP);
+    expandedFooter.addView(loadMore, new LayoutParams(-1, -1));
     expandedPanel.addView(expandedFooter,
         new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(EXPANDED_FOOTER_DP)));
     expandedPanel.setVisibility(GONE);
@@ -159,7 +179,58 @@ public final class PinyinCandidatesView extends LinearLayout
     row.addView(view, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
   }
 
-  public void refreshConfig(Config config) {}
+  public void refreshConfig(Config config)
+  {
+    if (config == null) return;
+    // Candidate cells follow the scaled 18sp/20sp/14sp text through the shared
+    // KeyboardUi row metric. The expanded panel is capped by what is left of
+    // the screen above the keyboard; it reserves nothing while closed.
+    int header = ui.rowHeight(HEADER_SP);
+    int text = ui.rowHeight(CANDIDATE_SP);
+    int action = ui.rowHeight(FOOTER_SP);
+    // Config.keyboard_rows_height_pixels is one row, not the whole keyboard.
+    // Prefer the measured keyboard view; before its first measure, estimate
+    // four rows (the common keyboard height in rows).
+    View keyboardView = getParent() instanceof ViewGroup
+      ? ((ViewGroup)getParent()).findViewById(R.id.keyboard_view) : null;
+    int keyboard = keyboardView != null && keyboardView.getMeasuredHeight() > 0
+      ? keyboardView.getMeasuredHeight()
+      : Math.min(Math.max(1, config.keyboard_rows_height_pixels) * 4,
+          config.screenHeightPixels / 2);
+    int screen = config.screenHeightPixels > 0
+      ? config.screenHeightPixels : keyboard * 2;
+    int available = Math.max(action + 1, screen - keyboard - header - text);
+    // Keep the paging target intact; short screens scroll a partial candidate
+    // row rather than forcing two extra rows beyond the window.
+    int budget = Math.min(Math.max(ui.dp(EXPANDED_BUDGET_DP), text + action), available);
+    boolean changed = header != headerHeight || text != candidateRowHeight
+      || budget != expandedBudget || text != expandedRowHeight;
+    headerHeight = header;
+    candidateRowHeight = text;
+    expandedRowHeight = text;
+    expandedBudget = budget;
+    fitTextRows();
+    if (changed)
+    {
+      renderedRowHeight = -1;
+      renderedHeaderHeight = -1;
+      applyExpandedLayout();
+      renderExpanded();
+    }
+  }
+
+  /** Apply the measured text rows without touching them when they already match. */
+  private void fitTextRows()
+  {
+    View header = getChildAt(0);
+    if (header != null && ((LayoutParams)header.getLayoutParams()).height != headerHeight)
+      header.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, headerHeight));
+    // The candidate strip is the child right after the header.
+    View strip = getChildCount() > 1 ? getChildAt(1) : null;
+    if (strip != null && ((LayoutParams)strip.getLayoutParams()).height != candidateRowHeight)
+      strip.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
+  }
+
 
   public void setState(boolean chinese, String composition, List<String> candidates, boolean hasMore)
   {
@@ -200,6 +271,9 @@ public final class PinyinCandidatesView extends LinearLayout
       renderExpanded();
       return;
     }
+    // The strip keeps every candidate at its full text; only the expanded grid
+    // truncates very long phrases, and it exposes the full text there.
+    fitTextRows();
     int scroll = appended ? candidateScroll.getScrollX() : 0;
     items.removeAllViews();
     for (int i = 0; i < candidates.size(); i++)
@@ -233,12 +307,15 @@ public final class PinyinCandidatesView extends LinearLayout
     int available = Math.max(1, getWidth() - getPaddingLeft() - getPaddingRight());
     boolean sameData = previousComposition.equals(renderedComposition)
       && previousCandidates.equals(renderedCandidates) && previousHasMore == renderedHasMore
-      && available == renderedWidth;
+      && available == renderedWidth && expandedRowHeight == renderedRowHeight
+      && headerHeight == renderedHeaderHeight;
     if (sameData && expandedItems.getChildCount() > 0) return;
     renderedComposition = previousComposition;
     renderedCandidates = new ArrayList<>(previousCandidates);
     renderedHasMore = hasMore;
     renderedWidth = available;
+    renderedRowHeight = expandedRowHeight;
+    renderedHeaderHeight = headerHeight;
     expandedItems.removeAllViews();
     // Whole phrases get a whole row; short words share a row without tiny targets.
     LinearLayout line = null;
@@ -250,10 +327,11 @@ public final class PinyinCandidatesView extends LinearLayout
       if (line == null || width + need > available)
       {
         line = new LinearLayout(getContext());
-        expandedItems.addView(line, new LayoutParams(-1, ui.dp(48)));
+        expandedItems.addView(line, new LayoutParams(-1, expandedRowHeight));
         width = 0;
       }
       v.setEllipsize(TextUtils.TruncateAt.END);
+      v.setContentDescription(previousCandidates.get(i));
       line.addView(v, new LayoutParams(need, -1));
       width += need;
     }
@@ -262,7 +340,7 @@ public final class PinyinCandidatesView extends LinearLayout
   @Override protected void onSizeChanged(int w, int h, int oldw, int oldh)
   {
     super.onSizeChanged(w, h, oldw, oldh);
-    if (w != oldw && expanded) renderExpanded();
+    if (expanded) renderExpanded();
   }
 
   // The fixed footer only appears when paging is still possible. Without it
@@ -270,13 +348,19 @@ public final class PinyinCandidatesView extends LinearLayout
   private void applyExpandedLayout()
   {
     boolean open = expanded;
-    boolean footer = open && hasMore;
+    // The footer follows its own 14sp text row; a tight budget meters it down
+    // so it never takes more than half of the panel.
+    int footer = Math.min(ui.rowHeight(FOOTER_SP), expandedBudget - 1);
+    boolean showFooter = open && hasMore;
     more.setText(open ? "⌃" : "⌄");
     more.setEnabled(!previousCandidates.isEmpty());
     more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
     expandedPanel.setVisibility(open ? VISIBLE : GONE);
+    expandedPanel.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, expandedBudget));
+    // The remaining height is scrollable content, without an overflow floor.
+    expandedFooter.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, footer));
     expandedScroll.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT,
-        ui.dp(open && footer ? EXPANDED_BUDGET_DP - EXPANDED_FOOTER_DP : EXPANDED_BUDGET_DP)));
-    expandedFooter.setVisibility(footer ? VISIBLE : GONE);
+        showFooter ? expandedBudget - footer : expandedBudget));
+    expandedFooter.setVisibility(showFooter ? VISIBLE : GONE);
   }
 }

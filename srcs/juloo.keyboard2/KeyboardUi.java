@@ -3,6 +3,8 @@ package juloo.keyboard2;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.res.TypedArray;
+import android.util.TypedValue;
+import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
@@ -31,6 +33,18 @@ public final class KeyboardUi
   }
 
   public int dp(float n) { return Math.round(n * context.getResources().getDisplayMetrics().density); }
+
+  /** Height of a single-line control showing [textSizeSp]. Follows the system
+      font scale so text is never cut, and never drops below the 48dp target. */
+  public int rowHeight(float textSizeSp)
+  {
+    Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+    p.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+          textSizeSp, context.getResources().getDisplayMetrics()));
+    p.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+    Paint.FontMetricsInt fm = p.getFontMetricsInt();
+    return Math.max(dp(48), (int)Math.ceil(fm.bottom - fm.top) + dp(12));
+  }
 
   public GradientDrawable round(int color, float radius)
   {
@@ -61,7 +75,10 @@ public final class KeyboardUi
   {
     TextView v = label(value, 14, true);
     v.setGravity(Gravity.CENTER);
-    v.setMinHeight(dp(48));
+    // One line: a wrapped label would silently grow past the row it sits in.
+    v.setSingleLine(true);
+    v.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    v.setMinHeight(rowHeight(14));
     v.setMinWidth(dp(48));
     v.setPadding(dp(12), 0, dp(12), 0);
     v.setFocusable(false); // Do not steal focus from the application's editor.

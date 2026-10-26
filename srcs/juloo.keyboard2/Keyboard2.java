@@ -14,6 +14,7 @@ import android.os.IBinder;
 import android.text.InputType;
 import android.util.Log;
 import android.util.LogPrinter;
+import android.util.DisplayMetrics;
 import android.view.*;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -203,6 +204,44 @@ public class Keyboard2 extends InputMethodService
       public void onClipboard() { open_clipboard(); }
       public void onLayoutSwitch() { toggle_pinyin_layout(); }
     });
+  }
+
+  /**
+   * Height the emoji pane gets: the main keyboard height measured in this
+   * window, capped to the screen so a low landscape screen is not overrun.
+   * Recomputed on every open, so a configuration or font change is picked up.
+   */
+  private int emoji_pane_height()
+  {
+    DisplayMetrics dm = getResources().getDisplayMetrics();
+    int height = _keyboard_container_view.getHeight();
+    if (height <= 0)
+    {
+      // Not laid out yet: ask the real keyboard view what it needs.
+      int widthSpec = View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.EXACTLY);
+      int heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+      _keyboard_container_view.measure(widthSpec, heightSpec);
+      height = _keyboard_container_view.getMeasuredHeight();
+    }
+    int max = dm.heightPixels;
+    if (height <= 0)
+      height = max;
+    return Math.min(height, max);
+  }
+
+  private void open_emoji()
+  {
+    _voicePushToTalkActive = false;
+    _doubaoVoiceInput.cancel();
+    _pinyin.finish();
+    if (_emojiPane == null)
+      _emojiPane = (ViewGroup)inflate_view(R.layout.emoji_pane);
+    _emojiPane.setLayoutParams(new ViewGroup.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, emoji_pane_height()));
+    // The keyboard view and the pane both draw edge to edge; each reserves
+    // the navigation insets in its own padding, so nothing is counted twice.
+    _emojiPane.requestApplyInsets();
+    setInputView(_emojiPane);
   }
 
   private void open_clipboard()
@@ -668,9 +707,7 @@ public class Keyboard2 extends InputMethodService
           break;
 
         case SWITCH_EMOJI:
-          if (_emojiPane == null)
-            _emojiPane = (ViewGroup)inflate_view(R.layout.emoji_pane);
-          setInputView(_emojiPane);
+          open_emoji();
           break;
 
         case SWITCH_CLIPBOARD:

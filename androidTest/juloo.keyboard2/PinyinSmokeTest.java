@@ -292,6 +292,7 @@ public final class PinyinSmokeTest extends Instrumentation
       passed("candidate UI screenshot and final commit");
       nineKeyChecks();
       clipboardChecks();
+      candidateGeometryChecks();
       result.putString("stream", "\nPINYIN_SMOKE_OK checks=" + checks + "\n");
       finish(Activity.RESULT_OK, result);
     }
@@ -867,6 +868,66 @@ public final class PinyinSmokeTest extends Instrumentation
   {
     Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
     return (juloo.keyboard2.doubao.DoubaoVoiceInput)field(field(receiver, "this$0"), "_doubaoVoiceInput");
+  }
+
+  /** Actual Android widget measurement/rendering; separate from window touches. */
+  private void candidateGeometryChecks() throws Exception
+  {
+    final int[] normalTextHeight = new int[1];
+    for (float scale : new float[] {1f, 2f})
+    {
+      final float fontScale = scale;
+      onMain(() -> {
+        android.content.res.Configuration config = new android.content.res.Configuration(getTargetContext().getResources().getConfiguration());
+        config.fontScale = fontScale;
+        android.content.Context context = new android.view.ContextThemeWrapper(
+            getTargetContext().createConfigurationContext(config), R.style.SoftLight);
+        juloo.keyboard2.pinyin.PinyinCandidatesView panel = new juloo.keyboard2.pinyin.PinyinCandidatesView(context, null);
+        panel.setState(true, "shi", java.util.Arrays.asList("是", "事情", "时间", "世界", "实际", "使用", "十", "试", "市", "式"), true);
+        int densityWidth = Math.round(640 * context.getResources().getDisplayMetrics().density);
+        panel.measure(View.MeasureSpec.makeMeasureSpec(densityWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        panel.layout(0, 0, panel.getMeasuredWidth(), panel.getMeasuredHeight());
+        ((View)field(panel, "more")).performClick();
+        // Reflow the same candidate data from wide to narrow without a re-query.
+        int narrow = Math.round(320 * context.getResources().getDisplayMetrics().density);
+        panel.measure(View.MeasureSpec.makeMeasureSpec(narrow, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        panel.layout(0, 0, panel.getMeasuredWidth(), panel.getMeasuredHeight());
+        panel.measure(View.MeasureSpec.makeMeasureSpec(narrow, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        panel.layout(0, 0, panel.getMeasuredWidth(), panel.getMeasuredHeight());
+        ViewGroup lines = (ViewGroup)field(panel, "expandedItems");
+        if (lines.getChildCount() == 0) throw new AssertionError("Expanded candidates are empty");
+        TextView firstCell = (TextView)((ViewGroup)lines.getChildAt(0)).getChildAt(0);
+        if (fontScale == 1f) normalTextHeight[0] = firstCell.getLineHeight();
+        else if (firstCell.getLineHeight() <= normalTextHeight[0])
+          throw new AssertionError("Font scale did not affect the actual candidate glyph metrics");
+        for (int rowIndex=0; rowIndex<lines.getChildCount(); rowIndex++)
+        {
+          ViewGroup line = (ViewGroup)lines.getChildAt(rowIndex);
+          for (int i=0; i<line.getChildCount(); i++)
+          {
+            TextView cell = (TextView)line.getChildAt(i);
+            android.graphics.Paint.FontMetricsInt fm = cell.getPaint().getFontMetricsInt();
+            if (cell.getHeight() < fm.bottom-fm.top || cell.getRight() > lines.getWidth())
+              throw new AssertionError("Candidate clipped at fontScale="+fontScale+" row="+rowIndex);
+          }
+        }
+        Bitmap render = Bitmap.createBitmap(panel.getWidth(), panel.getHeight(), Bitmap.Config.ARGB_8888);
+        panel.setBackgroundColor(new KeyboardUi(context).background);
+        panel.draw(new android.graphics.Canvas(render));
+        try (FileOutputStream output = new FileOutputStream(new File(getTargetContext().getCacheDir(),
+            fontScale == 2f ? "pinyin-font-2.png" : "pinyin-font-1.png")))
+        {
+          if (!render.compress(Bitmap.CompressFormat.PNG, 100, output))
+            throw new AssertionError("Unable to save candidate widget render");
+        }
+        render.recycle();
+        return null;
+      });
+    }
+    passed("Android font-scale 1/2 measurement and wide-to-narrow candidate reflow");
   }
 
   private void clear() throws Exception

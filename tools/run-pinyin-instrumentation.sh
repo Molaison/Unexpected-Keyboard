@@ -15,7 +15,7 @@ pinyin_ime="$pinyin_package/juloo.keyboard2.Keyboard2"
 pinyin_previous_ime="$("$pinyin_adb" -s "$pinyin_serial" shell settings get secure default_input_method | tr -d '\r')"
 restore_ime() {
   pinyin_status=$?
-  for screenshot in pinyin-keyboard pinyin-nine-key pinyin-candidates-expanded clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
+  for screenshot in pinyin-keyboard pinyin-nine-key pinyin-candidates-expanded pinyin-font-1 pinyin-font-2 clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
     if "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" \
         > "$pinyin_root/build/validation/$screenshot.png.tmp" 2>/dev/null; then
       # Some adb versions report success even when run-as cat prints an error.
