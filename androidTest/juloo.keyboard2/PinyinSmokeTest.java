@@ -292,6 +292,7 @@ public final class PinyinSmokeTest extends Instrumentation
       passed("candidate UI screenshot and final commit");
       nineKeyChecks();
       clipboardChecks();
+      emojiTouchChecks();
       candidateGeometryChecks();
       narrowKeyboardChecks();
       result.putString("stream", "\nPINYIN_SMOKE_OK checks=" + checks + "\n");
@@ -878,6 +879,75 @@ public final class PinyinSmokeTest extends Instrumentation
   }
 
   /** Actual Android widget measurement/rendering; separate from window touches. */
+  private void emojiTouchChecks() throws Exception
+  {
+    clear();
+    chinese(true);
+    float[] entry = onMain(() -> {
+      Keyboard2View view = keyboard();
+      KeyboardData data = (KeyboardData)field(view, "_keyboard");
+      Theme.Computed theme = (Theme.Computed)field(view, "_tc");
+      float unit = (Float)field(view, "_keyWidth");
+      float margin = (Float)field(view, "_marginLeft");
+      int[] location = new int[2]; view.getLocationOnScreen(location);
+      float y = theme.margin_top;
+      for (KeyboardData.Row row : data.rows)
+      {
+        y += row.shift * theme.row_height;
+        float x = margin + theme.margin_left;
+        for (KeyboardData.Key key : row.keys)
+        {
+          x += key.shift * unit;
+          float w = unit*key.width-theme.horizontal_margin;
+          float h = row.height*theme.row_height-theme.vertical_margin;
+          for (int i=1; i<9; i++)
+            if (KeyValue.getKeyByName("switch_emoji").equals(key.keys[i]))
+            {
+              float dx = Keyboard2View.LABEL_POSITION_H[i] == android.graphics.Paint.Align.LEFT ? -.45f
+                : Keyboard2View.LABEL_POSITION_H[i] == android.graphics.Paint.Align.RIGHT ? .45f : 0;
+              float dy = Keyboard2View.LABEL_POSITION_V[i] == Keyboard2View.Vertical.TOP ? -.45f
+                : Keyboard2View.LABEL_POSITION_V[i] == Keyboard2View.Vertical.BOTTOM ? .45f : 0;
+              return new float[] {location[0]+x+w/2, location[1]+y+h/2,
+                location[0]+x+w/2+dx*w, location[1]+y+h/2+dy*h};
+            }
+          x += key.width*unit;
+        }
+        y += row.height*theme.row_height;
+      }
+      throw new AssertionError("Emoji gesture entry is absent");
+    });
+    swipe(entry[0], entry[1], entry[2], entry[3]);
+    await("emoji pane", () -> emojiPane() != null && emojiPane().isShown());
+    EmojiGroupButtonsBar bar = onMain(() -> (EmojiGroupButtonsBar)emojiPane().getChildAt(0));
+    ViewGroup groups = onMain(() -> (ViewGroup)field(bar, "_strip"));
+    tap(onMain(() -> groups.getChildAt(1)));
+    EmojiGridView grid = onMain(() -> emojiPane().findViewById(R.id.emoji_grid));
+    if (!onMain(() -> groups.getChildAt(1).isSelected() && grid.current_group() == 0))
+      throw new AssertionError("Emoji group selection is not synchronized");
+    Rect strip = onMain(() -> { Rect b=new Rect(); bar.getGlobalVisibleRect(b); return b; });
+    swipe(strip.right-10, strip.left+10, strip.exactCenterY());
+    if (onMain(() -> grid.current_group()) != 0)
+      throw new AssertionError("Dragging emoji categories selected a group on pointer down");
+    await("visible emoji cells", () -> grid.getChildCount()>0);
+    TextView emoji = onMain(() -> (TextView)grid.getChildAt(0));
+    String value = onMain(() -> emoji.getText().toString());
+    tap(emoji);
+    text(activity.plain, value);
+    screenshot("emoji-panel.png");
+    Keyboard2View bottom = onMain(() -> (Keyboard2View)emojiPane().getChildAt(2));
+    float[] back = onMain(() -> keyPoint(bottom, "switch_back_emoji", false));
+    touch(back[0], back[1]);
+    await("emoji return", () -> keyboard().isShown() && activity.plain.hasFocus());
+    text(activity.plain, value);
+    passed("emoji gesture, category drag cancellation, actual commit and focused return");
+  }
+
+  private ViewGroup emojiPane() throws Exception
+  {
+    Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
+    return (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
+  }
+
   private void candidateGeometryChecks() throws Exception
   {
     final int[] normalTextHeight = new int[1];
@@ -896,6 +966,8 @@ public final class PinyinSmokeTest extends Instrumentation
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
         panel.layout(0, 0, panel.getMeasuredWidth(), panel.getMeasuredHeight());
         ((View)field(panel, "more")).performClick();
+        if (((View)field(panel, "more")).isLongClickable())
+          throw new AssertionError("Full-height paging must not advertise an inactive long-click");
         // Reflow the same candidate data from wide to narrow without a re-query.
         int narrow = Math.round(320 * context.getResources().getDisplayMetrics().density);
         panel.measure(View.MeasureSpec.makeMeasureSpec(narrow, View.MeasureSpec.EXACTLY),
@@ -931,6 +1003,27 @@ public final class PinyinSmokeTest extends Instrumentation
             throw new AssertionError("Unable to save candidate widget render");
         }
         render.recycle();
+        final int[] pagingCalls = {0};
+        panel.setListener(new juloo.keyboard2.pinyin.PinyinCandidatesView.Listener() {
+          public void onCandidateSelected(int index) {}
+          public void onCommitRaw() {}
+          public void onMoreCandidates() { pagingCalls[0]++; }
+        });
+        Config liveConfig = Config.globalConfig();
+        int savedHeight = liveConfig.screenHeightPixels;
+        try
+        {
+          // Exercise a short-height configuration on this isolated widget,
+          // without rotating the editor or changing system settings.
+          liveConfig.screenHeightPixels = new KeyboardUi(context).dp(80);
+          panel.refreshConfig(liveConfig);
+          if ((Integer)field(panel, "expandedBudget") != 0)
+            throw new AssertionError("Short-height expansion must not force an overflow floor");
+          View arrow = (View)field(panel, "more");
+          if (!arrow.isLongClickable() || !arrow.performLongClick() || pagingCalls[0] != 1)
+            throw new AssertionError("Compact paging must remain available on the existing arrow");
+        }
+        finally { liveConfig.screenHeightPixels = savedHeight; }
         return null;
       });
     }
@@ -1012,7 +1105,11 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private float[] keyPoint(String name, boolean northwest) throws Exception
   {
-      Keyboard2View view = keyboard();
+    return keyPoint(keyboard(), name, northwest);
+  }
+
+  private float[] keyPoint(Keyboard2View view, String name, boolean northwest) throws Exception
+  {
       KeyboardData layout = (KeyboardData)field(view, "_keyboard");
       Theme.Computed theme = (Theme.Computed)field(view, "_tc");
       float width = (Float)field(view, "_keyWidth");

@@ -51,7 +51,11 @@ public class EmojiGroupButtonsBar extends HorizontalScrollView
       Emoji first = Emoji.getEmojisByGroup(i).get(0);
       add_group(i, first.kv().getString());
     }
-    // The grid decides the opening group (recent or first); show it as active.
+  }
+  /** The grid decides the opening group; follow it again on every reattach. */
+  @Override protected void onAttachedToWindow()
+  {
+    super.onAttachedToWindow();
     post(this::sync_with_grid);
   }
 
@@ -123,18 +127,25 @@ public class EmojiGroupButtonsBar extends HorizontalScrollView
     final int _group_id;
     private final int _selected_color;
     private final int _unselected_color;
+    private final int _ripple_color;
 
     public EmojiGroupButton(Context context, int group_id, String symbol)
     {
       super(new ContextThemeWrapper(context, R.style.emojiTypeButton), null, 0);
       _group_id = group_id;
-      TypedArray colors = context.obtainStyledAttributes(
-          new int[] { R.attr.colorKeyActivated, R.attr.emoji_button_bg });
+      String name = group_name(context, group_id);
+      TypedArray colors = context.obtainStyledAttributes(new int[] {
+          R.attr.colorKeyActivated, R.attr.emoji_button_bg, R.attr.colorLabelActivated });
       _selected_color = colors.getColor(0, 0xffd2deff);
       _unselected_color = colors.getColor(1, 0);
+      // Same translucent theme accent the grid cells use, so the press
+      // feedback follows light and dark themes instead of a fixed white/black.
+      _ripple_color = (colors.getColor(2, 0xff3399ff) & 0xffffff) | 0x33000000;
       colors.recycle();
       setText(symbol);
-      setContentDescription(group_name(context, group_id));
+      setContentDescription(name);
+      if (android.os.Build.VERSION.SDK_INT >= 26)
+        setTooltipText(name); // Icon-only categories: name on long press.
       setGravity(Gravity.CENTER);
       setMinWidth(dp(48));
       setMinimumWidth(dp(48));
@@ -154,9 +165,7 @@ public class EmojiGroupButtonsBar extends HorizontalScrollView
       GradientDrawable base = new GradientDrawable();
       base.setColor(selected ? _selected_color : _unselected_color);
       base.setCornerRadius(dp(12));
-      setBackground(new RippleDrawable(
-          ColorStateList.valueOf(0x33000000 | (selected ? 0xffffff : 0)),
-          base, null));
+      setBackground(new RippleDrawable(ColorStateList.valueOf(_ripple_color), base, null));
       setTypeface(Typeface.create("sans-serif", selected ? Typeface.BOLD : Typeface.NORMAL));
       setAlpha(selected ? 1f : .7f);
       setSelected(selected);

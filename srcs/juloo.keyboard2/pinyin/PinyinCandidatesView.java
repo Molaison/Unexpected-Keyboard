@@ -67,6 +67,8 @@ public final class PinyinCandidatesView extends LinearLayout
   private int expandedBudget;
   private int candidateRowHeight;
   private int expandedRowHeight;
+  private Config lastConfig;
+  private int pendingBudgetRefresh;
   private View latinCandidates;
   private boolean expanded;
   private boolean hasMore;
@@ -135,11 +137,6 @@ public final class PinyinCandidatesView extends LinearLayout
       renderExpanded();
     });
     more.setContentDescription(context.getString(R.string.ux_more_candidates));
-    more.setOnLongClickListener(v -> {
-      if (!expanded || !hasMore || listener == null) return false;
-      listener.onMoreCandidates();
-      return true;
-    });
     row.addView(more, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
     addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
     expandedPanel = new LinearLayout(context);
@@ -197,28 +194,14 @@ public final class PinyinCandidatesView extends LinearLayout
     // the screen above the keyboard; it reserves nothing while closed.
     int header = ui.rowHeight(HEADER_SP);
     int text = ui.rowHeight(CANDIDATE_SP);
-    int action = ui.rowHeight(FOOTER_SP);
-    // Config.keyboard_rows_height_pixels is one row, not the whole keyboard.
-    // Prefer the measured keyboard view; before its first measure, estimate
-    // four rows (the common keyboard height in rows).
-    View keyboardView = getParent() instanceof ViewGroup
-      ? ((ViewGroup)getParent()).findViewById(R.id.keyboard_view) : null;
-    int keyboard = keyboardView != null && keyboardView.getMeasuredHeight() > 0
-      ? keyboardView.getMeasuredHeight()
-      : Math.min(Math.max(1, config.keyboard_rows_height_pixels) * 4,
-          config.screenHeightPixels / 2);
-    int screen = config.screenHeightPixels > 0
-      ? config.screenHeightPixels : keyboard * 2;
-    int available = Math.max(0, screen - keyboard - header - text);
-    // Keep the paging target intact; short screens scroll a partial candidate
-    // row rather than forcing two extra rows beyond the window.
-    int budget = Math.min(Math.max(ui.dp(EXPANDED_BUDGET_DP), text + action), available);
+    int budget = budgetFor(config, header, text, keyboardHeight(config));
     boolean changed = header != headerHeight || text != candidateRowHeight
       || budget != expandedBudget || text != expandedRowHeight;
     headerHeight = header;
     candidateRowHeight = text;
     expandedRowHeight = text;
     expandedBudget = budget;
+    lastConfig = config;
     fitTextRows();
     if (changed)
     {
@@ -227,6 +210,66 @@ public final class PinyinCandidatesView extends LinearLayout
       applyExpandedLayout();
       renderExpanded();
     }
+  }
+
+  /** Measured height of the sibling keyboard, or 0 before its first measure. */
+  private int keyboardHeight(Config config)
+  {
+    View keyboardView = getParent() instanceof ViewGroup
+      ? ((ViewGroup)getParent()).findViewById(R.id.keyboard_view) : null;
+    int measured = keyboardView != null ? keyboardView.getMeasuredHeight() : 0;
+    if (measured > 0) return measured;
+    // Config.keyboard_rows_height_pixels is one row: four is the common
+    // keyboard height before the view has been laid out.
+    return Math.min(Math.max(1, config.keyboard_rows_height_pixels) * 4,
+        config.screenHeightPixels / 2);
+  }
+
+  /** Expanded panel height left between the header and the keyboard. */
+  private int budgetFor(Config config, int header, int text, int keyboard)
+  {
+    int action = ui.rowHeight(FOOTER_SP);
+    int screen = config.screenHeightPixels > 0
+      ? config.screenHeightPixels : keyboard * 2;
+    int available = Math.max(0, screen - keyboard - header - text);
+    // Keep the paging target intact; short screens scroll a partial candidate
+    // row rather than forcing extra rows beyond the window. A zero budget
+    // leaves the horizontal strip untouched.
+    return Math.min(Math.max(ui.dp(EXPANDED_BUDGET_DP), text + action), available);
+  }
+
+  /** Long-press paging exists only where the stationary footer cannot fit. */
+  private void setCompactPaging(boolean compact)
+  {
+    if (!compact)
+    {
+      more.setOnLongClickListener(null);
+      more.setLongClickable(false);
+      return;
+    }
+    more.setOnLongClickListener(v ->
+    {
+      if (listener == null || !expanded || !hasMore
+          || expandedBudget >= ui.rowHeight(FOOTER_SP) + expandedRowHeight)
+        return false;
+      listener.onMoreCandidates();
+      return true;
+    });
+  }
+
+  /** Coalesce size changes into one refresh with the keyboard's new height. */
+  private void scheduleBudgetRefresh()
+  {
+    if (lastConfig == null || pendingBudgetRefresh == 1 || !isAttachedToWindow()) return;
+    pendingBudgetRefresh = 1;
+    post(() ->
+    {
+      pendingBudgetRefresh = 0;
+      if (lastConfig == null || !isAttachedToWindow()) return;
+      Config config = Config.globalConfig();
+      if (config == null) return;
+      refreshConfig(config);
+    });
   }
 
   /** Apply the measured text rows without touching them when they already match. */
@@ -240,7 +283,6 @@ public final class PinyinCandidatesView extends LinearLayout
     if (strip != null && ((LayoutParams)strip.getLayoutParams()).height != candidateRowHeight)
       strip.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
   }
-
 
   public void setState(boolean chinese, String composition, List<String> candidates, boolean hasMore)
   {
@@ -355,6 +397,10 @@ public final class PinyinCandidatesView extends LinearLayout
   {
     super.onSizeChanged(w, h, oldw, oldh);
     if (expanded) renderExpanded();
+    // The keyboard view is measured after this size change; recompute the
+    // expanded budget once from that fresh measurement instead of the stale
+    // one captured during the previous refreshConfig.
+    scheduleBudgetRefresh();
   }
 
   // The fixed footer only appears when paging is still possible. Without it
@@ -362,8 +408,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private void applyExpandedLayout()
   {
     boolean open = expanded;
-    // The footer follows its own 14sp text row; a tight budget meters it down
-    // so it never takes more than half of the panel.
+    // Reserve a complete action target only when it fits beside a full row.
     int footer = ui.rowHeight(FOOTER_SP);
     boolean showFooter = open && hasMore && expandedBudget >= footer + expandedRowHeight;
     more.setText(open ? "⌃" : "⌄");
@@ -373,6 +418,9 @@ public final class PinyinCandidatesView extends LinearLayout
     more.setSelected(open);
     more.setEnabled(!previousCandidates.isEmpty());
     more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
+    // The long-press shortcut only exists where the stable footer cannot fit;
+    // otherwise paging stays with the stationary footer and a tap collapses.
+    setCompactPaging(open && hasMore && !showFooter);
     expandedPanel.setVisibility(open && expandedBudget > 0 ? VISIBLE : GONE);
     expandedPanel.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, expandedBudget));
     // The remaining height is scrollable content, without an overflow floor.

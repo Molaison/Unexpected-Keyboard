@@ -6,7 +6,7 @@
   <color name="ui_light_space">#F9F9FB</color>
   <color name="ui_light_pressed">#D2DEFF</color>
   <color name="ui_light_text">#1C2024</color>
-  <color name="ui_light_secondary">#60646C</color>
+  <color name="ui_light_secondary">#565A63</color>
   <color name="ui_light_accent_text">#3451B2</color>
   <color name="ui_dark_canvas">#18191B</color>
   <color name="ui_dark_key">#272A2D</color>
