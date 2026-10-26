@@ -118,14 +118,17 @@ public class CandidatesView extends LinearLayout
   /** Set the height of the suggestion row and the text size. */
   void set_sizes(Config config)
   {
-    // Make the candidates view about as high as a keyboard row.
-    float row_height = config.keyboard_rows_height_pixels * (1 - config.key_vertical_margin);
+    // Keep suggestions within a compact, predictable toolbar slot. The
+    // old full-key-height row made the keyboard feel top-heavy on tall phones.
+    float row_height = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
+        48, getResources().getDisplayMetrics());
     ViewGroup.MarginLayoutParams p =
       (ViewGroup.MarginLayoutParams)getLayoutParams();
     p.height = (int)row_height;
     setLayoutParams(p);
-    // Match the size of labels on the keyboard.
-    float text_size = row_height * config.characterSize * config.labelTextSize;
+    // Candidate text is content, not a corner hint: give it a stable readable size.
+    float text_size = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP,
+        18, getResources().getDisplayMetrics());
     for (int i = 0; i < NUM_CANDIDATES; i++)
     {
       TextView v = _item_views[i];
