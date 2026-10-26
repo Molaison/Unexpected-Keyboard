@@ -964,8 +964,10 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     android.content.ClipboardManager cm = (android.content.ClipboardManager)
       getTargetContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
-    tap(onMain(() -> findDescription(candidatesView(),
-        getTargetContext().getString(R.string.ux_clipboard))));
+    // Use the existing Ctrl corner gesture; UI contexts can refresh their
+    // locale independently of the instrumentation context after layer changes.
+    float[] entry = onMain(() -> directionalEntryPoint("switch_clipboard"));
+    swipe(entry[0], entry[1], entry[2], entry[3]);
     await("clipboard pane", () -> clipboard() != null && clipboard().isShown());
     boolean original = onMain(() -> Config.globalConfig().clipboard_history_enabled);
     try
@@ -992,7 +994,7 @@ public final class PinyinSmokeTest extends Instrumentation
       if (onMain(() -> Config.globalConfig().clipboard_history_enabled) != original)
         toggleHistoryThroughMenu();
     }
-    tap(onMain(() -> findDescription(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    tap(onMain(() -> (View)field(clipboard(), "backButton")));
     await("clipboard return", () -> keyboard().isShown() && activity.plain.hasFocus());
     passed("zh clipboard content, visible recording menu, two-row reflow and editor focus");
   }
@@ -1000,8 +1002,11 @@ public final class PinyinSmokeTest extends Instrumentation
   private void toggleHistoryThroughMenu() throws Exception
   {
     boolean before = onMain(() -> Config.globalConfig().clipboard_history_enabled);
-    tap(onMain(() -> findDescription(clipboard(), getTargetContext().getString(R.string.ux_clipboard_menu))));
-    String label = getTargetContext().getString(R.string.ux_record_history);
+    View menuButton = onMain(() -> (View)field(clipboard(), "moreButton"));
+    if (onMain(() -> menuButton.getContentDescription()) == null)
+      throw new AssertionError("Clipboard menu needs an accessibility description");
+    String label = onMain(() -> clipboard().getContext().getString(R.string.ux_record_history));
+    tap(menuButton);
     final Rect[] target = { null };
     await("visible recording preference menu", () -> {
       android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
@@ -1633,6 +1638,7 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void tap(View view) throws Exception
   {
+    if (view == null) throw new AssertionError("The requested touch target was not found");
     float[] point = onMain(() -> {
       Rect bounds = new Rect();
       if (!view.getGlobalVisibleRect(bounds)) throw new AssertionError("View is not visible");
