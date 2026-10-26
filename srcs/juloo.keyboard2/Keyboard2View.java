@@ -387,13 +387,15 @@ public class Keyboard2View extends View
             case Normal: tc_key = _tc.key; break;
           }
         drawKeyFrame(canvas, x, y, keyW, keyH, tc_key);
-        if (k.keys[0] != null)
-          drawLabel(canvas, k.keys[0], keyW / 2f + x, y, keyH, isKeyDown, tc_key);
+        // Draw secondary legends first so the primary character remains the
+        // visual anchor when a compact key carries several corner symbols.
         for (int i = 1; i < 9; i++)
         {
           if (k.keys[i] != null)
             drawSubLabel(canvas, k.keys[i], x, y, keyW, keyH, i, isKeyDown, tc_key);
         }
+        if (k.keys[0] != null)
+          drawLabel(canvas, k.keys[0], keyW / 2f + x, y, keyH, isKeyDown, tc_key);
         drawIndication(canvas, k, x, y, keyW, keyH, _tc);
         x += _keyWidth * k.width;
       }
