@@ -43,6 +43,14 @@ Parent correction: width-dependent row rebuilding now occurs before child measur
 
 Actual screenshot inspection found an additional high defect missed by source-only reviews: `emoji-panel.png` fills the screen and overlaps the editor/status bar, despite the successful touch/commit test. Parent verified [AOSP InputMethodService.setInputView](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/core/java/android/inputmethodservice/InputMethodService.java): it replaces the supplied layout params with MATCH_PARENT/WRAP_CONTENT. R2's pre-attachment height was ineffective. Original panel worker owns the correction in `Keyboard2.setInputView`: preserve explicit nonnegative pane height after the superclass attaches it, retaining the framework's FrameLayout params; also give emoji root an opaque themed canvas. Parent adds a real-window assertion that emoji height equals the originating keyboard height. This is the observed owner boundary, not the earlier unproven clipboard collapse theory.
 
+### Original-reference acceptance corrections
+
+The supervising ChatGPT agent independently inspected the user-provided original ten screenshots and supplied a concrete same-scale comparison: at 691px width, current keyboard top-to-first-row spacing is 182px (840→1022), reference 109px (955→1064). These are image coordinates, not dp measurements. This parent has still not directly seen those originals; it consumes the supervisor's visual findings alongside its own CI-image inspection.
+
+Two requested acceptance corrections remain in R4: Chinese truly idle should use one toolbar slot rather than header plus blank candidate row; clipboard should combine back/recent-pinned/clear in one header with a narrow fallback, and move recording out of a permanent row while retaining opt-in and marked-sensitive exclusion. Original V1 code workers own disjoint candidate/English-content, clipboard/resources, and Chinese-locale/window-test packages. Core key coordinates/focus must remain stable through idle→composition→empty; real English suggestions must remain visible. New real Chinese-locale idle-nine-key/QWERTY/clipboard/emoji screenshots and another independent three-reviewer acceptance are required.
+
+Intermediate corrective commit `fa25554b8aa61bde380eaf945b8649a870a3098c` has a successful [UX run 40335299255](https://github.com/Molaison/Unexpected-Keyboard/actions/runs/40335299255), after the previous run's clipping and full-screen emoji defects. Its artifacts are being retrieved; the original-reference corrections above are not part of that SHA and are not yet accepted.
+
 ## 5. Coverage and remaining limits
 
 | Requested area | Evidence route / current boundary |
@@ -59,3 +67,13 @@ Actual screenshot inspection found an additional high defect missed by source-on
 | Themes/contrast | Light function-secondary ratio 4.228→4.921 computed by parent; theme-based controls; real light/dark screenshots pending modified CI. User-adjusted opacity and every legacy theme are not covered by that token calculation. |
 
 No changes to decoder dictionaries, cloud input providers or credential handling. All original key layout definitions remain intact. Missing competitor functions and unrun tests are limits, not implemented features.
+
+## Final integration of the reference-based corrections
+
+The supervising agent took over the frozen worktree after the three implementation owners finished. It corrected the actual View ownership/layout, not merely the worker reports: the clipboard has a stable full-width first row; tabs detach from their old parent before moving between its flexible slot and a second row; measurement deducts pane insets and budgets two equal tab widths. The unused detached Switch was removed. The visible overflow menu changes the existing history preference and preserves opt-in, current-clip access and source-marked sensitive exclusion.
+
+English candidate presentation now has one state update path for both pinyin-state updates and asynchronous Latin suggestions. The focused Android test publishes at the production Suggestions callback boundary (synthetic test data, not a new English dictionary/decoder), without calling the panel state setter, and checks actual shown/hidden content.
+
+Final integration also corrected invalid test API calls, stale text-only selectors after icon conversion, deterministic clipboard sample seeding, visible menu interaction, width-to-narrow-to-width clipboard reparenting, symbol-page identity and return, and screenshot validation order. Input key layout XML, KeyValue, KeyModifier and Pointers mappings remain unchanged. No assertion establishing successful paging, native decoding, focus preservation or key-position stability was removed.
+
+The intermediate fa25554 run passed 40 real-window/widget checks. Its detached pinyin-font-1/2 Bitmap exports show only the header and are NOT accepted as visual proof of candidate appearance. The metric assertions remain real Android-widget geometry checks; final visual evidence must use the attached-window Chinese screenshots. The new integration commit and independent final re-review/CI results are recorded separately after execution; this paragraph is not a pass claim.

@@ -32,6 +32,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean voiceContinuous;
   private boolean voiceRegression;
   private boolean voiceMicrophone;
+  private boolean uiZh;
   private String voiceMicrophoneCase;
 
   @Override public void onCreate(Bundle arguments)
@@ -43,6 +44,7 @@ public final class PinyinSmokeTest extends Instrumentation
     voiceContinuous = arguments != null && "true".equals(arguments.getString("voice_continuous"));
     voiceRegression = arguments != null && "true".equals(arguments.getString("voice_regression"));
     voiceMicrophone = arguments != null && "true".equals(arguments.getString("voice_microphone"));
+    uiZh = arguments != null && "true".equals(arguments.getString("ui_zh"));
     voiceMicrophoneCase = arguments == null ? "all" : arguments.getString("voice_microphone_case", "all");
     start();
   }
@@ -73,6 +75,12 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         benchmarkDecoder();
         result.putString("stream", "PINYIN_BENCHMARK_OK\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (uiZh)
+      {
+        chineseUiScreenshotChecks(result);
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -555,8 +563,11 @@ public final class PinyinSmokeTest extends Instrumentation
     tap(onMain(() -> (View)field(candidatesView(), "readings")));
     idle();
     long down;
-    android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
-    java.util.List<android.view.accessibility.AccessibilityNodeInfo> readings = root.findAccessibilityNodeInfosByText("ming");
+    // The picker is a real PopupMenu window that must actually be on screen.
+    android.view.accessibility.AccessibilityNodeInfo picker =
+      getUiAutomation().getRootInActiveWindow();
+    java.util.List<android.view.accessibility.AccessibilityNodeInfo> readings =
+      picker.findAccessibilityNodeInfosByText("ming");
     if (readings.isEmpty())
       throw new AssertionError("Nine-key reading picker did not offer ming");
     // PopupMenu exposes the title as a non-clickable TextView; the containing
@@ -569,6 +580,12 @@ public final class PinyinSmokeTest extends Instrumentation
     injectTouch(down, MotionEvent.ACTION_DOWN, readingBounds.exactCenterX(), readingBounds.exactCenterY());
     injectTouch(down, MotionEvent.ACTION_UP, readingBounds.exactCenterX(), readingBounds.exactCenterY());
     idle();
+    // A real menu item click dismisses the popup and rewrites the composition.
+    if (!getUiAutomation().getRootInActiveWindow()
+          .findAccessibilityNodeInfosByText("ming").isEmpty())
+      throw new AssertionError("Tapping the reading did not dismiss the picker");
+    if (onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.getDisplayText()).contains("64"))
+      throw new AssertionError("Choosing a reading did not change the composition");
     key("space");
     text(activity.plain, "明");
     passed("visible Pinyin button chooses an ambiguous reading");
@@ -718,7 +735,7 @@ public final class PinyinSmokeTest extends Instrumentation
     if(onMain(() -> service.current_text()!=null)) throw new AssertionError("Explicit delete left the current clip visible");
     tap(onMain(() -> (View)field(clipboard(),"undoButton")));
     if(!onMain(() -> service.clear_expired_and_get_history().contains("A plain current clip"))) throw new AssertionError("Undo failed for recent clip");
-    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_clear))));
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clear))));
     menuText(getTargetContext().getString(R.string.ux_clear));
     if(!onMain(() -> service.clear_expired_and_get_history().isEmpty())) throw new AssertionError("Clear did not clear history");
     if(!onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Clear erased a pin");
@@ -730,7 +747,7 @@ public final class PinyinSmokeTest extends Instrumentation
       service.add_clip("Could you send me the updated version? Thank you!"); return null; });
     idle();
     screenshot("clipboard-light.png");
-    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));
     await("return to keyboard", () -> keyboard().isShown());
     clear(); nineKey(true); nineKeys("64426");
     screenshot("nine-key-light.png");
@@ -741,8 +758,396 @@ public final class PinyinSmokeTest extends Instrumentation
     tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
     await("dark clipboard panel", () -> clipboard().isShown());
     screenshot("clipboard-dark.png");
-    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));
     passed("light/dark surfaces and clipboard return preserve editor focus");
+  }
+
+  /** Focused Chinese-locale UI evidence: idle/composition/backspace, English
+      suggestions, clipboard and emoji, in the app's real zh-CN resources. */
+  @SuppressWarnings("deprecation") // startActivitySync is the stable fixture launch API here.
+  private void chineseUiScreenshotChecks(Bundle result) throws Exception
+  {
+    final android.app.LocaleManager locales =
+      getTargetContext().getSystemService(android.app.LocaleManager.class);
+    if (locales == null) throw new AssertionError("LocaleManager is unavailable");
+    final android.os.LocaleList saved = locales.getApplicationLocales();
+    try
+    {
+      installZhResources(locales);
+      launchFixture();
+      chinese(true);
+      nineKey(false);
+      clear();
+      ChineseLayoutChecks(true);
+      ChineseLayoutChecks(false);
+      englishRealCandidates();
+      chinese(true);
+      chinesePageScreenshots();
+      clipboardUiScreenshot();
+      emojiUiScreenshot();
+      result.putString("stream", "\nUI_ZH_OK checks=" + checks + "\n");
+    }
+    finally
+    {
+      try
+      {
+        onMain(() -> { locales.setApplicationLocales(saved); return null; });
+      }
+      catch (Throwable restoreError)
+      {
+        result.putString("shortMsg", "locale restore failed: " + restoreError);
+      }
+    }
+  }
+
+  /** Apply zh-CN to this app and wait until the target resources match. */
+  private void installZhResources(android.app.LocaleManager locales) throws Exception
+  {
+    final android.os.LocaleList zh = android.os.LocaleList.forLanguageTags("zh-CN");
+    onMain(() -> { locales.setApplicationLocales(zh); return null; });
+    await("zh-CN application locales", () ->
+      locales.getApplicationLocales().toLanguageTags().contains("zh"));
+    await("zh resources before fixture launch", () ->
+      getTargetContext().getResources().getConfiguration().getLocales().get(0).getLanguage()
+        .equals("zh"));
+  }
+
+  /** Start the debug editor fixture, reselect this IME and focus its editor. */
+  private void launchFixture() throws Exception
+  {
+    Intent intent = new Intent(getTargetContext(), PinyinTestActivity.class);
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    activity = (PinyinTestActivity)startActivitySync(intent);
+    String ime = getTargetContext().getPackageName() + "/juloo.keyboard2.Keyboard2";
+    try (android.os.ParcelFileDescriptor.AutoCloseInputStream output =
+        new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+          getUiAutomation().executeShellCommand("ime set " + ime)))
+    {
+      java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+      byte[] buffer = new byte[1024];
+      int n;
+      while ((n = output.read(buffer)) != -1) bytes.write(buffer, 0, n);
+      String status = bytes.toString("UTF-8");
+      if (!status.contains("selected")) throw new AssertionError(status);
+    }
+    focus(activity.plain);
+  }
+
+  /** Idle -> composition -> backspace clear with a stable key origin. */
+  private void ChineseLayoutChecks(boolean nine) throws Exception
+  {
+    nineKey(nine);
+    clear();
+    String probe = nine ? "pinyin_2" : "n";
+    await("idle Chinese row hidden (" + (nine ? "nine" : "qwerty") + ")",
+        () -> candidateRowVisibility() == View.GONE);
+    final int[] coreIdle = coreKeyY(probe);
+    float idleY = onMain(() -> keyPoint(probe, false)[1]);
+    if (idleY <= 0) throw new AssertionError("Idle key position is not measurable");
+    logLayoutMetrics((nine ? "nine" : "qwerty") + "-idle");
+    screenshot(nine ? "ui-zh-idle-nine.png" : "ui-zh-idle-qwerty.png");
+    if (nine) nineKeys("64"); else type("ni");
+    await("Chinese candidates visible", () -> candidateRowVisibility() == View.VISIBLE);
+    final int[] coreCompose = coreKeyY(probe);
+    Log.i("PinyinSmokeTest", "CORE " + (nine ? "nine" : "qwerty") + " idle=" + coreIdle[1] + " compose=" + coreCompose[1] + " focus=" + onMain(() -> activity.plain.hasFocus()));
+    float composingY = onMain(() -> keyPoint(probe, false)[1]);
+    logLayoutMetrics((nine ? "nine" : "qwerty") + "-compose");
+    if (Math.abs(composingY - idleY) > 1f)
+      throw new AssertionError("Key moved while composing: " + idleY + " -> " + composingY);
+    if (!onMain(() -> activity.plain.hasFocus()))
+      throw new AssertionError("Editor lost focus while composing");
+    // Backspace twice clears both probe keys and returns the strip to idle.
+    key("backspace");
+    key("backspace");
+    await("empty composition (" + (nine ? "nine" : "qwerty") + ")",
+        () -> onMain(() -> activity.plain.getText().toString().isEmpty())
+          && candidateRowVisibility() == View.GONE);
+    final int[] coreCleared = coreKeyY(probe);
+    Log.i("PinyinSmokeTest", "CORE " + (nine ? "nine" : "qwerty") + " cleared=" + coreCleared[1] + " focus=" + onMain(() -> activity.plain.hasFocus()));
+    float clearedY = onMain(() -> keyPoint(probe, false)[1]);
+    logLayoutMetrics((nine ? "nine" : "qwerty") + "-cleared");
+    if (Math.abs(clearedY - idleY) > 1f)
+      throw new AssertionError("Key moved after clearing: " + idleY + " -> " + clearedY);
+    if (!onMain(() -> activity.plain.hasFocus()))
+      throw new AssertionError("Editor lost focus after clearing");
+    passed("zh " + (nine ? "nine-key" : "QWERTY") + " idle, composition and backspace keep key origin and focus");
+  }
+
+  /** Real production path: the candidates widget receives empty, then a real
+      candidate published asynchronously, then empty again. */
+  private void englishRealCandidates() throws Exception
+  {
+    chinese(false);
+    clear();
+    KeyEventHandler handler = onMain(() -> (KeyEventHandler)Config.globalConfig().handler);
+    type("teh");
+    onMain(() -> { handler._recv.set_suggestions(testSuggestions(handler, null)); return null; });
+    await("empty English publish hides the row", () -> candidateRowVisibility() == View.GONE);
+    // Inject only at the production suggestion-publication boundary, not the
+    // view's visibility or state setter. This tests asynchronous UI delivery.
+    handler._recv.getHandler().post(() ->
+        handler._recv.set_suggestions(testSuggestions(handler, "the")));
+    await("asynchronous English candidate is visible", () -> {
+      View candidate = onMain(() -> findText(candidatesView(), "the"));
+      return candidateRowVisibility() == View.VISIBLE
+        && candidate != null && onMain(() -> candidate.isShown() && candidate.getHeight() > 0);
+    });
+    onMain(() -> { handler._recv.set_suggestions(testSuggestions(handler, null)); return null; });
+    await("cleared English publish hides the row", () -> candidateRowVisibility() == View.GONE);
+    View stale = onMain(() -> findText(candidatesView(), "the"));
+    if (stale != null && onMain(() -> stale.isShown()))
+      throw new AssertionError("Cleared English candidate remains visible");
+    passed("English suggestion delivery empty -> async candidate -> empty updates the visible row");
+  }
+
+  private juloo.keyboard2.suggestions.Suggestions testSuggestions(KeyEventHandler handler, String word)
+  {
+    juloo.keyboard2.suggestions.Suggestions result =
+      new juloo.keyboard2.suggestions.Suggestions(handler._recv, Config.globalConfig());
+    if (word != null) { result.suggestions[0] = word; result.count = 1; }
+    return result;
+  }
+
+  private void clipboardUiScreenshot() throws Exception
+  {
+    clear();
+    android.content.ClipboardManager cm = (android.content.ClipboardManager)
+      getTargetContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+    tap(onMain(() -> findDescription(candidatesView(),
+        getTargetContext().getString(R.string.ux_clipboard))));
+    await("clipboard pane", () -> clipboard() != null && clipboard().isShown());
+    boolean original = onMain(() -> Config.globalConfig().clipboard_history_enabled);
+    try
+    {
+      // Two actual visible menu clicks prove both transitions, independent of
+      // the preference left by the earlier clipboard regression suite.
+      toggleHistoryThroughMenu();
+      toggleHistoryThroughMenu();
+      if (!onMain(() -> Config.globalConfig().clipboard_history_enabled)) toggleHistoryThroughMenu();
+      onMain(() -> { cm.setPrimaryClip(android.content.ClipData.newPlainText(
+          "ui-zh", "明早九点提交评审材料，请提前核对数据。")); return null; });
+      await("first clipboard sample", () -> onMain(() -> findText(clipboard(),
+          "明早九点提交评审材料，请提前核对数据。") != null));
+      onMain(() -> { cm.setPrimaryClip(android.content.ClipData.newPlainText(
+          "ui-zh", "会议改到 3:30，稍后发纪要")); return null; });
+      await("both clipboard samples", () -> onMain(() ->
+          findText(clipboard(), "会议改到 3:30，稍后发纪要") != null
+          && findText(clipboard(), "明早九点提交评审材料，请提前核对数据。") != null));
+      screenshot("ui-zh-clipboard.png");
+      clipboardHeaderReflow();
+    }
+    finally
+    {
+      if (onMain(() -> Config.globalConfig().clipboard_history_enabled) != original)
+        toggleHistoryThroughMenu();
+    }
+    tap(onMain(() -> findDescription(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    await("clipboard return", () -> keyboard().isShown() && activity.plain.hasFocus());
+    passed("zh clipboard content, visible recording menu, two-row reflow and editor focus");
+  }
+
+  private void toggleHistoryThroughMenu() throws Exception
+  {
+    boolean before = onMain(() -> Config.globalConfig().clipboard_history_enabled);
+    tap(onMain(() -> findDescription(clipboard(), getTargetContext().getString(R.string.ux_clipboard_menu))));
+    String label = getTargetContext().getString(R.string.ux_record_history);
+    final Rect[] target = { null };
+    await("visible recording preference menu", () -> {
+      android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
+      if (root == null) return false;
+      for (android.view.accessibility.AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(label))
+        if (node.isVisibleToUser() && label.contentEquals(node.getText() == null ? "" : node.getText()))
+        {
+          Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+          if (!bounds.isEmpty()) { target[0] = bounds; return true; }
+        }
+      return false;
+    });
+    touch(target[0].exactCenterX(), target[0].exactCenterY());
+    await("recording preference changed through menu", () ->
+        onMain(() -> Config.globalConfig().clipboard_history_enabled) != before);
+    idle();
+  }
+
+  private void clipboardHeaderReflow() throws Exception
+  {
+    onMain(() -> {
+      ClipboardPaneView pane = new ClipboardPaneView(clipboard().getContext(), null);
+      pane.show(1200, () -> {});
+      float density = pane.getResources().getDisplayMetrics().density;
+      for (int widthDp : new int[] { 360, 240, 360 })
+      {
+        pane.measure(View.MeasureSpec.makeMeasureSpec(Math.round(widthDp*density), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1200, View.MeasureSpec.EXACTLY));
+        pane.layout(0, 0, pane.getMeasuredWidth(), pane.getMeasuredHeight());
+        ViewGroup header = (ViewGroup)field(pane, "header");
+        int rows = widthDp == 240 ? 2 : 1;
+        if (header.getChildCount() != rows
+            || header.getHeight() != rows * (Integer)field(pane, "rowHeight"))
+          throw new AssertionError("Clipboard header must use " + rows + " rows at " + widthDp + "dp");
+      }
+      return null;
+    });
+  }
+
+  private void emojiUiScreenshot() throws Exception
+  {
+    clear();
+    chinese(true);
+    int keyboardHeight = onMain(() -> ((View)keyboard().getParent()).getHeight());
+    float[] entry = onMain(() -> emojiEntryPoint());
+    swipe(entry[0], entry[1], entry[2], entry[3]);
+    await("emoji pane", () -> emojiPane() != null && emojiPane().isShown());
+    await("emoji pane preserves keyboard height", () -> emojiPane().getHeight() == keyboardHeight);
+    EmojiGridView grid = onMain(() -> emojiPane().findViewById(R.id.emoji_grid));
+    await("default emoji group cells", () -> grid.getChildCount() > 0);
+    // Capture the untouched first-open state: default group visible.
+    screenshot("ui-zh-emoji.png");
+    EmojiGroupButtonsBar bar = onMain(() -> (EmojiGroupButtonsBar)emojiPane().getChildAt(0));
+    int openingGroup = onMain(() -> grid.current_group());
+    Rect strip = onMain(() -> { Rect b=new Rect(); bar.getGlobalVisibleRect(b); return b; });
+    swipe(strip.right-10, strip.left+10, strip.exactCenterY());
+    if (onMain(() -> grid.current_group()) != openingGroup)
+      throw new AssertionError("Dragging emoji categories selected a group on pointer down");
+    Keyboard2View bottom = onMain(() -> (Keyboard2View)emojiPane().getChildAt(2));
+    float[] back = onMain(() -> keyPoint(bottom, "switch_back_emoji", false));
+    touch(back[0], back[1]);
+    await("emoji return", () -> keyboard().isShown() && activity.plain.hasFocus());
+    passed("zh emoji pane keeps keyboard height and returns focus");
+  }
+
+  /** Same geometry as the existing emoji entry probe. */
+  private float[] emojiEntryPoint() throws Exception
+  {
+    Keyboard2View view = keyboard();
+    KeyboardData data = (KeyboardData)field(view, "_keyboard");
+    Theme.Computed theme = (Theme.Computed)field(view, "_tc");
+    float unit = (Float)field(view, "_keyWidth");
+    float margin = (Float)field(view, "_marginLeft");
+    int[] location = new int[2];
+    view.getLocationOnScreen(location);
+    float y = theme.margin_top;
+    for (KeyboardData.Row row : data.rows)
+    {
+      y += row.shift * theme.row_height;
+      float x = margin + theme.margin_left;
+      for (KeyboardData.Key key : row.keys)
+      {
+        x += key.shift * unit;
+        float w = unit*key.width-theme.horizontal_margin;
+        float h = row.height*theme.row_height-theme.vertical_margin;
+        for (int i=1; i<9; i++)
+          if (KeyValue.getKeyByName("switch_emoji").equals(key.keys[i]))
+          {
+            float dx = Keyboard2View.LABEL_POSITION_H[i] == android.graphics.Paint.Align.LEFT ? -.45f
+              : Keyboard2View.LABEL_POSITION_H[i] == android.graphics.Paint.Align.RIGHT ? .45f : 0;
+            float dy = Keyboard2View.LABEL_POSITION_V[i] == Keyboard2View.Vertical.TOP ? -.45f
+              : Keyboard2View.LABEL_POSITION_V[i] == Keyboard2View.Vertical.BOTTOM ? .45f : 0;
+            return new float[] {location[0]+x+w/2, location[1]+y+h/2,
+              location[0]+x+w/2+dx*w, location[1]+y+h/2+dy*h};
+          }
+        x += key.width*unit;
+      }
+      y += row.height*theme.row_height;
+    }
+    throw new AssertionError("Emoji gesture entry is absent");
+  }
+
+  /** Real numeric page reached through its existing switch_numeric mapping. */
+  private void chinesePageScreenshots() throws Exception
+  {
+    clear();
+    nineKey(false);
+    await("idle pinyin strip", () -> candidateRowVisibility() == View.GONE);
+    logLayoutMetrics("qwerty");
+    key("switch_numeric");
+    await("numeric page", () -> hasKey("switch_greekmath"));
+    screenshot("ui-zh-numbers.png");
+    passed("zh numeric page captured through switch_numeric");
+    key("switch_greekmath");
+    await("symbol page", () -> hasKey("θ"));
+    screenshot("ui-zh-symbols.png");
+    passed("zh symbol page captured through switch_greekmath");
+    key("switch_text");
+    await("text page after symbols", () -> hasKey("n"));
+  }
+
+  private boolean hasKey(String name) throws Exception
+  {
+    KeyboardData layout = onMain(() -> (KeyboardData)field(keyboard(), "_keyboard"));
+    KeyValue wanted = KeyValue.getKeyByName(name);
+    for (KeyboardData.Row row : layout.rows)
+      for (KeyboardData.Key key : row.keys)
+        for (int i = 0; i < key.keys.length; i++)
+          if (key.keys[i] != null && key.keys[i].equals(wanted)) return true;
+    return false;
+  }
+
+  /** Record real screen/anchor metrics so screenshot scale can be matched. */
+  private void logLayoutMetrics(String layoutName) throws Exception
+  {
+    android.util.DisplayMetrics dm = getTargetContext().getResources().getDisplayMetrics();
+    String metrics = onMain(() -> {
+      Keyboard2View view = keyboard();
+      Theme.Computed theme = (Theme.Computed)field(view, "_tc");
+      KeyboardData data = (KeyboardData)field(view, "_keyboard");
+      int[] location = new int[2];
+      view.getLocationOnScreen(location);
+      int firstKeyTop = -1;
+      if (!data.rows.isEmpty())
+        firstKeyTop = location[1] + Math.round(theme.margin_top);
+      View toolbar = candidatesView();
+      int[] toolbarLocation = new int[2];
+      toolbar.getLocationOnScreen(toolbarLocation);
+      return "width=" + dm.widthPixels
+        + " height=" + dm.heightPixels
+        + " density=" + dm.density
+        + " keyboardLeft=" + location[0] + " keyboardTop=" + location[1]
+        + " keyboardWidth=" + view.getWidth() + " keyboardHeight=" + view.getHeight()
+        + " toolbarTop=" + toolbarLocation[1] + " toolbarHeight=" + toolbar.getHeight()
+        + " firstKeyTop=" + firstKeyTop
+        + " rowHeight=" + theme.row_height + " marginTop=" + theme.margin_top
+        + " keys=" + data.keysWidth + "x" + data.keysHeight
+        + " hasFocus=" + activity.plain.hasFocus();
+    });
+    Log.i("PinyinSmokeTest", "METRICS layout=" + layoutName + " " + metrics);
+  }
+  /** Screen bounds [top, bottom] of the real drawn key for [name]. */
+  private int[] coreKeyY(String name) throws Exception
+  {
+    return onMain(() -> {
+      Keyboard2View view = keyboard();
+      KeyboardData layout = (KeyboardData)field(view, "_keyboard");
+      Theme.Computed theme = (Theme.Computed)field(view, "_tc");
+      float width = (Float)field(view, "_keyWidth");
+      float left = (Float)field(view, "_marginLeft");
+      int[] location = new int[2];
+      view.getLocationOnScreen(location);
+      float y = theme.margin_top;
+      KeyValue wanted = KeyValue.getKeyByName(name);
+      for (KeyboardData.Row row : layout.rows)
+      {
+        y += row.shift * theme.row_height;
+        for (KeyboardData.Key key : row.keys)
+        {
+          if (key.keys[0] != null && key.keys[0].equals(wanted))
+          {
+            int top = location[1] + Math.round(y);
+            int bottom = location[1] + Math.round(y + row.height * theme.row_height);
+            return new int[] {top, bottom};
+          }
+        }
+        y += row.height * theme.row_height;
+      }
+      throw new AssertionError("Key is absent: " + name);
+    });
+  }
+
+  /** Visibility of the real candidate strip row inside the pinyin view. */
+  private int candidateRowVisibility() throws Exception
+  {
+    View row = onMain(() -> (View)field(candidatesView(), "row"));
+    return onMain(() -> row.getVisibility());
   }
 
   /** Cold decoder timing on Android; separate from the real touch test. */

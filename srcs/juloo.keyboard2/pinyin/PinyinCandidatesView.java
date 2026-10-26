@@ -19,6 +19,7 @@ import java.util.List;
 import juloo.keyboard2.Config;
 import juloo.keyboard2.KeyboardUi;
 import juloo.keyboard2.R;
+import juloo.keyboard2.suggestions.CandidatesView;
 
 /** Visible tools, readable preedit, and a separate candidate row. */
 public final class PinyinCandidatesView extends LinearLayout
@@ -36,6 +37,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private final KeyboardUi ui;
   private Listener listener;
   private List<String> spellingOptions = new ArrayList<>();
+  private final LinearLayout header;
   private final LinearLayout row;
   private final TextView preedit;
   private final TextView readings;
@@ -70,8 +72,12 @@ public final class PinyinCandidatesView extends LinearLayout
   private Config lastConfig;
   private int pendingBudgetRefresh;
   private View latinCandidates;
+  private CandidatesView latinItem;
+  private int latinRowHeight;
   private boolean expanded;
   private boolean hasMore;
+  private boolean chinese = true;
+  private boolean latinInHeader;
   private String previousComposition = "";
   private List<String> previousCandidates = new ArrayList<>();
 
@@ -86,7 +92,7 @@ public final class PinyinCandidatesView extends LinearLayout
     candidateRowHeight = ui.rowHeight(CANDIDATE_SP);
     expandedRowHeight = ui.rowHeight(CANDIDATE_SP);
     setPadding(ui.dp(6), 0, ui.dp(6), 0);
-    LinearLayout header = new LinearLayout(context);
+    header = new LinearLayout(context);
     header.setGravity(Gravity.CENTER_VERTICAL);
     ImageButton clipboard = new ImageButton(context);
     clipboard.setImageResource(R.drawable.ic_clipboard_paste);
@@ -179,11 +185,70 @@ public final class PinyinCandidatesView extends LinearLayout
   public void setListener(Listener listener) { this.listener = listener; }
   public void setSpellingOptions(List<String> options) { spellingOptions = new ArrayList<>(options); }
 
+  /** Move [child] into the single idle toolbar slot between the clipboard and
+      the mode control. The slot has a weight so the row keeps its height. */
+  private void addToToolbar(View child)
+  {
+    if (child.getParent() == header) return;
+    if (child.getParent() != null) ((ViewGroup)child.getParent()).removeView(child);
+    header.addView(child, header.indexOfChild(readings),
+        new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
+  }
+
+  private void addToCandidatesRow(View child)
+  {
+    if (child.getParent() == row) return;
+    if (child.getParent() != null) ((ViewGroup)child.getParent()).removeView(child);
+    row.addView(child, 0, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
+  }
+
+  /** Content-only change: the mode and composition did not change, so reuse
+      the cached state and run the same presentation path as setState. */
+  private void onLatinContentChanged()
+  {
+    updatePresentation(chinese, !previousComposition.isEmpty(), !previousCandidates.isEmpty());
+  }
+
+  /** English with real suggestions keeps the second row; dictionary and
+      language controls alone fit the idle toolbar instead. */
+  private boolean latinShowsRow()
+  {
+    return latinCandidates != null && latinCandidates.getVisibility() == VISIBLE
+      && latinItem.hasCandidates();
+  }
+
   public void attachLatinCandidates(View view)
   {
     if (view.getParent() != null) ((ViewGroup)view.getParent()).removeView(view);
     latinCandidates = view;
-    row.addView(view, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
+    latinItem = (CandidatesView)view;
+    if (view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams)
+      latinRowHeight = view.getLayoutParams().height;
+    latinItem.set_content_listener(this::onLatinContentChanged);
+    row.addView(view, 0, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
+  }
+
+  /** Single presentation path for reparenting, the second row and the empty
+      preedit. Called from setState and from the Latin content callback, so an
+      asynchronous suggestion update cannot land in a hidden row. [hasCandidates]
+      is the state being presented; the strip may not be rebuilt yet. */
+  private void updatePresentation(boolean chinese, boolean composing, boolean hasCandidates)
+  {
+    this.chinese = chinese;
+    if (latinCandidates != null)
+    {
+      boolean ltr = !chinese && !latinShowsRow();
+      if (ltr != latinInHeader)
+      {
+        latinInHeader = ltr;
+        if (ltr) addToToolbar(latinCandidates);
+        else addToCandidatesRow(latinCandidates);
+      }
+    }
+    boolean showRow = chinese ? composing || hasCandidates : latinShowsRow();
+    setRowVisible(showRow);
+    // An empty preedit must not hold the toolbar weight while idle.
+    preedit.setVisibility(chinese || !latinInHeader ? VISIBLE : GONE);
   }
 
   public void refreshConfig(Config config)
@@ -272,16 +337,52 @@ public final class PinyinCandidatesView extends LinearLayout
     });
   }
 
+  /** The second row only exists while it carries real content; the toolbar
+      stays anchored to the keyboard so main key positions never move. */
+  private void setRowVisible(boolean visible)
+  {
+    boolean changed = (row.getVisibility() == VISIBLE) != visible;
+    row.setVisibility(visible ? VISIBLE : GONE);
+    // Rows stack above the keyboard only; an idle toolbar must sit directly on
+    // it so the main keys never shift.
+    int gravity = visible ? Gravity.TOP : Gravity.BOTTOM;
+    if (getGravity() != gravity)
+    {
+      setGravity(gravity);
+      changed = true;
+    }
+    if (!visible) expanded = false;
+    applyExpandedLayout();
+    // Heights come from refreshed LayoutParams, so a toggle needs a new measure.
+    if (changed) requestLayout();
+  }
+
+  /** In the toolbar the Latin view fills the row; back in its own row it must
+      keep the row height derived from its text size. */
+  private void latinHeight()
+  {
+    if (latinItem == null) return;
+    ViewGroup.LayoutParams lp = latinItem.getLayoutParams();
+    if (lp instanceof MarginLayoutParams)
+    {
+      MarginLayoutParams mp = (MarginLayoutParams)lp;
+      mp.width = latinInHeader ? 0 : MATCH_PARENT;
+      mp.height = latinInHeader ? MATCH_PARENT : latinRowHeight;
+      mp.weight = latinInHeader ? 1 : 0;
+      latinItem.setLayoutParams(mp);
+    }
+  }
+
   /** Apply the measured text rows without touching them when they already match. */
   private void fitTextRows()
   {
-    View header = getChildAt(0);
-    if (header != null && ((LayoutParams)header.getLayoutParams()).height != headerHeight)
+    LayoutParams hp = (LayoutParams)header.getLayoutParams();
+    if (hp == null || hp.height != headerHeight)
       header.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, headerHeight));
-    // The candidate strip is the child right after the header.
-    View strip = getChildCount() > 1 ? getChildAt(1) : null;
-    if (strip != null && ((LayoutParams)strip.getLayoutParams()).height != candidateRowHeight)
-      strip.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
+    latinHeight();
+    LayoutParams rp = (LayoutParams)row.getLayoutParams();
+    if (rp == null || rp.height != candidateRowHeight)
+      row.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
   }
 
   public void setState(boolean chinese, String composition, List<String> candidates, boolean hasMore)
@@ -311,7 +412,8 @@ public final class PinyinCandidatesView extends LinearLayout
     more.setVisibility(chinese ? VISIBLE : INVISIBLE);
     more.setEnabled(chinese && !candidates.isEmpty());
     more.setAlpha(chinese && !candidates.isEmpty() ? 1f : .35f);
-    row.setVisibility(VISIBLE);
+    // One path decides reparenting, the second row and the preedit slot.
+    updatePresentation(chinese, !composition.isEmpty(), !candidates.isEmpty());
     // A paging request that found nothing new reports the same state. Reuse
     // the existing cells instead of rebuilding the strip and resetting scroll.
     boolean identical = composition.equals(previousComposition)

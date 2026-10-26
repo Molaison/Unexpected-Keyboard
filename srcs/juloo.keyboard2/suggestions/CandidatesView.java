@@ -61,6 +61,34 @@ public class CandidatesView extends LinearLayout
     _lang_name_view = (TextView)findViewById(R.id.candidates_lang_name);
   }
 
+  /** Called after the visible suggestion content changes, so the parent row
+      can react without inspecting child visibility. Null by default. */
+  public interface ContentListener
+  {
+    void onCandidatesContentChanged();
+  }
+
+  ContentListener _content_listener;
+
+  public void set_content_listener(ContentListener listener)
+  {
+    _content_listener = listener;
+  }
+
+  /** Whether any suggestion or emoji candidate is currently shown. Dictionary
+      and language controls are not candidate content. */
+  public boolean hasCandidates()
+  {
+    for (String item : _items)
+      if (item != null) return true;
+    return false;
+  }
+
+  private void notify_content_changed()
+  {
+    if (_content_listener != null) _content_listener.onCandidatesContentChanged();
+  }
+
   public void set_candidates(Suggestions s)
   {
     int s_count = s.count;
@@ -87,6 +115,7 @@ public class CandidatesView extends LinearLayout
       (should_show_dictionary_switch && s.count == 0) ? View.VISIBLE : View.GONE;
     _dictionary_switch_button.setVisibility(dict_vis);
     _lang_name_view.setVisibility(dict_vis);
+    notify_content_changed();
   }
 
   void clear_candidates()
@@ -96,6 +125,7 @@ public class CandidatesView extends LinearLayout
       _items[i] = null;
       _item_views[i].setVisibility(View.GONE);
     }
+    notify_content_changed();
   }
 
   public void refresh_config(Config config)
@@ -115,6 +145,7 @@ public class CandidatesView extends LinearLayout
     else
       _lang_name_view.setText(
           sd.get_display_name(config.current_dictionary_name));
+    notify_content_changed();
   }
 
   /** Set the height of the suggestion row and the text size. */

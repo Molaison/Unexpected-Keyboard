@@ -15,7 +15,7 @@ pinyin_ime="$pinyin_package/juloo.keyboard2.Keyboard2"
 pinyin_previous_ime="$("$pinyin_adb" -s "$pinyin_serial" shell settings get secure default_input_method | tr -d '\r')"
 restore_ime() {
   pinyin_status=$?
-  for screenshot in pinyin-keyboard pinyin-nine-key pinyin-candidates-expanded pinyin-font-1 pinyin-font-2 emoji-panel clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
+  for screenshot in pinyin-keyboard pinyin-nine-key pinyin-candidates-expanded pinyin-font-1 pinyin-font-2 emoji-panel clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux ui-zh-idle-nine ui-zh-idle-qwerty ui-zh-numbers ui-zh-symbols ui-zh-clipboard ui-zh-emoji; do
     if "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" \
         > "$pinyin_root/build/validation/$screenshot.png.tmp" 2>/dev/null; then
       # Some adb versions report success even when run-as cat prints an error.
@@ -54,3 +54,19 @@ grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/instrumentati
   "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/doubao-regression.log"
 grep -q 'DOUBAO_REGRESSION_OK' "$pinyin_root/build/validation/doubao-regression.log"
 grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/doubao-regression.log"
+# Focused Chinese-locale UI evidence. Reuses the debug editor fixture and the
+# real application-locale API; it must not repeat the voice/cloud suites.
+"$pinyin_adb" -s "$pinyin_serial" shell am instrument -w -r \
+  -e ui_zh true \
+  "$pinyin_package.test/juloo.keyboard2.PinyinSmokeTest" | tee "$pinyin_root/build/validation/ui-zh.log"
+grep -q 'UI_ZH_OK' "$pinyin_root/build/validation/ui-zh.log"
+grep -q '^INSTRUMENTATION_CODE: -1' "$pinyin_root/build/validation/ui-zh.log"
+# Pull the focused evidence now, before validating it. The EXIT trap also
+# collects failure evidence and logcat (including the CORE/METRICS records).
+for screenshot in ui-zh-idle-nine ui-zh-idle-qwerty ui-zh-numbers ui-zh-symbols ui-zh-clipboard ui-zh-emoji; do
+  pinyin_zh_png="$pinyin_root/build/validation/$screenshot.png"
+  "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" > "$pinyin_zh_png.tmp"
+  [[ "$(od -An -tx1 -N8 "$pinyin_zh_png.tmp" | tr -d ' \n')" == 89504e470d0a1a0a ]] \
+    || { echo "$screenshot.png is not a PNG"; exit 1; }
+  mv "$pinyin_zh_png.tmp" "$pinyin_zh_png"
+done

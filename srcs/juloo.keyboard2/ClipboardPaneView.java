@@ -13,7 +13,6 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,11 +27,14 @@ public final class ClipboardPaneView extends LinearLayout
   private final List<String> pins = new ArrayList<>();
   private final List<String> entries = new ArrayList<>();
   private final SharedPreferences store;
-  private final TextView recentTab, pinnedTab, status, undoButton, empty;
-  private final Switch recording;
   private final BaseAdapter adapter;
+  private final TextView recentTab, pinnedTab, status, undoButton, empty;
+  private LinearLayout header, tabs;
+  private LinearLayout firstRow, actions, tabSlot;
+  private int rowHeight;
+  private boolean single_row = true;
+  private TextView clearButton, backButton, moreButton;
   private boolean pinned;
-  private boolean synchronizingRecording;
   private String undoneText;
   private boolean undonePin;
   private int undonePosition;
@@ -68,39 +70,39 @@ public final class ClipboardPaneView extends LinearLayout
     catch (RuntimeException unavailableDuringDirectBoot) {}
     store = storage;
 
-    LinearLayout header = line();
-    TextView returnKey = ui.button(context.getString(R.string.ux_keyboard), () -> back.run());
-    returnKey.setContentDescription(context.getString(R.string.ux_keyboard));
-    header.addView(returnKey);
-    TextView title = ui.label(context.getString(R.string.ux_clipboard), 18, true);
-    title.setGravity(Gravity.CENTER);
-    header.addView(title, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
-    header.addView(ui.button(context.getString(R.string.ux_clear), this::confirmClear));
-    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, Math.max(ui.dp(48), ui.rowHeight(18))));
-
-    LinearLayout tabs = line();
+    // A stable first row contains back, a flexible tab slot, and actions.
+    // On small widths only the tabs move to a second row.
+    rowHeight = Math.max(ui.dp(48), ui.rowHeight(14));
+    header = line();
+    header.setOrientation(VERTICAL);
+    header.setBaselineAligned(false);
+    firstRow = line();
+    firstRow.setBaselineAligned(false);
+    backButton = ui.button("\u2039", () -> back.run());
+    backButton.setContentDescription(context.getString(R.string.ux_keyboard));
+    firstRow.addView(backButton, new LayoutParams(ui.dp(48), rowHeight));
+    tabSlot = line();
+    firstRow.addView(tabSlot, new LayoutParams(0, rowHeight, 1));
+    actions = line();
+    clearButton = ui.button("\u00d7", this::confirmClear);
+    clearButton.setContentDescription(context.getString(R.string.ux_clear));
+    actions.addView(clearButton, new LayoutParams(ui.dp(48), rowHeight));
+    moreButton = ui.button("\u22EE", this::showHistoryMenu);
+    moreButton.setContentDescription(context.getString(R.string.ux_clipboard_menu));
+    actions.addView(moreButton, new LayoutParams(ui.dp(48), rowHeight));
+    firstRow.addView(actions, new LayoutParams(ui.dp(96), rowHeight));
+    header.addView(firstRow, new LayoutParams(LayoutParams.MATCH_PARENT, rowHeight));
+    tabs = line();
+    tabs.setBaselineAligned(false);
     tabs.setBackground(ui.round(ui.action, 24));
     recentTab = ui.button("", () -> { pinned = false; refresh(); });
     pinnedTab = ui.button("", () -> { pinned = true; refresh(); });
     recentTab.setPadding(ui.dp(4), 0, ui.dp(4), 0);
     pinnedTab.setPadding(ui.dp(4), 0, ui.dp(4), 0);
-    tabs.addView(recentTab, new LayoutParams(0, Math.max(ui.dp(48), ui.rowHeight(14)), 1));
-    tabs.addView(pinnedTab, new LayoutParams(0, Math.max(ui.dp(48), ui.rowHeight(14)), 1));
-    addView(tabs);
-    recording = new Switch(context);
-    recording.setText(R.string.ux_record_history);
-    recording.setTextColor(ui.secondary);
-    recording.setTextSize(13);
-    recording.setMinHeight(Math.max(ui.dp(48), ui.rowHeight(13)));
-    recording.setPadding(ui.dp(12), 0, ui.dp(12), 0);
-    recording.setChecked(Config.globalConfig().clipboard_history_enabled);
-    recording.setOnCheckedChangeListener((v, checked) -> {
-      if (synchronizingRecording) return;
-      ClipboardHistoryService.set_history_enabled(checked);
-      refresh();
-    });
-    // Wrapped text must not be clipped: the row grows with the font scale.
-    addView(recording, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+    tabs.addView(recentTab, new LayoutParams(0, rowHeight, 1));
+    tabs.addView(pinnedTab, new LayoutParams(0, rowHeight, 1));
+    tabSlot.addView(tabs, new LayoutParams(LayoutParams.MATCH_PARENT, rowHeight));
+    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
     android.widget.FrameLayout body = new android.widget.FrameLayout(context);
     ListView list = new ListView(context);
@@ -223,14 +225,39 @@ public final class ClipboardPaneView extends LinearLayout
     return l;
   }
 
+  @Override protected void onMeasure(int widthSpec, int heightSpec)
+  {
+    int available = MeasureSpec.getSize(widthSpec) - getPaddingLeft() - getPaddingRight();
+    boolean single = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
+      || available <= 0 || single_row_fits(available);
+    if (single != single_row)
+    {
+      single_row = single;
+      ViewGroup owner = (ViewGroup)tabs.getParent();
+      if (owner != null) owner.removeView(tabs);
+      (single ? tabSlot : header).addView(tabs,
+          new LayoutParams(LayoutParams.MATCH_PARENT, rowHeight));
+    }
+    super.onMeasure(widthSpec, heightSpec);
+  }
+
+  /** Equal-width segments must each fit the longer label, including font scale. */
+  private boolean single_row_fits(int available)
+  {
+    int half = Math.max(Math.max(label_width(recentTab), label_width(pinnedTab)), ui.dp(48));
+    return available - ui.dp(144) - ui.dp(8) >= 2 * half;
+  }
+
+  private int label_width(TextView tab)
+  {
+    return (int)Math.ceil(tab.getPaint().measureText(tab.getText().toString()))
+      + tab.getPaddingLeft() + tab.getPaddingRight();
+  }
+
   private void refresh()
   {
-    // Reflect changes made in settings or the service without treating them as
-    // a new user toggle (which could otherwise clear or re-capture history).
-    synchronizingRecording = true;
-    try { recording.setChecked(Config.globalConfig().clipboard_history_enabled); }
-    finally { synchronizingRecording = false; }
     List<String> recent = service == null ? new ArrayList<>() : service.clear_expired_and_get_history();
+    clearButton.setEnabled(service != null);
     // A current, non-sensitive clip is usable even when recording is disabled.
     String current = service == null ? null : service.current_text();
     if (current != null && !recent.contains(current)) recent.add(0, current);
@@ -259,6 +286,26 @@ public final class ClipboardPaneView extends LinearLayout
     ClipboardHistoryService.paste(clip);
     status.setText(R.string.ux_pasted);
     // Stay open: people frequently paste several clips consecutively.
+  }
+
+  /** Same opt-in the old row used: it only ever calls this service method. */
+  private void setRecording(boolean enabled)
+  {
+    ClipboardHistoryService.set_history_enabled(enabled);
+    refresh();
+  }
+
+  /** Menu for the history preference, opened from the overflow button. */
+  private void showHistoryMenu()
+  {
+    PopupMenu popup = new PopupMenu(getContext(), moreButton);
+    android.view.MenuItem item = popup.getMenu().add(R.string.ux_record_history);
+    item.setCheckable(true).setChecked(Config.globalConfig().clipboard_history_enabled);
+    item.setOnMenuItemClickListener(clicked -> {
+      setRecording(!Config.globalConfig().clipboard_history_enabled);
+      return true;
+    });
+    popup.show();
   }
 
   private void savePins()
