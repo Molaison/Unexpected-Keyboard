@@ -587,10 +587,14 @@ public final class PinyinSmokeTest extends Instrumentation
     injectTouch(down, MotionEvent.ACTION_DOWN, readingBounds.exactCenterX(), readingBounds.exactCenterY());
     injectTouch(down, MotionEvent.ACTION_UP, readingBounds.exactCenterX(), readingBounds.exactCenterY());
     idle();
-    // A real menu item click dismisses the popup and rewrites the composition.
-    if (!getUiAutomation().getRootInActiveWindow()
-          .findAccessibilityNodeInfosByText("ming").isEmpty())
-      throw new AssertionError("Tapping the reading did not dismiss the picker");
+    // The chosen reading remains visible in both preedit and editor. Testing
+    // for absence of that text confuses a successful selection with an open
+    // popup; verify the actual popup window identity instead.
+    final int pickerWindowId = picker.getWindowId();
+    await("reading picker window dismissed", () -> {
+      android.view.accessibility.AccessibilityNodeInfo active = getUiAutomation().getRootInActiveWindow();
+      return active != null && active.getWindowId() != pickerWindowId;
+    });
     if (onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.getDisplayText()).contains("64"))
       throw new AssertionError("Choosing a reading did not change the composition");
     key("space");
