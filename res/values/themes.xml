@@ -374,31 +374,31 @@
     <item name="emoji_color">#FFFFFF</item>
   </style>
   <style name="SoftLight" parent="Light">
-    <item name="colorKeyboard">#E8E8EC</item>
-    <item name="colorKey">#FFFFFF</item>
-    <item name="colorKeyAction">#D9D9E0</item>
-    <item name="colorKeySpaceBar">#F9F9FB</item>
-    <item name="colorKeyActivated">#D2DEFF</item>
-    <item name="colorLabel">#1C2024</item>
-    <item name="colorSubLabel">#60646C</item>
-    <item name="colorLabelActivated">#3451B2</item>
-    <item name="emoji_button_bg">#D9D9E0</item>
-    <item name="emoji_color">#1C2024</item>
+    <item name="colorKeyboard">@color/ui_light_canvas</item>
+    <item name="colorKey">@color/ui_light_key</item>
+    <item name="colorKeyAction">@color/ui_light_function</item>
+    <item name="colorKeySpaceBar">@color/ui_light_space</item>
+    <item name="colorKeyActivated">@color/ui_light_pressed</item>
+    <item name="colorLabel">@color/ui_light_text</item>
+    <item name="colorSubLabel">@color/ui_light_secondary</item>
+    <item name="colorLabelActivated">@color/ui_light_accent_text</item>
+    <item name="emoji_button_bg">@color/ui_light_function</item>
+    <item name="emoji_color">@color/ui_light_text</item>
     <item name="keyBorderRadius">6dp</item>
     <item name="keyBorderWidth">0dp</item>
     <item name="minimumKeyGap">4dp</item>
   </style>
   <style name="SoftDark" parent="Dark">
-    <item name="colorKeyboard">#18191B</item>
-    <item name="colorKey">#272A2D</item>
-    <item name="colorKeyAction">#212225</item>
-    <item name="colorKeySpaceBar">#2E3135</item>
-    <item name="colorKeyActivated">#253974</item>
-    <item name="colorLabel">#EDEEF0</item>
-    <item name="colorSubLabel">#B0B4BA</item>
-    <item name="colorLabelActivated">#9EB1FF</item>
-    <item name="emoji_button_bg">#212225</item>
-    <item name="emoji_color">#EDEEF0</item>
+    <item name="colorKeyboard">@color/ui_dark_canvas</item>
+    <item name="colorKey">@color/ui_dark_key</item>
+    <item name="colorKeyAction">@color/ui_dark_function</item>
+    <item name="colorKeySpaceBar">@color/ui_dark_space</item>
+    <item name="colorKeyActivated">@color/ui_dark_pressed</item>
+    <item name="colorLabel">@color/ui_dark_text</item>
+    <item name="colorSubLabel">@color/ui_dark_secondary</item>
+    <item name="colorLabelActivated">@color/ui_dark_accent_text</item>
+    <item name="emoji_button_bg">@color/ui_dark_function</item>
+    <item name="emoji_color">@color/ui_dark_text</item>
     <item name="keyBorderRadius">6dp</item>
     <item name="keyBorderWidth">0dp</item>
     <item name="minimumKeyGap">4dp</item>
