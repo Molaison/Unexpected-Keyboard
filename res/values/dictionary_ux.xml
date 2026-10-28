@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="dictionary_page_title">Dictionaries</string>
+  <string name="dictionary_intro_title">Suggestions for more languages</string>
+  <string name="dictionary_intro_body">Download a dictionary to add word suggestions for that language. Downloads require an internet connection.</string>
+  <string name="dictionary_chinese_included">Chinese pinyin is included and works offline. No download needed.</string>
+  <string name="dictionary_recommended">For your device languages</string>
+  <string name="dictionary_other_languages">Other languages</string>
+  <string name="dictionary_download">Download</string>
+  <string name="dictionary_remove">Remove</string>
+  <string name="dictionary_retry">Retry</string>
+  <string name="dictionary_downloading">Downloading…</string>
+  <string name="dictionary_updating">Updating…</string>
+  <string name="dictionary_installed">Installed</string>
+  <string name="dictionary_failed">Could not finish. Check your connection and try again.</string>
+  <string name="dictionary_remove_title">Remove %1$s?</string>
+  <string name="dictionary_remove_message">Word suggestions for this language will be unavailable. You can download it again.</string>
+  <string name="dictionary_action_description">%1$s: %2$s</string>
+</resources>

@@ -17,6 +17,7 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
 import juloo.keyboard2.Config;
+import juloo.keyboard2.DirectBootAwarePreferences;
 import juloo.keyboard2.KeyboardUi;
 import juloo.keyboard2.R;
 
@@ -39,6 +40,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private final LinearLayout row;
   private final TextView preedit;
   private final TextView readings;
+  private final TextView spellings;
   private final TextView more;
   private final HorizontalScrollView candidateScroll;
   private final LinearLayout items;
@@ -55,6 +57,7 @@ public final class PinyinCandidatesView extends LinearLayout
     super(context, attrs);
     ui = new KeyboardUi(context);
     setOrientation(VERTICAL);
+    setBackgroundColor(ui.background);
     setLayoutDirection(LAYOUT_DIRECTION_LTR);
     setPadding(ui.dp(6), 0, ui.dp(6), 0);
     LinearLayout header = new LinearLayout(context);
@@ -77,14 +80,18 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setTextColor(ui.accent);
     preedit.setGravity(Gravity.CENTER_VERTICAL);
     preedit.setPadding(ui.dp(10), 0, ui.dp(6), 0);
+    preedit.setFocusable(false);
     preedit.setOnClickListener(v -> { if (listener != null && !previousComposition.isEmpty()) listener.onCommitRaw(); });
     preedit.setOnLongClickListener(v -> { showReadings(); return !spellingOptions.isEmpty(); });
     header.addView(preedit, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
-    readings = ui.button("⌄", () -> {
-      if (spellingOptions.isEmpty()) { if (listener != null) listener.onLayoutSwitch(); }
-      else showReadings();
+    spellings = ui.button(context.getString(R.string.ux_candidate_spellings), this::showReadings);
+    spellings.setTextSize(13);
+    spellings.setContentDescription(context.getString(R.string.ux_candidate_spellings_description));
+    header.addView(spellings, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT));
+    readings = ui.button("26", () -> {
+      if (listener != null) listener.onLayoutSwitch();
     });
-    readings.setTextSize(18);
+    readings.setTextSize(14);
     header.addView(readings);
     addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
 
@@ -114,7 +121,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private void showReadings()
   {
     if (spellingOptions.isEmpty()) return;
-    PopupMenu menu = new PopupMenu(getContext(), readings);
+    PopupMenu menu = new PopupMenu(getContext(), spellings);
     for (int i = 0; i < spellingOptions.size(); i++) menu.getMenu().add(0, i, i, spellingOptions.get(i));
     menu.setOnMenuItemClickListener(item -> {
       expanded = false;
@@ -141,15 +148,23 @@ public final class PinyinCandidatesView extends LinearLayout
     this.hasMore = hasMore;
     boolean changed = !composition.equals(previousComposition);
     if (changed) expanded = false;
-    // Keep the preedit slot empty when idle. The mode is conveyed by the
-    // keyboard itself and remains available to accessibility services here.
-    preedit.setText(composition);
+    // Keep the key origin fixed: composition replaces the concise idle mode
+    // label within the same context bar, above the reserved candidate row.
+    preedit.setText(composition.isEmpty()
+        ? getContext().getString(chinese ? R.string.pinyin_mode_chinese : R.string.pinyin_mode_english)
+        : composition);
+    preedit.setTextColor(composition.isEmpty() ? ui.secondary : ui.accent);
+    preedit.setClickable(!composition.isEmpty());
     preedit.setContentDescription(composition.isEmpty()
       ? getContext().getString(chinese ? R.string.pinyin_mode_chinese : R.string.pinyin_mode_english)
       : getContext().getString(R.string.pinyin_commit_raw, composition));
-    readings.setText(spellingOptions.isEmpty() ? "⌨" : "⌄");
-    readings.setContentDescription(getContext().getString(spellingOptions.isEmpty()
-        ? R.string.ux_layout_switch : R.string.pinyin_choose_spelling));
+    boolean nineKey = DirectBootAwarePreferences.get_shared_preferences(getContext())
+        .getBoolean("chinese_nine_key", false);
+    readings.setText(getContext().getString(nineKey
+        ? R.string.ux_candidate_layout_nine : R.string.ux_candidate_layout_full));
+    readings.setContentDescription(getContext().getString(nineKey
+        ? R.string.ux_candidate_switch_full : R.string.ux_candidate_switch_nine));
+    spellings.setVisibility(chinese && !spellingOptions.isEmpty() ? VISIBLE : GONE);
     // INVISIBLE reserves the same width while the user switches languages.
     readings.setVisibility(chinese ? VISIBLE : INVISIBLE);
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
@@ -194,6 +209,8 @@ public final class PinyinCandidatesView extends LinearLayout
   private void renderExpanded()
   {
     more.setText(expanded ? "⌃" : "⌄");
+    more.setContentDescription(getContext().getString(expanded
+        ? R.string.ux_candidate_collapse : R.string.ux_more_candidates));
     more.setEnabled(!previousCandidates.isEmpty());
     more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
     expandedScroll.setVisibility(expanded ? VISIBLE : GONE);

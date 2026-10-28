@@ -3,7 +3,7 @@ package juloo.keyboard2;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.AttributeSet;
-import android.view.ContextThemeWrapper;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
@@ -27,11 +27,9 @@ public class EmojiGridView extends GridView
 
   private List<Emoji> _emojiArray;
   private HashMap<Emoji, Integer> _lastUsed;
+  private int _group;
+  private Runnable _onGroupChanged;
 
-  /*
-   ** TODO: adapt column width and emoji size
-   ** TODO: use ArraySet instead of Emoji[]
-   */
   public EmojiGridView(Context context, AttributeSet attrs)
   {
     super(context, attrs);
@@ -43,8 +41,33 @@ public class EmojiGridView extends GridView
 
   public void setEmojiGroup(int group)
   {
+    _group = group;
     _emojiArray = (group == GROUP_LAST_USE) ? getLastEmojis() : Emoji.getEmojisByGroup(group);
     setAdapter(new EmojiViewAdpater(getContext(), _emojiArray));
+    if (_onGroupChanged != null)
+      _onGroupChanged.run();
+  }
+
+  public int getEmojiGroup() { return _group; }
+
+  public void setOnGroupChangedListener(Runnable listener) { _onGroupChanged = listener; }
+
+  @Override
+  protected void onAttachedToWindow()
+  {
+    super.onAttachedToWindow();
+    ViewGroup region = (ViewGroup)getParent();
+    View empty = region.findViewById(R.id.emoji_empty_state);
+    setEmptyView(empty);
+    KeyboardUi ui = new KeyboardUi(getContext());
+    TextView title = region.findViewById(R.id.emoji_empty_title);
+    title.setTextColor(ui.text);
+    TextView description = region.findViewById(R.id.emoji_empty_description);
+    description.setTextColor(ui.secondary);
+    TextView browse = region.findViewById(R.id.emoji_browse);
+    browse.setTextColor(ui.accent);
+    ui.touchBackground(browse, ui.surface);
+    browse.setOnClickListener(v -> setEmojiGroup(0));
   }
 
   public void onItemClick(AdapterView<?> parent, View v, int pos, long id)
@@ -114,6 +137,15 @@ public class EmojiGridView extends GridView
     public EmojiView(Context context)
     {
       super(context);
+      KeyboardUi ui = new KeyboardUi(context);
+      setGravity(Gravity.CENTER);
+      setTextSize(28); // Emoji glyphs; keep a 48dp touch cell independent of font scale.
+      setTextColor(ui.text);
+      setIncludeFontPadding(false);
+      setFocusable(false);
+      setLayoutParams(new android.widget.AbsListView.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)));
+      ui.touchBackground(this, ui.background);
     }
 
     public void setEmoji(Emoji emoji)
@@ -130,7 +162,7 @@ public class EmojiGridView extends GridView
 
     public EmojiViewAdpater(Context context, List<Emoji> emojiArray)
     {
-      _button_context = new ContextThemeWrapper(context, R.style.emojiGridButton);
+      _button_context = context;
       _emojiArray = emojiArray;
     }
 

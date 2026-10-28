@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <color name="ui_background">@color/ui_dark_background</color>
+  <color name="ui_surface">@color/ui_dark_surface</color>
+  <color name="ui_surface_muted">@color/ui_dark_surface_muted</color>
+  <color name="ui_surface_pressed">@color/ui_dark_surface_pressed</color>
+  <color name="ui_border">@color/ui_dark_border</color>
+  <color name="ui_text">@color/ui_dark_text</color>
+  <color name="ui_text_secondary">@color/ui_dark_text_secondary</color>
+  <color name="ui_accent">@color/ui_dark_accent</color>
+  <color name="ui_accent_fill">@color/ui_dark_accent_fill</color>
+  <color name="ui_accent_surface">@color/ui_dark_accent_surface</color>
+  <color name="ui_on_accent">@color/ui_dark_on_accent</color>
+</resources>

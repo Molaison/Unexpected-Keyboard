@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Radix Slate and Blue, mapped by role rather than by lightness inversion.
+       Fixed variants also keep an explicitly selected keyboard theme independent
+       of the device's night-mode setting. White is the light key surface. -->
+  <color name="ui_light_background">#F0F0F3</color><!-- Slate 3 -->
+  <color name="ui_light_surface">#FFFFFF</color>
+  <color name="ui_light_surface_muted">#E0E1E6</color><!-- Slate 5 -->
+  <color name="ui_light_surface_pressed">#DBECFC</color><!-- Blue 4 -->
+  <color name="ui_light_border">#CDCED6</color><!-- Slate 7 -->
+  <color name="ui_light_text">#1C2024</color><!-- Slate 12 -->
+  <color name="ui_light_text_secondary">#60646C</color><!-- Slate 11 -->
+  <color name="ui_light_accent">#113264</color><!-- Blue 12: readable on tinted surfaces -->
+  <color name="ui_light_accent_fill">#0D74CE</color><!-- Blue 11: white foreground -->
+  <color name="ui_light_accent_surface">#E6F4FE</color><!-- Blue 3 -->
+  <color name="ui_light_on_accent">#FFFFFF</color>
+
+  <color name="ui_dark_background">#111113</color><!-- Slate 1 -->
+  <color name="ui_dark_surface">#272A2D</color><!-- Slate 4 -->
+  <color name="ui_dark_surface_muted">#212225</color><!-- Slate 3 -->
+  <color name="ui_dark_surface_pressed">#004074</color><!-- Blue 5 -->
+  <color name="ui_dark_border">#43484E</color><!-- Slate 7 -->
+  <color name="ui_dark_text">#EDEEF0</color><!-- Slate 12 -->
+  <color name="ui_dark_text_secondary">#B0B4BA</color><!-- Slate 11 -->
+  <color name="ui_dark_accent">#70B8FF</color><!-- Blue 11 -->
+  <color name="ui_dark_accent_fill">#70B8FF</color><!-- Blue 11: dark foreground -->
+  <color name="ui_dark_accent_surface">#0D2847</color><!-- Blue 3 -->
+  <color name="ui_dark_on_accent">#111113</color><!-- Slate 1 -->
+
+  <color name="ui_background">@color/ui_light_background</color>
+  <color name="ui_surface">@color/ui_light_surface</color>
+  <color name="ui_surface_muted">@color/ui_light_surface_muted</color>
+  <color name="ui_surface_pressed">@color/ui_light_surface_pressed</color>
+  <color name="ui_border">@color/ui_light_border</color>
+  <color name="ui_text">@color/ui_light_text</color>
+  <color name="ui_text_secondary">@color/ui_light_text_secondary</color>
+  <color name="ui_accent">@color/ui_light_accent</color>
+  <color name="ui_accent_fill">@color/ui_light_accent_fill</color>
+  <color name="ui_accent_surface">@color/ui_light_accent_surface</color>
+  <color name="ui_on_accent">@color/ui_light_on_accent</color>
+
+  <!-- App surfaces follow the system; keyboard themes use the fixed variants. -->
+  <color name="app_canvas">@color/ui_background</color>
+  <color name="app_surface">@color/ui_surface</color>
+  <color name="app_text">@color/ui_text</color>
+  <color name="app_secondary">@color/ui_text_secondary</color>
+  <color name="app_accent">@color/ui_accent_fill</color>
+  <color name="app_accent_text">@color/ui_accent</color>
+  <color name="app_on_accent">@color/ui_on_accent</color>
+  <color name="app_accent_soft">@color/ui_accent_surface</color>
+  <color name="app_border">@color/ui_border</color>
+</resources>

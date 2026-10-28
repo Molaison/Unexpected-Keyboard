@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:orientation="vertical" android:hardwareAccelerated="false">
-  <juloo.keyboard2.EmojiGroupButtonsBar android:orientation="horizontal" android:layout_width="fill_parent" android:layout_height="wrap_content"/>
-  <juloo.keyboard2.EmojiGridView android:id="@+id/emoji_grid" android:layout_width="fill_parent" android:layout_height="@dimen/emoji_grid_height" android:orientation="vertical" android:numColumns="auto_fit" android:columnWidth="45sp" android:background="?attr/colorKeyboard"/>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:orientation="vertical" android:hardwareAccelerated="false" android:background="?attr/colorKeyboard">
+  <HorizontalScrollView android:layout_width="match_parent" android:layout_height="48dp" android:scrollbars="none" android:fillViewport="false">
+    <juloo.keyboard2.EmojiGroupButtonsBar android:orientation="horizontal" android:layout_width="wrap_content" android:layout_height="48dp"/>
+  </HorizontalScrollView>
+  <FrameLayout android:layout_width="match_parent" android:layout_height="@dimen/emoji_grid_height">
+    <juloo.keyboard2.EmojiGridView android:id="@+id/emoji_grid" android:layout_width="match_parent" android:layout_height="match_parent" android:numColumns="auto_fit" android:columnWidth="48dp" android:stretchMode="columnWidth" android:background="?attr/colorKeyboard"/>
+    <LinearLayout android:id="@+id/emoji_empty_state" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center" android:padding="24dp" android:visibility="gone">
+      <TextView android:id="@+id/emoji_empty_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:text="@string/emoji_recent_empty_title" android:textSize="20sp"/>
+      <TextView android:id="@+id/emoji_empty_description" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:gravity="center" android:text="@string/emoji_recent_empty_description" android:textSize="14sp"/>
+      <TextView android:id="@+id/emoji_browse" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="48dp" android:layout_marginTop="16dp" android:paddingLeft="16dp" android:paddingRight="16dp" android:gravity="center" android:text="@string/emoji_browse_smileys" android:textSize="16sp" android:clickable="true" android:focusable="false"/>
+    </LinearLayout>
+  </FrameLayout>
   <juloo.keyboard2.Keyboard2View layout="@xml/emoji_bottom_row" android:layout_width="fill_parent" android:layout_height="wrap_content" android:background="?attr/emoji_key_bg"/>
 </LinearLayout>

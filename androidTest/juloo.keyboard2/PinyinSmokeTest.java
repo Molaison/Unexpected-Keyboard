@@ -27,6 +27,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private PinyinTestActivity activity;
   private int checks;
   private boolean benchmark;
+  private boolean uxCapture;
   private boolean voiceLive;
   private boolean voiceFresh;
   private boolean voiceContinuous;
@@ -37,6 +38,7 @@ public final class PinyinSmokeTest extends Instrumentation
   @Override public void onCreate(Bundle arguments)
   {
     super.onCreate(arguments);
+    uxCapture = arguments != null && "true".equals(arguments.getString("ux_capture"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
@@ -100,6 +102,13 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         microphoneInput();
         result.putString("stream", "DOUBAO_MICROPHONE_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (uxCapture)
+      {
+        captureVisualStates();
+        result.putString("stream", "UX_CAPTURE_OK\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -281,6 +290,97 @@ public final class PinyinSmokeTest extends Instrumentation
       result.putString("shortMsg", error.toString());
       finish(Activity.RESULT_CANCELED, result);
     }
+  }
+
+  /** Deterministic real-window screenshots. Run only on a disposable emulator. */
+  private void captureVisualStates() throws Exception
+  {
+    android.content.SharedPreferences prefs = DirectBootAwarePreferences.get_shared_preferences(getTargetContext());
+    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply(); return null; });
+    focus(activity.plain); clear(); chinese(true); nineKey(false);
+    screenshot("keyboard-idle.png");
+    type("nihao"); screenshot("keyboard-light.png");
+    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    screenshot("candidates-expanded.png");
+    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    key("space"); text(activity.plain, "你好");
+    clear(); nineKey(true); nineKeys("64426"); screenshot("nine-key-light.png");
+    onMain(() -> { prefs.edit().putString("theme", "soft_dark").apply(); return null; });
+    focus(activity.plain); clear(); nineKeys("64426"); screenshot("nine-key-dark.png");
+    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply(); return null; });
+    focus(activity.plain); clear(); nineKey(false);
+    ClipboardHistoryService service = onMain(() -> ClipboardHistoryService.get_service(getTargetContext()));
+    onMain(() -> { ClipboardHistoryService.set_history_enabled(true); service.clear_history_and_current();
+      getTargetContext().getSharedPreferences("pinned_clipboards", 0).edit().clear().commit(); return null; });
+    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard))));
+    await("clipboard capture", () -> clipboard() != null && clipboard().isShown());
+    screenshot("clipboard-empty.png");
+    onMain(() -> { service.add_clip("The meeting has moved to 3:30 PM. I will send the notes afterwards.");
+      service.add_clip("本周设计评审\n请复核候选词与键盘布局。");
+      service.add_clip("Could you send me the updated version? Thank you!"); return null; });
+    screenshot("clipboard-light.png");
+    tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    onMain(() -> { prefs.edit().putString("theme", "soft_dark").apply(); return null; });
+    focus(activity.plain);
+    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard))));
+    await("dark clipboard capture", () -> clipboard() != null && clipboard().isShown());
+    screenshot("clipboard-dark.png");
+    tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply();
+      getTargetContext().getSharedPreferences("emoji_last_use", 0).edit().clear().commit(); return null; });
+    focus(activity.plain);
+    onMain(() -> { Config.globalConfig().handler.key_up(KeyValue.getKeyByName("switch_emoji"), Pointers.Modifiers.EMPTY); return null; });
+    screenshot("emoji.png");
+    onMain(() -> { Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
+      ViewGroup pane = (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
+      ((EmojiGridView)pane.findViewById(R.id.emoji_grid)).setEmojiGroup(EmojiGridView.GROUP_LAST_USE); return null; });
+    screenshot("emoji-empty.png");
+    ViewGroup emojiPane = onMain(() -> emojiPane());
+    await("recent emoji empty state", () -> emojiPane.findViewById(R.id.emoji_empty_state).isShown());
+    tap(onMain(() -> emojiPane.findViewById(R.id.emoji_browse)));
+    await("browse smileys", () -> ((EmojiGridView)emojiPane.findViewById(R.id.emoji_grid)).getCount() > 0);
+    EmojiGridView grid = (EmojiGridView)emojiPane.findViewById(R.id.emoji_grid);
+    tap(onMain(() -> grid.getChildAt(0)));
+    tap(onMain(() -> findDescription(emojiPane, getTargetContext().getString(R.string.emoji_recent_category))));
+    await("recently inserted emoji", () -> grid.getCount() == 1);
+    screenshot("emoji-recent.png");
+    float[] back = onMain(() -> keyPoint((Keyboard2View)emojiPane.getChildAt(2), "switch_back_emoji", false));
+    touch(back[0], back[1]);
+    await("emoji returns to typing", () -> keyboard().isShown());
+    passed("emoji empty recovery, insertion, recent category and ABC return");
+    captureDictionaryStates();
+  }
+
+  private ViewGroup emojiPane() throws Exception
+  {
+    Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
+    return (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
+  }
+
+  /** Render production download states deterministically; these are view-state
+      fixtures, not claims that a network download succeeded or failed. */
+  @SuppressWarnings("unchecked")
+  private void captureDictionaryStates() throws Exception
+  {
+    Intent intent = new Intent(getTargetContext(), juloo.keyboard2.dict.DictionariesActivity.class);
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    Activity page = startActivitySync(intent);
+    View list = page.findViewById(R.id.dictionary_recommended_list);
+    java.util.List<?> rows = onMain(() -> (java.util.List<?>)field(list, "_dict_views"));
+    if (rows.isEmpty()) throw new AssertionError("Use the English-locale capture fixture");
+    String name = onMain(() -> (String)field(rows.get(0), "dict_name"));
+    java.lang.reflect.Method refresh = list.getClass().getDeclaredMethod("refresh");
+    refresh.setAccessible(true);
+    onMain(() -> { ((java.util.Set<String>)field(list, "_pending")).add(name); refresh.invoke(list); return null; });
+    screenshot("dictionaries-loading-fixture.png");
+    if (onMain(() -> ((View)field(rows.get(0), "download_button")).isEnabled()))
+      throw new AssertionError("A pending download must not be started twice");
+    onMain(() -> { ((java.util.Set<String>)field(list, "_pending")).clear();
+      ((java.util.Set<String>)field(list, "_failed")).add(name); refresh.invoke(list); return null; });
+    screenshot("dictionaries-error-fixture.png");
+    if (!onMain(() -> ((View)field(rows.get(0), "download_button")).isEnabled()))
+      throw new AssertionError("A failed download must offer retry");
+    onMain(() -> { page.finish(); return null; });
   }
 
   /** Exercise the production handler with real touches and editor state. The
@@ -526,7 +626,7 @@ public final class PinyinSmokeTest extends Instrumentation
 
     clear();
     nineKeys("6464");
-    tap(onMain(() -> (View)field(candidatesView(), "readings")));
+    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_candidate_spellings_description))));
     idle();
     long down;
     android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
@@ -609,6 +709,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private void screenshot(String name) throws Exception
   {
     idle();
+    SystemClock.sleep(600); // Let the window compositor present the completed frame.
     Bitmap bitmap=getUiAutomation().takeScreenshot();
     try(FileOutputStream output=new FileOutputStream(new File(getTargetContext().getCacheDir(),name)))
     { if(bitmap==null || !bitmap.compress(Bitmap.CompressFormat.PNG,100,output)) throw new AssertionError("Screenshot failed"); }
@@ -686,7 +787,8 @@ public final class PinyinSmokeTest extends Instrumentation
     if(onMain(() -> service.current_text()!=null)) throw new AssertionError("Explicit delete left the current clip visible");
     tap(onMain(() -> (View)field(clipboard(),"undoButton")));
     if(!onMain(() -> service.clear_expired_and_get_history().contains("A plain current clip"))) throw new AssertionError("Undo failed for recent clip");
-    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_clear))));
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clipboard_options))));
+    menuText(getTargetContext().getString(R.string.ux_clear));
     menuText(getTargetContext().getString(R.string.ux_clear));
     if(!onMain(() -> service.clear_expired_and_get_history().isEmpty())) throw new AssertionError("Clear did not clear history");
     if(!onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Clear erased a pin");
@@ -882,7 +984,11 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private float[] keyPoint(String name, boolean northwest) throws Exception
   {
-      Keyboard2View view = keyboard();
+    return keyPoint(keyboard(), name, northwest);
+  }
+
+  private float[] keyPoint(Keyboard2View view, String name, boolean northwest) throws Exception
+  {
       KeyboardData layout = (KeyboardData)field(view, "_keyboard");
       Theme.Computed theme = (Theme.Computed)field(view, "_tc");
       float width = (Float)field(view, "_keyWidth");
