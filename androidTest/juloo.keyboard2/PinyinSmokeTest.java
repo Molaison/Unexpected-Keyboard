@@ -335,6 +335,52 @@ public final class PinyinSmokeTest extends Instrumentation
       ViewGroup pane = (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
       ((EmojiGridView)pane.findViewById(R.id.emoji_grid)).setEmojiGroup(EmojiGridView.GROUP_LAST_USE); return null; });
     screenshot("emoji-empty.png");
+    ViewGroup emojiPane = onMain(() -> emojiPane());
+    await("recent emoji empty state", () -> emojiPane.findViewById(R.id.emoji_empty_state).isShown());
+    tap(onMain(() -> emojiPane.findViewById(R.id.emoji_browse)));
+    await("browse smileys", () -> ((EmojiGridView)emojiPane.findViewById(R.id.emoji_grid)).getCount() > 0);
+    EmojiGridView grid = (EmojiGridView)emojiPane.findViewById(R.id.emoji_grid);
+    tap(onMain(() -> grid.getChildAt(0)));
+    tap(onMain(() -> findDescription(emojiPane, getTargetContext().getString(R.string.emoji_recent_category))));
+    await("recently inserted emoji", () -> grid.getCount() == 1);
+    screenshot("emoji-recent.png");
+    float[] back = onMain(() -> keyPoint((Keyboard2View)emojiPane.getChildAt(2), "switch_back_emoji", false));
+    touch(back[0], back[1]);
+    await("emoji returns to typing", () -> keyboard().isShown());
+    passed("emoji empty recovery, insertion, recent category and ABC return");
+    captureDictionaryStates();
+  }
+
+  private ViewGroup emojiPane() throws Exception
+  {
+    Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
+    return (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
+  }
+
+  /** Render production download states deterministically; these are view-state
+      fixtures, not claims that a network download succeeded or failed. */
+  @SuppressWarnings("unchecked")
+  private void captureDictionaryStates() throws Exception
+  {
+    Intent intent = new Intent(getTargetContext(), juloo.keyboard2.dict.DictionariesActivity.class);
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    Activity page = startActivitySync(intent);
+    View list = page.findViewById(R.id.dictionary_recommended_list);
+    java.util.List<?> rows = onMain(() -> (java.util.List<?>)field(list, "_dict_views"));
+    if (rows.isEmpty()) throw new AssertionError("Use the English-locale capture fixture");
+    String name = onMain(() -> (String)field(rows.get(0), "dict_name"));
+    java.lang.reflect.Method refresh = list.getClass().getDeclaredMethod("refresh");
+    refresh.setAccessible(true);
+    onMain(() -> { ((java.util.Set<String>)field(list, "_pending")).add(name); refresh.invoke(list); return null; });
+    screenshot("dictionaries-loading-fixture.png");
+    if (onMain(() -> ((View)field(rows.get(0), "download_button")).isEnabled()))
+      throw new AssertionError("A pending download must not be started twice");
+    onMain(() -> { ((java.util.Set<String>)field(list, "_pending")).clear();
+      ((java.util.Set<String>)field(list, "_failed")).add(name); refresh.invoke(list); return null; });
+    screenshot("dictionaries-error-fixture.png");
+    if (!onMain(() -> ((View)field(rows.get(0), "download_button")).isEnabled()))
+      throw new AssertionError("A failed download must offer retry");
+    onMain(() -> { page.finish(); return null; });
   }
 
   /** Exercise the production handler with real touches and editor state. The
@@ -580,7 +626,7 @@ public final class PinyinSmokeTest extends Instrumentation
 
     clear();
     nineKeys("6464");
-    tap(onMain(() -> (View)field(candidatesView(), "readings")));
+    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_candidate_spellings_description))));
     idle();
     long down;
     android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
@@ -663,6 +709,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private void screenshot(String name) throws Exception
   {
     idle();
+    SystemClock.sleep(600); // Let the window compositor present the completed frame.
     Bitmap bitmap=getUiAutomation().takeScreenshot();
     try(FileOutputStream output=new FileOutputStream(new File(getTargetContext().getCacheDir(),name)))
     { if(bitmap==null || !bitmap.compress(Bitmap.CompressFormat.PNG,100,output)) throw new AssertionError("Screenshot failed"); }
@@ -937,7 +984,11 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private float[] keyPoint(String name, boolean northwest) throws Exception
   {
-      Keyboard2View view = keyboard();
+    return keyPoint(keyboard(), name, northwest);
+  }
+
+  private float[] keyPoint(Keyboard2View view, String name, boolean northwest) throws Exception
+  {
       KeyboardData layout = (KeyboardData)field(view, "_keyboard");
       Theme.Computed theme = (Theme.Computed)field(view, "_tc");
       float width = (Float)field(view, "_keyWidth");

@@ -23,7 +23,7 @@
   <string name="settings_remember_clips_summary">在本机保留最近复制的文本；固定内容会保留，直到手动移除。</string>
   <string name="settings_device">设备与行为</string>
   <string name="settings_device_summary">实体键盘、数字输入框与输入法切换</string>
-  <string name="launcher_tagline">中文、语音与顺手的快捷输入。</string>
+  <string name="launcher_tagline">豆包语音 · 中文拼音 · 滑动快捷输入</string>
   <string name="launcher_settings">设置</string>
   <string name="launcher_step_enable">第 1 步，共 2 步</string>
   <string name="launcher_step_select">第 2 步，共 2 步</string>
@@ -49,4 +49,6 @@
   <string name="launcher_dictionary_label">英文与其他语言词典  →</string>
   <string name="launcher_dictionary_hint">可选的词语建议功能；中文拼音词库已内置。</string>
   <string name="launcher_support_title">源码与支持</string>
+  <string name="launcher_display_title">Unexpected Keyboard</string>
+  <string name="launcher_try_setup_hint">完成上方设置后，即可试用此键盘。</string>
 </resources>

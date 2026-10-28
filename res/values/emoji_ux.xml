@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="emoji_recent_category">Recently used</string>
+  <string name="emoji_category_fallback">Emoji category %1$d</string>
+  <string name="emoji_recent_empty_title">No recent emoji</string>
+  <string name="emoji_recent_empty_description">Emoji you use will appear here.</string>
+  <string name="emoji_browse_smileys">Browse smileys</string>
+  <string-array name="emoji_category_names">
+    <item>Smileys and emotions</item>
+    <item>People and body</item>
+    <item>Animals and nature</item>
+    <item>Food and drink</item>
+    <item>Travel and places</item>
+    <item>Activities</item>
+    <item>Objects</item>
+    <item>Symbols</item>
+    <item>Flags</item>
+  </string-array>
+</resources>

@@ -100,6 +100,10 @@ public class LauncherActivity extends Activity implements Handler.Callback
     }
     selected = enabled && ownId.equals(Settings.Secure.getString(
         getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD));
+    // Ready needs only a confirmation and an explicit Try action. The setup
+    // instructions remain visible for the two incomplete states.
+    findViewById(R.id.launcher_setup_step).setVisibility(selected ? View.GONE : View.VISIBLE);
+    findViewById(R.id.launcher_setup_detail).setVisibility(selected ? View.GONE : View.VISIBLE);
     ((TextView)findViewById(R.id.launcher_setup_step)).setText(selected
         ? R.string.launcher_step_ready : enabled ? R.string.launcher_step_select : R.string.launcher_step_enable);
     ((TextView)findViewById(R.id.launcher_setup_title)).setText(selected
@@ -108,6 +112,18 @@ public class LauncherActivity extends Activity implements Handler.Callback
         ? R.string.launcher_status_ready_detail : enabled ? R.string.launcher_status_select_detail : R.string.launcher_status_enable_detail);
     ((Button)findViewById(R.id.launcher_setup_action)).setText(selected
         ? R.string.launcher_action_try : enabled ? R.string.launcher_button_imepicker : R.string.launcher_button_imesettings);
+    if (!selected && _tryhere_area.hasFocus())
+    {
+      imm.hideSoftInputFromWindow(_tryhere_area.getWindowToken(), 0);
+      _tryhere_area.clearFocus();
+    }
+    // A preview before setup would open some other keyboard. Make the blocked
+    // state visible and accessible without discarding a previous test entry.
+    _tryhere_area.setEnabled(selected);
+    _tryhere_area.setFocusable(selected);
+    _tryhere_area.setFocusableInTouchMode(selected);
+    _tryhere_area.setHint(selected ? R.string.launcher_try_hint : R.string.launcher_try_setup_hint);
+    _tryhere_area.setContentDescription(selected ? null : getString(R.string.launcher_try_setup_hint));
   }
 
   public void continue_setup(View view)

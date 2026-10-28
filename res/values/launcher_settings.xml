@@ -23,7 +23,7 @@
   <string name="settings_remember_clips_summary">Keep recent copied text on this device. Pinned clips stay until removed.</string>
   <string name="settings_device">Device &amp; behavior</string>
   <string name="settings_device_summary">Physical keyboards, number fields and switching keyboards</string>
-  <string name="launcher_tagline">Chinese, voice and every shortcut.</string>
+  <string name="launcher_tagline">Doubao voice · Chinese Pinyin · swipe shortcuts</string>
   <string name="launcher_settings">Settings</string>
   <string name="launcher_step_enable">STEP 1 OF 2</string>
   <string name="launcher_step_select">STEP 2 OF 2</string>
@@ -49,4 +49,6 @@
   <string name="launcher_dictionary_label">English &amp; other dictionaries  →</string>
   <string name="launcher_dictionary_hint">Optional word suggestions. Chinese Pinyin is already included.</string>
   <string name="launcher_support_title">Source code &amp; support</string>
+  <string name="launcher_display_title">Unexpected Keyboard</string>
+  <string name="launcher_try_setup_hint">Finish setup above to try this keyboard.</string>
 </resources>

@@ -5,14 +5,14 @@
   <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
       android:padding="24dp" android:focusable="true" android:focusableInTouchMode="true">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
-      <TextView style="@style/LauncherTitle" android:layout_width="0dp" android:layout_weight="1" android:text="@string/app_name" android:textSize="23sp"/>
+      <TextView style="@style/LauncherTitle" android:layout_width="0dp" android:layout_weight="1" android:text="@string/launcher_display_title"/>
       <TextView style="@style/LauncherLink" android:layout_width="wrap_content" android:minWidth="72dp" android:gravity="center" android:text="@string/launcher_settings" android:onClick="launch_settings"/>
     </LinearLayout>
     <TextView style="@style/LauncherBody" android:text="@string/launcher_tagline" android:layout_marginBottom="24dp"/>
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
         android:background="@drawable/launcher_card" android:padding="20dp">
-      <TextView android:id="@+id/launcher_setup_step" style="@style/LauncherBody" android:text="@string/launcher_step_enable" android:textColor="@color/app_accent_text" android:textSize="12sp" android:fontFamily="sans-serif-medium"/>
-      <TextView android:id="@+id/launcher_setup_title" style="@style/LauncherSection" android:layout_marginTop="8dp" android:text="@string/launcher_status_enable" android:textSize="22sp"/>
+      <TextView android:id="@+id/launcher_setup_step" style="@style/LauncherBody" android:text="@string/launcher_step_enable" android:textColor="@color/app_accent_text" android:textSize="14sp" android:fontFamily="sans-serif-medium"/>
+      <TextView android:id="@+id/launcher_setup_title" style="@style/LauncherSection" android:layout_marginTop="8dp" android:text="@string/launcher_status_enable" android:textSize="20sp"/>
       <TextView android:id="@+id/launcher_setup_detail" style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_status_enable_detail"/>
       <Button android:id="@+id/launcher_setup_action" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="52dp"
           android:layout_marginTop="16dp" android:padding="12dp" android:background="@drawable/launcher_primary" android:textColor="@color/app_on_accent"
@@ -20,8 +20,9 @@
     </LinearLayout>
     <TextView android:id="@+id/launcher_tryhere_text" style="@style/LauncherSection" android:layout_marginTop="28dp" android:text="@string/launcher_try_title"/>
     <EditText android:id="@+id/launcher_tryhere_area" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="80dp"
-        android:layout_marginTop="12dp" android:background="@drawable/launcher_card" android:padding="16dp" android:gravity="top|start"
-        android:textColor="@color/app_text" android:textColorHint="@color/app_secondary" android:textSize="17sp" android:inputType="textCapSentences|textMultiLine"
+        android:layout_marginTop="12dp" android:background="@drawable/launcher_try_background" android:padding="16dp" android:gravity="top|start"
+        android:enabled="false" android:focusable="false" android:focusableInTouchMode="false"
+        android:textColor="@color/app_text" android:textColorHint="@color/app_secondary" android:textSize="16sp" android:inputType="textCapSentences|textMultiLine"
         android:hint="@string/launcher_try_hint" android:importantForAutofill="no"/>
     <TextView style="@style/LauncherSection" android:layout_marginTop="28dp" android:text="@string/launcher_tips_title"/>
     <TextView style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_tips_body"/>
@@ -43,9 +44,9 @@
     <TextView style="@style/LauncherSection" android:layout_marginTop="20dp" android:text="@string/launcher_more_title"/>
     <TextView style="@style/LauncherLink" android:text="@string/launcher_customize" android:onClick="launch_settings"/>
     <TextView style="@style/LauncherLink" android:text="@string/launcher_dictionary_label" android:onClick="launch_dictionaries_activity"/>
-    <TextView style="@style/LauncherBody" android:text="@string/launcher_dictionary_hint" android:textSize="13sp"/>
+    <TextView style="@style/LauncherBody" android:text="@string/launcher_dictionary_hint" android:textSize="14sp"/>
     <TextView style="@style/LauncherSection" android:layout_marginTop="28dp" android:text="@string/launcher_support_title"/>
-    <TextView style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_sourcecode" android:textSize="13sp"/>
-    <TextView style="@style/LauncherLink" android:text="@string/launcher_repo_url" android:autoLink="web" android:linksClickable="true" android:textSize="13sp"/>
+    <TextView style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_sourcecode" android:textSize="14sp"/>
+    <TextView style="@style/LauncherLink" android:text="@string/launcher_repo_url" android:autoLink="web" android:linksClickable="true" android:textSize="14sp"/>
   </LinearLayout>
 </ScrollView>
