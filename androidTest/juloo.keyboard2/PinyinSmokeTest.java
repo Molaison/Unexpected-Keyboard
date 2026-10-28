@@ -27,6 +27,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private PinyinTestActivity activity;
   private int checks;
   private boolean benchmark;
+  private boolean uxCapture;
   private boolean voiceLive;
   private boolean voiceFresh;
   private boolean voiceContinuous;
@@ -37,6 +38,7 @@ public final class PinyinSmokeTest extends Instrumentation
   @Override public void onCreate(Bundle arguments)
   {
     super.onCreate(arguments);
+    uxCapture = arguments != null && "true".equals(arguments.getString("ux_capture"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
@@ -100,6 +102,13 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         microphoneInput();
         result.putString("stream", "DOUBAO_MICROPHONE_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (uxCapture)
+      {
+        captureVisualStates();
+        result.putString("stream", "UX_CAPTURE_OK\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -281,6 +290,51 @@ public final class PinyinSmokeTest extends Instrumentation
       result.putString("shortMsg", error.toString());
       finish(Activity.RESULT_CANCELED, result);
     }
+  }
+
+  /** Deterministic real-window screenshots. Run only on a disposable emulator. */
+  private void captureVisualStates() throws Exception
+  {
+    android.content.SharedPreferences prefs = DirectBootAwarePreferences.get_shared_preferences(getTargetContext());
+    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply(); return null; });
+    focus(activity.plain); clear(); chinese(true); nineKey(false);
+    screenshot("keyboard-idle.png");
+    type("nihao"); screenshot("keyboard-light.png");
+    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    screenshot("candidates-expanded.png");
+    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    key("space"); text(activity.plain, "你好");
+    clear(); nineKey(true); nineKeys("64426"); screenshot("nine-key-light.png");
+    onMain(() -> { prefs.edit().putString("theme", "soft_dark").apply(); return null; });
+    focus(activity.plain); clear(); nineKeys("64426"); screenshot("nine-key-dark.png");
+    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply(); return null; });
+    focus(activity.plain); clear(); nineKey(false);
+    ClipboardHistoryService service = onMain(() -> ClipboardHistoryService.get_service(getTargetContext()));
+    onMain(() -> { ClipboardHistoryService.set_history_enabled(true); service.clear_history_and_current();
+      getTargetContext().getSharedPreferences("pinned_clipboards", 0).edit().clear().commit(); return null; });
+    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard))));
+    await("clipboard capture", () -> clipboard() != null && clipboard().isShown());
+    screenshot("clipboard-empty.png");
+    onMain(() -> { service.add_clip("The meeting has moved to 3:30 PM. I will send the notes afterwards.");
+      service.add_clip("本周设计评审\n请复核候选词与键盘布局。");
+      service.add_clip("Could you send me the updated version? Thank you!"); return null; });
+    screenshot("clipboard-light.png");
+    tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    onMain(() -> { prefs.edit().putString("theme", "soft_dark").apply(); return null; });
+    focus(activity.plain);
+    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard))));
+    await("dark clipboard capture", () -> clipboard() != null && clipboard().isShown());
+    screenshot("clipboard-dark.png");
+    tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply();
+      getTargetContext().getSharedPreferences("emoji_last_use", 0).edit().clear().commit(); return null; });
+    focus(activity.plain);
+    onMain(() -> { Config.globalConfig().handler.key_up(KeyValue.getKeyByName("switch_emoji"), Pointers.Modifiers.EMPTY); return null; });
+    screenshot("emoji.png");
+    onMain(() -> { Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
+      ViewGroup pane = (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
+      ((EmojiGridView)pane.findViewById(R.id.emoji_grid)).setEmojiGroup(EmojiGridView.GROUP_LAST_USE); return null; });
+    screenshot("emoji-empty.png");
   }
 
   /** Exercise the production handler with real touches and editor state. The
@@ -686,7 +740,8 @@ public final class PinyinSmokeTest extends Instrumentation
     if(onMain(() -> service.current_text()!=null)) throw new AssertionError("Explicit delete left the current clip visible");
     tap(onMain(() -> (View)field(clipboard(),"undoButton")));
     if(!onMain(() -> service.clear_expired_and_get_history().contains("A plain current clip"))) throw new AssertionError("Undo failed for recent clip");
-    tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_clear))));
+    tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_clipboard_options))));
+    menuText(getTargetContext().getString(R.string.ux_clear));
     menuText(getTargetContext().getString(R.string.ux_clear));
     if(!onMain(() -> service.clear_expired_and_get_history().isEmpty())) throw new AssertionError("Clear did not clear history");
     if(!onMain(() -> ((java.util.List<?>)field(clipboard(),"pins")).contains("A plain current clip"))) throw new AssertionError("Clear erased a pin");

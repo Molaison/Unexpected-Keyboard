@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="ux_candidate_spellings">读音 ▾</string>
+  <string name="ux_candidate_spellings_description">选择拼音读音</string>
+  <string name="ux_candidate_layout_nine">9键</string>
+  <string name="ux_candidate_layout_full">26键</string>
+  <string name="ux_candidate_switch_full">切换为中文26键</string>
+  <string name="ux_candidate_switch_nine">切换为中文9键</string>
+  <string name="ux_candidate_collapse">收起候选词</string>
+  <string name="ux_clipboard_options">剪贴板选项</string>
+  <string name="ux_clipboard_history_on">记录已开启 · 仅存于本机</string>
+  <string name="ux_clipboard_history_off">记录已关闭 · 仅显示当前内容</string>
+  <string name="ux_clipboard_remember">记录最近复制的内容</string>
+</resources>

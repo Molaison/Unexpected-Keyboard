@@ -162,7 +162,30 @@
     <item name="android:padding">8dp</item>
     <item name="android:scaleType">fitCenter</item>
   </style>
-  <style name="appTheme" parent="@android:style/Theme.DeviceDefault.DayNight"/>
+  <style name="appTheme" parent="@android:style/Theme.DeviceDefault.DayNight">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:colorAccent">@color/app_accent</item>
+    <item name="android:windowBackground">@color/app_canvas</item>
+    <item name="android:colorBackground">@color/app_canvas</item>
+    <item name="android:textColorPrimary">@color/app_text</item>
+    <item name="android:textColorSecondary">@color/app_secondary</item>
+    <item name="android:colorControlNormal">@color/app_secondary</item>
+    <item name="android:statusBarColor">@color/app_canvas</item>
+    <item name="android:navigationBarColor">@color/app_canvas</item>
+    <item name="android:windowLightStatusBar">@bool/app_light_bars</item>
+    <item name="android:windowLightNavigationBar">@bool/app_light_bars</item>
+    <item name="android:actionBarStyle">@style/appActionBar</item>
+  </style>
+  <style name="appActionBar" parent="@android:style/Widget.Material.ActionBar">
+    <item name="android:background">@color/app_canvas</item>
+    <item name="android:elevation">0dp</item>
+    <item name="android:titleTextStyle">@style/appActionBarTitle</item>
+  </style>
+  <style name="appActionBarTitle" parent="@android:style/TextAppearance.Material.Widget.ActionBar.Title">
+    <item name="android:textColor">@color/app_text</item>
+    <item name="android:textSize">20sp</item>
+    <item name="android:fontFamily">sans-serif-medium</item>
+  </style>
   <style name="settingsTheme" parent="appTheme">
     <!-- Setting this in the activity theme so it propagate to nested
          preference screens. -->

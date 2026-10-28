@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="ux_candidate_spellings">Pinyin ▾</string>
+  <string name="ux_candidate_spellings_description">Choose pinyin spelling</string>
+  <string name="ux_candidate_layout_nine">9-key</string>
+  <string name="ux_candidate_layout_full">26-key</string>
+  <string name="ux_candidate_switch_full">Switch to 26-key Chinese layout</string>
+  <string name="ux_candidate_switch_nine">Switch to 9-key Chinese layout</string>
+  <string name="ux_candidate_collapse">Collapse candidates</string>
+  <string name="ux_clipboard_options">Clipboard options</string>
+  <string name="ux_clipboard_history_on">History on · on this device</string>
+  <string name="ux_clipboard_history_off">History off · current clip only</string>
+  <string name="ux_clipboard_remember">Remember recent clips</string>
+</resources>

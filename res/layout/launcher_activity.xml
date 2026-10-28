@@ -1,25 +1,51 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:fitsSystemWindows="true">
-  <LinearLayout android:layout_width="fill_parent" android:layout_height="wrap_content" android:orientation="vertical">
-    <TextView style="@style/paragraph" android:text="@string/launcher_description"/>
-    <Button style="@style/paragraph" android:text="@string/launcher_button_imesettings" android:onClick="launch_imesettings" android:layout_width="wrap_content"/>
-    <Button style="@style/paragraph" android:text="@string/launcher_button_imepicker" android:onClick="launch_imepicker" android:layout_width="wrap_content"/>
-    <Button style="@style/paragraph" android:text="@string/launcher_button_dictionaries" android:onClick="launch_dictionaries_activity" android:layout_width="wrap_content"/>
-    <LinearLayout style="@style/anim_box">
-      <ImageView style="@style/anim" android:id="@+id/launcher_anim_swipe" android:background="@drawable/doc_key_u" android:src="@drawable/doc_anim_swipe"/>
-      <TextView style="@style/anim_text" android:text="@string/launcher_anim_7"/>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/launcher_scroll" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/app_canvas" android:fillViewport="true" android:fitsSystemWindows="true" android:clipToPadding="false">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
+      android:padding="24dp" android:focusable="true" android:focusableInTouchMode="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+      <TextView style="@style/LauncherTitle" android:layout_width="0dp" android:layout_weight="1" android:text="@string/app_name" android:textSize="23sp"/>
+      <TextView style="@style/LauncherLink" android:layout_width="wrap_content" android:minWidth="72dp" android:gravity="center" android:text="@string/launcher_settings" android:onClick="launch_settings"/>
     </LinearLayout>
-    <LinearLayout style="@style/anim_box">
-      <ImageView style="@style/anim" android:id="@+id/launcher_anim_circle" android:background="@drawable/doc_key_g" android:src="@drawable/doc_anim_circle"/>
-      <TextView style="@style/anim_text" android:text="@string/launcher_anim_g"/>
+    <TextView style="@style/LauncherBody" android:text="@string/launcher_tagline" android:layout_marginBottom="24dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
+        android:background="@drawable/launcher_card" android:padding="20dp">
+      <TextView android:id="@+id/launcher_setup_step" style="@style/LauncherBody" android:text="@string/launcher_step_enable" android:textColor="@color/app_accent_text" android:textSize="12sp" android:fontFamily="sans-serif-medium"/>
+      <TextView android:id="@+id/launcher_setup_title" style="@style/LauncherSection" android:layout_marginTop="8dp" android:text="@string/launcher_status_enable" android:textSize="22sp"/>
+      <TextView android:id="@+id/launcher_setup_detail" style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_status_enable_detail"/>
+      <Button android:id="@+id/launcher_setup_action" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="52dp"
+          android:layout_marginTop="16dp" android:padding="12dp" android:background="@drawable/launcher_primary" android:textColor="@color/app_on_accent"
+          android:textAllCaps="false" android:textSize="16sp" android:fontFamily="sans-serif-medium" android:text="@string/launcher_button_imesettings" android:onClick="continue_setup"/>
     </LinearLayout>
-    <LinearLayout style="@style/anim_box">
-      <ImageView style="@style/anim" android:id="@+id/launcher_anim_round_trip" android:background="@drawable/doc_key_g" android:src="@drawable/doc_anim_round_trip"/>
-      <TextView style="@style/anim_text" android:text="@string/launcher_anim_dash"/>
+    <TextView android:id="@+id/launcher_tryhere_text" style="@style/LauncherSection" android:layout_marginTop="28dp" android:text="@string/launcher_try_title"/>
+    <EditText android:id="@+id/launcher_tryhere_area" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="80dp"
+        android:layout_marginTop="12dp" android:background="@drawable/launcher_card" android:padding="16dp" android:gravity="top|start"
+        android:textColor="@color/app_text" android:textColorHint="@color/app_secondary" android:textSize="17sp" android:inputType="textCapSentences|textMultiLine"
+        android:hint="@string/launcher_try_hint" android:importantForAutofill="no"/>
+    <TextView style="@style/LauncherSection" android:layout_marginTop="28dp" android:text="@string/launcher_tips_title"/>
+    <TextView style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_tips_body"/>
+    <TextView android:id="@+id/launcher_gesture_toggle" style="@style/LauncherLink" android:text="@string/launcher_show_gestures" android:onClick="toggle_gestures"/>
+    <LinearLayout android:id="@+id/launcher_gestures" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+      <LinearLayout style="@style/LauncherGestureRow">
+        <ImageView android:id="@+id/launcher_anim_swipe" android:layout_width="96dp" android:layout_height="96dp" android:background="@drawable/doc_key_u" android:src="@drawable/doc_anim_swipe" android:importantForAccessibility="no"/>
+        <TextView style="@style/LauncherBody" android:layout_width="0dp" android:layout_weight="1" android:layout_marginStart="16dp" android:text="@string/launcher_gesture_swipe"/>
+      </LinearLayout>
+      <LinearLayout style="@style/LauncherGestureRow">
+        <ImageView android:id="@+id/launcher_anim_circle" android:layout_width="96dp" android:layout_height="96dp" android:background="@drawable/doc_key_g" android:src="@drawable/doc_anim_circle" android:importantForAccessibility="no"/>
+        <TextView style="@style/LauncherBody" android:layout_width="0dp" android:layout_weight="1" android:layout_marginStart="16dp" android:text="@string/launcher_gesture_circle"/>
+      </LinearLayout>
+      <LinearLayout style="@style/LauncherGestureRow">
+        <ImageView android:id="@+id/launcher_anim_round_trip" android:layout_width="96dp" android:layout_height="96dp" android:background="@drawable/doc_key_g" android:src="@drawable/doc_anim_round_trip" android:importantForAccessibility="no"/>
+        <TextView style="@style/LauncherBody" android:layout_width="0dp" android:layout_weight="1" android:layout_marginStart="16dp" android:text="@string/launcher_gesture_return"/>
+      </LinearLayout>
     </LinearLayout>
-    <TextView android:id="@+id/launcher_tryhere_text" style="@style/paragraph" android:text="@string/launcher_tryhere"/>
-    <EditText android:id="@+id/launcher_tryhere_area" style="@style/paragraph" android:inputType="text" android:hint="@string/launcher_tryhere_hint" android:importantForAutofill="no"/>
-    <TextView style="@style/paragraph" android:text="@string/launcher_sourcecode"/>
-    <TextView style="@style/paragraph" android:text="@string/launcher_repo_url" android:autoLink="web" android:linksClickable="true"/>
+    <TextView style="@style/LauncherSection" android:layout_marginTop="20dp" android:text="@string/launcher_more_title"/>
+    <TextView style="@style/LauncherLink" android:text="@string/launcher_customize" android:onClick="launch_settings"/>
+    <TextView style="@style/LauncherLink" android:text="@string/launcher_dictionary_label" android:onClick="launch_dictionaries_activity"/>
+    <TextView style="@style/LauncherBody" android:text="@string/launcher_dictionary_hint" android:textSize="13sp"/>
+    <TextView style="@style/LauncherSection" android:layout_marginTop="28dp" android:text="@string/launcher_support_title"/>
+    <TextView style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_sourcecode" android:textSize="13sp"/>
+    <TextView style="@style/LauncherLink" android:text="@string/launcher_repo_url" android:autoLink="web" android:linksClickable="true" android:textSize="13sp"/>
   </LinearLayout>
 </ScrollView>

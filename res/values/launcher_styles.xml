@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <style name="LauncherTitle">
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:textColor">@color/app_text</item>
+    <item name="android:textSize">28sp</item>
+    <item name="android:fontFamily">sans-serif-medium</item>
+  </style>
+  <style name="LauncherSection">
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:textColor">@color/app_text</item>
+    <item name="android:textSize">18sp</item>
+    <item name="android:fontFamily">sans-serif-medium</item>
+  </style>
+  <style name="LauncherBody">
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:textColor">@color/app_secondary</item>
+    <item name="android:textSize">15sp</item>
+    <item name="android:lineSpacingExtra">3dp</item>
+  </style>
+  <style name="LauncherLink">
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:minHeight">48dp</item>
+    <item name="android:gravity">center_vertical</item>
+    <item name="android:background">?android:attr/selectableItemBackground</item>
+    <item name="android:textColor">@color/app_accent_text</item>
+    <item name="android:textSize">15sp</item>
+    <item name="android:fontFamily">sans-serif-medium</item>
+    <item name="android:paddingVertical">10dp</item>
+  </style>
+  <style name="LauncherGestureRow">
+    <item name="android:layout_width">match_parent</item>
+    <item name="android:layout_height">wrap_content</item>
+    <item name="android:orientation">horizontal</item>
+    <item name="android:gravity">center_vertical</item>
+    <item name="android:paddingVertical">8dp</item>
+  </style>
+</resources>
