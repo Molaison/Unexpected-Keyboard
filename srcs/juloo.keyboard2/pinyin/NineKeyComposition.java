@@ -434,7 +434,7 @@ public final class NineKeyComposition implements ChineseComposition
 
   private void addSequentialSentence(String raw, Map<String, Candidate> unique)
   {
-    Candidate fallback = null, indexed = null;
+    Candidate fallback = null, indexed = null, exactContinuation = null;
     String indexedClause = null;
     int readings = 0;
     for (Candidate anchor : unique.values())
@@ -454,7 +454,15 @@ public final class NineKeyComposition implements ChineseComposition
         if (middle.length() != pivot - 1) continue;
         String clause = (nativeCue ? first : '先') + middle + '再';
         float score = Math.nextUp(anchor.score);
-        if (hasSentencePrefix(clause, score, anchor.text.length())) continue;
+        Candidate conflict = conflictingSentencePrefix(clause, score, anchor.text.length());
+        if (conflict != null)
+        {
+          // Scores from edited key sequences cannot rule out an exact indexed continuation.
+          if (conflict.corrected && exactContinuation == null && anchor == candidates.get(0) && nativeCue
+              && anchor.text.regionMatches(1, middle, 0, middle.length()))
+            exactContinuation = indexedEnding(raw, anchor, syllables, pivot, clause, score);
+          continue;
+        }
         int changes = 0;
         for (int i = 0; i < middle.length(); i++) if (middle.charAt(i) != anchor.text.charAt(i + 1)) changes++;
         String tailReading = syllableReading(syllables, pivot + 1, syllables.length);
@@ -487,16 +495,19 @@ public final class NineKeyComposition implements ChineseComposition
     // Prefer an indexed continuation for the same first clause.
     Candidate alternative = indexed != null && (fallback == null || indexed.score <= fallback.score
         || fallback.text.startsWith(indexedClause)) ? indexed : fallback;
+    if (alternative == null && exactContinuation == null) return;
+    Map<String, Candidate> alternatives = new LinkedHashMap<>();
     if (alternative != null)
     {
-      Map<String, Candidate> alternatives = new LinkedHashMap<>();
       alternatives.put(alternative.text, alternative);
       // Keep a different, previously offered ending for the same first clause.
       if (alternative == indexed && fallback != null && fallback.text.startsWith(indexedClause)
           && !fallback.text.equals(indexed.text) && candidates.size() + 1 < MAX_CANDIDATES)
         alternatives.put(fallback.text, fallback);
-      mergeWordEndings(alternatives);
     }
+    if (exactContinuation != null && candidates.size() + alternatives.size() < MAX_CANDIDATES)
+      alternatives.put(exactContinuation.text, exactContinuation);
+    mergeWordEndings(alternatives);
   }
 
   private Candidate indexedEnding(String raw, Candidate anchor, String[] syllables, int pivot,
@@ -515,12 +526,17 @@ public final class NineKeyComposition implements ChineseComposition
     return null;
   }
 
-  private boolean hasSentencePrefix(String prefix, float score, int length)
+  private Candidate conflictingSentencePrefix(String prefix, float score, int length)
   {
+    Candidate corrected = null;
     for (Candidate candidate : candidates)
       if (!candidate.partial && candidate.text.startsWith(prefix)
-          && (candidate.score <= score || candidate.text.length() > length)) return true;
-    return false;
+          && (candidate.score <= score || candidate.text.length() > length))
+      {
+        if (!candidate.corrected) return candidate;
+        corrected = candidate;
+      }
+    return corrected;
   }
 
   private String syllableReading(String[] syllables, int start, int end)
