@@ -16,7 +16,6 @@ import androidx.core.content.ContextCompat;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -399,13 +398,18 @@ public final class DoubaoVoiceInput
     {
       Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
       Throwable problem = null;
+      Capture capture = null;
       try
       {
+        throwIfCancelledOrFailed();
+        if (stopRequested) return;
+        capture = startCapture();
+        throwIfCancelledOrFailed();
         session = asrClient.open(this);
         throwIfCancelledOrFailed();
         session.startSession(contextJson);
         throwIfCancelledOrFailed();
-        streamAudio();
+        streamAudio(capture);
         throwIfCancelledOrFailed();
         session.finish();
         boolean receivedFinal = session.awaitSessionFinished(
@@ -419,6 +423,7 @@ public final class DoubaoVoiceInput
       }
       finally
       {
+        problem = stopCapture(capture, problem);
         problem = releaseRecorder(problem);
         DoubaoAsrClient.Session currentSession = session;
         if (currentSession != null)
@@ -442,10 +447,30 @@ public final class DoubaoVoiceInput
         }
         if (!cancelled)
           complete(this, problem);
+        if (problem instanceof InterruptedException)
+          Thread.currentThread().interrupt();
       }
     }
 
-    private void streamAudio() throws Exception
+    private final class Capture
+    {
+      final ArrayBlockingQueue<short[]> frames = new ArrayBlockingQueue<>(3000);
+      final AtomicReference<IOException> failure = new AtomicReference<>();
+      final Thread thread;
+
+      Capture(AudioRecord audioRecord)
+      {
+        thread = new Thread(() -> captureFrames(audioRecord, this), "doubao-microphone");
+      }
+
+      void throwIfFailed() throws IOException
+      {
+        IOException error = failure.get();
+        if (error != null) throw error;
+      }
+    }
+
+    private Capture startCapture() throws IOException
     {
       if (ContextCompat.checkSelfPermission(context,
           Manifest.permission.RECORD_AUDIO)
@@ -466,100 +491,81 @@ public final class DoubaoVoiceInput
       if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED)
         throw new IOException("AudioRecord initialization failed");
 
+      audioRecord.startRecording();
+      if (audioRecord.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING)
+        throw new IOException("AudioRecord did not enter recording state");
+      Capture capture = new Capture(audioRecord);
+      capture.thread.start();
+      return capture;
+    }
+
+    private void captureFrames(AudioRecord audioRecord, Capture capture)
+    {
+      try
+      {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
+        while (!stopRequested && !cancelled)
+        {
+          short[] samples = new short[SAMPLES_PER_FRAME];
+          int count = readFrame(audioRecord, samples);
+          if (count > 0 && !capture.frames.offer(samples))
+            throw new IOException("Voice processing fell more than 60 seconds behind microphone capture");
+          if (count < SAMPLES_PER_FRAME) break;
+        }
+      }
+      catch (IOException | RuntimeException error)
+      {
+        capture.failure.set(new IOException("Microphone capture failed", error));
+      }
+      finally
+      {
+        try { audioRecord.stop(); }
+        catch (RuntimeException error)
+        {
+          IOException failure = new IOException("Could not stop microphone capture", error);
+          if (!capture.failure.compareAndSet(null, failure)) capture.failure.get().addSuppressed(error);
+        }
+      }
+    }
+
+    private void streamAudio(Capture capture) throws Exception
+    {
+      mainHandler.post(() -> {
+        if (isCurrent(this) && !cancelled && !stopRequested)
+          host.onVoiceStateChanged(State.LISTENING);
+      });
       try (OpusFrameEncoder encoder = new OpusFrameEncoder())
       {
         long startedAtMs = System.currentTimeMillis();
+        long startedAtNs = System.nanoTime();
         long frameIndex = 0;
-
-        audioRecord.startRecording();
-        if (audioRecord.getRecordingState()
-            != AudioRecord.RECORDSTATE_RECORDING)
-          throw new IOException("AudioRecord did not enter recording state");
-
-        // Capture independently so credential recovery cannot lose the words
-        // spoken while registration or the new WebSocket handshake is running.
-        ArrayBlockingQueue<short[]> capturedFrames = new ArrayBlockingQueue<>(3000);
-        CountDownLatch captureFinished = new CountDownLatch(1);
-        AtomicReference<IOException> captureFailure = new AtomicReference<>();
-        Thread capture = new Thread(() -> {
-          Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
-          try
-          {
-            while (!stopRequested && !cancelled)
-            {
-              short[] samples = new short[SAMPLES_PER_FRAME];
-              int count = readFrame(audioRecord, samples);
-              if (count > 0 && !capturedFrames.offer(samples))
-                throw new IOException("Voice processing fell more than 60 seconds behind microphone capture");
-              if (count < SAMPLES_PER_FRAME) break;
-            }
-          }
-          catch (IOException | RuntimeException error)
-          {
-            captureFailure.set(new IOException("Microphone capture failed", error));
-          }
-          finally
-          {
-            try { audioRecord.stop(); }
-            catch (RuntimeException error)
-            {
-              IOException failure = new IOException("Could not stop microphone capture", error);
-              if (!captureFailure.compareAndSet(null, failure)) captureFailure.get().addSuppressed(error);
-            }
-            captureFinished.countDown();
-          }
-        }, "doubao-microphone");
-        capture.start();
-        mainHandler.post(() -> {
-          if (isCurrent(this) && !cancelled && !stopRequested)
-            host.onVoiceStateChanged(State.LISTENING);
-        });
-
-        Exception streamingProblem = null;
-        try
+        while (!cancelled && !session.isFinished())
         {
-          while (!cancelled && !session.isFinished())
+          throwIfCancelledOrFailed();
+          capture.throwIfFailed();
+          short[] pcmFrame = capture.frames.poll(100, TimeUnit.MILLISECONDS);
+          if (pcmFrame == null)
           {
-            throwIfCancelledOrFailed();
-            if (captureFailure.get() != null) throw captureFailure.get();
-            short[] pcmFrame = capturedFrames.poll(100, TimeUnit.MILLISECONDS);
-            if (pcmFrame == null)
-            {
-              if (captureFinished.getCount() == 0) break;
-              continue;
-            }
-            byte[] opus = encoder.encode(pcmFrame);
-            int frameState = frameIndex == 0
-                ? DoubaoProtocol.FRAME_FIRST : DoubaoProtocol.FRAME_MIDDLE;
-            session.sendAudio(opus, frameState, startedAtMs + frameIndex * FRAME_DURATION_MS);
-            frameIndex++;
-            audioFramesSent = frameIndex;
-            if (frameIndex == 1 || frameIndex % 50 == 0)
-              Log.i(TAG, "audio_frames_sent=" + frameIndex);
+            if (!capture.thread.isAlive() && capture.frames.isEmpty()) break;
+            continue;
           }
-        }
-        catch (Exception error)
-        {
-          streamingProblem = error;
-          throw error;
-        }
-        finally
-        {
-          stopRequested = true;
-          try
-          {
-            capture.join(2000);
-            if (capture.isAlive()) throw new IOException("Microphone capture did not stop");
-          }
-          catch (IOException | InterruptedException error)
-          {
-            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
-            if (streamingProblem != null) streamingProblem.addSuppressed(error);
-            else throw error;
-          }
-        }
-        if (captureFailure.get() != null) throw captureFailure.get();
 
+          // Frames recorded during the handshake must use the normal audio cadence.
+          long elapsedMs = frameIndex * FRAME_DURATION_MS;
+          long waitNs = startedAtNs + TimeUnit.MILLISECONDS.toNanos(elapsedMs) - System.nanoTime();
+          if (waitNs > 0) TimeUnit.NANOSECONDS.sleep(waitNs);
+          throwIfCancelledOrFailed();
+          if (session.isFinished()) break;
+          byte[] opus = encoder.encode(pcmFrame);
+          int frameState = frameIndex == 0
+              ? DoubaoProtocol.FRAME_FIRST : DoubaoProtocol.FRAME_MIDDLE;
+          session.sendAudio(opus, frameState, startedAtMs + elapsedMs);
+          frameIndex++;
+          audioFramesSent = frameIndex;
+          if (frameIndex == 1 || frameIndex % 50 == 0)
+            Log.i(TAG, "audio_frames_sent=" + frameIndex);
+        }
+        capture.throwIfFailed();
         if (!cancelled && !session.isFinished())
         {
           byte[] finalOpus = encoder.encode(new short[SAMPLES_PER_FRAME]);
@@ -570,6 +576,24 @@ public final class DoubaoVoiceInput
           Log.i(TAG, "audio_last_sent frames=" + frameIndex);
         }
       }
+    }
+
+    private Throwable stopCapture(Capture capture, Throwable problem)
+    {
+      stopRequested = true;
+      if (capture == null) return problem;
+      try
+      {
+        capture.thread.join(2000);
+        if (capture.thread.isAlive()) throw new IOException("Microphone capture did not stop");
+      }
+      catch (IOException | InterruptedException error)
+      {
+        if (problem == null) return error;
+        problem.addSuppressed(error);
+        if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+      }
+      return problem;
     }
 
     private int readFrame(AudioRecord audioRecord, short[] pcmFrame)

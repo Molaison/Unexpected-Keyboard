@@ -1724,6 +1724,11 @@ public final class PinyinSmokeTest extends Instrumentation
       cancelMicrophoneInput();
       return;
     }
+    if ("connecting_stop".equals(voiceMicrophoneCase) || "connecting_cancel".equals(voiceMicrophoneCase))
+    {
+      checkVoiceWhileConnecting("connecting_cancel".equals(voiceMicrophoneCase));
+      return;
+    }
     if (!"all".equals(voiceMicrophoneCase))
       throw new IllegalArgumentException("Unknown microphone case: " + voiceMicrophoneCase);
     clear();
@@ -1776,6 +1781,52 @@ public final class PinyinSmokeTest extends Instrumentation
     await("cancelled recorder release", () -> field(cancelled, "recorder") == null);
     text(activity.plain, "你好第一句。第二句。a");
     passed("manual pinyin input cancels microphone capture and keeps the editor text");
+  }
+
+  /** The dedicated emulator must delay ASR traffic beyond the recording window. */
+  private void checkVoiceWhileConnecting(boolean cancel) throws Exception
+  {
+    clear();
+    key("voice_typing");
+    Object run = onMain(() -> field(voice(), "activeRun"));
+    if (run == null) throw new AssertionError("Voice did not start");
+    long stopAt = SystemClock.elapsedRealtime() + 700;
+    boolean recording = false;
+    while (SystemClock.elapsedRealtime() < stopAt)
+    {
+      android.media.AudioRecord microphone = (android.media.AudioRecord)field(run, "recorder");
+      if (microphone != null && microphone.getRecordingState() == android.media.AudioRecord.RECORDSTATE_RECORDING)
+        recording = true;
+      SystemClock.sleep(20);
+    }
+    if (cancel) type("a");
+    else key("voice_typing");
+    long framesAtStop = (Long)field(run, "audioFramesSent");
+    if (!(Boolean)field(run, "stopRequested") || framesAtStop != 0)
+      throw new AssertionError("ASR was already sending audio at stop, frames=" + framesAtStop);
+    await("release microphone after closing the early recording",
+        () -> !voice().isActive() && field(run, "recorder") == null);
+    long frames = (Long)field(run, "audioFramesSent");
+    Bundle status = new Bundle();
+    status.putString("stream", (cancel ? "EARLY_VOICE_CANCEL" : "EARLY_VOICE_STOP")
+        + " recording_before_stop=" + recording
+        + " frames_at_stop=" + framesAtStop + " frames_after_session=" + frames + "\n");
+    sendStatus(0, status);
+    if (cancel)
+    {
+      text(activity.plain, "a");
+      if (!recording || frames != 0)
+        throw new AssertionError("Cancellation did not discard the early recording");
+      passed("manual input cancels the connecting microphone and discards its buffered audio");
+    }
+    else
+    {
+      if (!recording)
+        throw new AssertionError("Recording started too late to preserve the utterance");
+      if (frames < 3)
+        throw new AssertionError("The buffered recording did not reach ASR");
+      passed("recording begins while connecting and early stop still sends captured audio");
+    }
   }
 
   private Object awaitRecording() throws Exception
