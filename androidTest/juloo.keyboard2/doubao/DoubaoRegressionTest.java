@@ -667,6 +667,32 @@ public final class DoubaoRegressionTest
     return DoubaoProtocol.parseResponse(packet("", 20000000, "OK", json));
   }
 
+  public static void replayBusyService(DoubaoVoiceInput voice) throws Exception
+  {
+    try (Transport transport = new Transport())
+    {
+      transport.receive("SessionFailed", 40200011, "concurrency quota exceeded: test backend", "");
+      IOException failure = transport.failure.get();
+      if (failure == null || !transport.socket.cancelled)
+        throw new AssertionError("Quota rejection did not terminate the transport");
+      Field host = DoubaoVoiceInput.class.getDeclaredField("host");
+      host.setAccessible(true);
+      InputConnection editor = ((DoubaoVoiceInput.Host)host.get(voice)).getCurrentInputConnection();
+      if (editor == null) throw new AssertionError("Cannot replay voice without a focused editor");
+      DoubaoVoiceInput.SessionRun run = voice.new SessionRun(editor);
+      set(voice, "activeRun", run);
+      completeVoice(voice, run, failure);
+    }
+  }
+
+  private static void completeVoice(DoubaoVoiceInput voice, DoubaoVoiceInput.SessionRun run,
+      Throwable failure) throws Exception
+  {
+    Method complete = DoubaoVoiceInput.class.getDeclaredMethod("complete", DoubaoVoiceInput.SessionRun.class, Throwable.class);
+    complete.setAccessible(true);
+    complete.invoke(voice, run, failure);
+  }
+
   /** The same real editor/voice listener used by deterministic and live checks. */
   static final class Editor implements AutoCloseable
   {
@@ -711,9 +737,7 @@ public final class DoubaoRegressionTest
 
     void complete(Throwable problem) throws Exception
     {
-      Method complete = DoubaoVoiceInput.class.getDeclaredMethod("complete", DoubaoVoiceInput.SessionRun.class, Throwable.class);
-      complete.setAccessible(true);
-      complete.invoke(voice, run, problem);
+      completeVoice(voice, run, problem);
       test.waitForIdleSync();
     }
 

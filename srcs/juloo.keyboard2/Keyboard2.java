@@ -815,7 +815,7 @@ public class Keyboard2 extends InputMethodService
     public void onVoiceFailure(String message)
     {
       Toast.makeText(Keyboard2.this,
-          getString(R.string.toast_voice_input_failed, message),
+          getApplicationContext().getString(R.string.toast_voice_input_failed, message),
           Toast.LENGTH_LONG).show();
     }
 

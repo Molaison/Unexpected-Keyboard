@@ -127,6 +127,7 @@
     <string name="toast_voice_permission_granted">已授予麦克风权限</string>
     <string name="toast_voice_permission_denied">语音输入需要麦克风权限</string>
     <string name="toast_voice_input_failed">语音输入失败：%1$s</string>
+    <string name="voice_failure_service_busy">豆包繁忙，请稍后再试。</string>
     <string name="pref_show_number_row_no_number_row">无数字行</string>
     <string name="pref_show_number_row_no_symbols">无符号的数字行</string>
     <string name="pref_show_number_row_symbols">带符号的数字行</string>

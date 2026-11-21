@@ -161,6 +161,7 @@
     <string name="toast_voice_permission_granted" tools:ignore="MissingTranslation">Microphone permission granted</string>
     <string name="toast_voice_permission_denied" tools:ignore="MissingTranslation">Microphone permission is required for voice input</string>
     <string name="toast_voice_input_failed" tools:ignore="MissingTranslation">Voice input failed: %1$s</string>
+    <string name="voice_failure_service_busy" tools:ignore="MissingTranslation">Doubao is busy. Try again shortly.</string>
     <string name="pref_category_clipboard">Clipboard</string>
     <string name="pref_clipboard_history_duration">Clipboard memory duration</string>
     <string name="pref_clipboard_history_duration_1">At most 1 minute</string>

@@ -17,6 +17,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -1710,6 +1711,11 @@ public final class PinyinSmokeTest extends Instrumentation
   /** Real AudioRecord/touches with a silent mic and synthetic ASR sentence replies. */
   private void microphoneInput() throws Exception
   {
+    if ("service_busy".equals(voiceMicrophoneCase))
+    {
+      checkVoiceServiceBusy();
+      return;
+    }
     if (getTargetContext().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
         != android.content.pm.PackageManager.PERMISSION_GRANTED)
       throw new AssertionError("Grant microphone permission before this opt-in test");
@@ -1832,6 +1838,44 @@ public final class PinyinSmokeTest extends Instrumentation
         throw new AssertionError("The buffered recording did not reach ASR");
       passed("recording begins while connecting and early stop still sends captured audio");
     }
+  }
+
+  private void checkVoiceServiceBusy() throws Exception
+  {
+    clear();
+    onMain(() -> {
+      activity.plain.setText("draft");
+      activity.plain.setSelection(activity.plain.length());
+      return null;
+    });
+    idle();
+    AtomicReference<String> message = new AtomicReference<>();
+    String prefix = getTargetContext().getString(R.string.toast_voice_input_failed, "").trim();
+    getUiAutomation().setOnAccessibilityEventListener(event -> {
+      if (event.getEventType() != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) return;
+      for (CharSequence text : event.getText())
+        if (text.toString().startsWith(prefix)) message.set(text.toString());
+    });
+    try
+    {
+      onMain(() -> {
+        juloo.keyboard2.doubao.DoubaoRegressionTest.replayBusyService(voice());
+        return null;
+      });
+      await("service rejection notice", () -> message.get() != null);
+      if (uxCapture) screenshot("voice-service-busy.png");
+      if (onMain(() -> voice().isActive())) throw new AssertionError("Rejected voice session remains active");
+      text(activity.plain, "draft");
+      boolean chinese = "zh".equals(getTargetContext().getResources().getConfiguration().locale.getLanguage());
+      String expected = getTargetContext().getString(R.string.toast_voice_input_failed,
+          chinese ? "豆包繁忙，请稍后再试。" : "Doubao is busy. Try again shortly.");
+      if (!expected.equals(message.get()))
+        throw new AssertionError("Service rejection notice: " + message.get());
+      type("a");
+      text(activity.plain, "drafta");
+      passed("the provider busy notice explains how to retry and leaves the editor usable");
+    }
+    finally { getUiAutomation().setOnAccessibilityEventListener(null); }
   }
 
   /** Run with delayed ASR traffic so the recording prompt precedes transmission. */

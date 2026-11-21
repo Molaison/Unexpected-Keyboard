@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
+import juloo.keyboard2.R;
 
 /** Coordinates microphone capture, streaming ASR, and InputConnection updates. */
 public final class DoubaoVoiceInput
@@ -29,6 +30,7 @@ public final class DoubaoVoiceInput
   private static final int SAMPLES_PER_FRAME = 320;
   private static final int PCM_BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2;
   private static final int FRAME_DURATION_MS = 20;
+  private static final int ASR_CONCURRENCY_LIMIT = 40200011;
   private static final long FINAL_DRAIN_TIMEOUT_MS = 10000;
   private static final long INTERIM_UPDATE_INTERVAL_NS = 150000000L;
 
@@ -362,8 +364,11 @@ public final class DoubaoVoiceInput
       throw new IllegalStateException("Voice input lifecycle must run on main thread");
   }
 
-  private static String failureMessage(Throwable problem)
+  private String failureMessage(Throwable problem)
   {
+    if (problem instanceof DoubaoAsrClient.ServiceException
+        && ((DoubaoAsrClient.ServiceException)problem).statusCode == ASR_CONCURRENCY_LIMIT)
+      return context.getString(R.string.voice_failure_service_busy);
     String message = problem.getMessage();
     if (message == null || message.isEmpty())
       return problem.getClass().getSimpleName();
