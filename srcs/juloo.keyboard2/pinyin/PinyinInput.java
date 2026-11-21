@@ -36,7 +36,7 @@ public final class PinyinInput implements AutoCloseable
   private boolean chinese;
   private boolean inlineComposition;
   private boolean learningEnabled;
-  private int candidateLimit = 32;
+  private int candidateLimit = ChineseComposition.CANDIDATE_PAGE_SIZE;
   private boolean hasMore;
   private String[] predictions = new String[0];
   private final List<String> candidates = new ArrayList<>();
@@ -125,7 +125,7 @@ public final class PinyinInput implements AutoCloseable
     host.beforeManualInput();
     ((NineKeyComposition)composition).constrainSpelling(index);
     updateEditor();
-    candidateLimit = 32;
+    candidateLimit = ChineseComposition.CANDIDATE_PAGE_SIZE;
     publish();
   }
 
@@ -160,7 +160,7 @@ public final class PinyinInput implements AutoCloseable
     if (composition.isFull()) finish();
     predictions = new String[0];
     composition.append(c);
-    candidateLimit = 32;
+    candidateLimit = ChineseComposition.CANDIDATE_PAGE_SIZE;
     updateEditor();
     publish();
     return true;
@@ -251,7 +251,7 @@ public final class PinyinInput implements AutoCloseable
   {
     if (!isComposing()) return false;
     composition.backspace();
-    candidateLimit = 32;
+    candidateLimit = ChineseComposition.CANDIDATE_PAGE_SIZE;
     updateEditor();
     publish();
     return true;
@@ -285,13 +285,13 @@ public final class PinyinInput implements AutoCloseable
     if (!text.isEmpty()) commit(text);
     if (isComposing()) updateEditor();
     else predict(text);
-    candidateLimit = 32;
+    candidateLimit = ChineseComposition.CANDIDATE_PAGE_SIZE;
     publish();
   }
 
   public void showMoreCandidates()
   {
-    candidateLimit += 32;
+    candidateLimit += ChineseComposition.CANDIDATE_PAGE_SIZE;
     publish();
   }
 

@@ -71,6 +71,7 @@ public final class NineKeyComposition implements ChineseComposition
     final float score;
     String display;
     int[] spellingStarts;
+    boolean partial;
     boolean corrected;
     Candidate(String text, Reading reading, int index, float score)
     {
@@ -367,7 +368,7 @@ public final class NineKeyComposition implements ChineseComposition
       for (Path path : paths)
       {
         if (pathCount++ >= CANDIDATE_PATHS) break;
-        int[] starts = addNativeCandidates(unique, new Reading(path.spelling), remaining.length());
+        int[] starts = addNativeCandidates(unique, new Reading(path.spelling), remaining.length(), false);
         if (alternatives.size() < ALTERNATE_PATHS && remaining.length() < PinyinDecoder.MAX_PINYIN_LENGTH)
         {
           String decoded = formatSpelling(path.spelling, starts);
@@ -391,10 +392,7 @@ public final class NineKeyComposition implements ChineseComposition
       }
       int spare = ALTERNATE_PATHS - alternatives.size();
       alternatives.addAll(moreSplits.subList(0, Math.min(spare, moreSplits.size())));
-      for (Reading reading : alternatives) addNativeCandidates(unique, reading, remaining.length());
-      if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
-          && constraint.isEmpty() && !unique.isEmpty())
-        addWordEndings(remaining, unique, seenReadings);
+      for (Reading reading : alternatives) addNativeCandidates(unique, reading, remaining.length(), false);
       for (NineKeyLexicon.Entry e : direct)
       {
         if (unique.containsKey(e.text)) continue; // Prefer native choice/learning when present.
@@ -406,6 +404,9 @@ public final class NineKeyComposition implements ChineseComposition
       candidates.sort(CANDIDATE_ORDER);
       if (constraint.isEmpty() && remaining.length() >= 4)
         addCorrections(remaining, lexicon != null && direct.isEmpty());
+      if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
+          && constraint.isEmpty() && !unique.isEmpty())
+        addWordEndings(remaining, unique, seenReadings);
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
@@ -434,6 +435,7 @@ public final class NineKeyComposition implements ChineseComposition
     // Reuse the cached beam before the ending to recover spellings that were pruned later.
     List<Path> prefixes = searchPaths(raw.substring(0, prefixEnd));
     Set<String> distinct = new HashSet<>();
+    Map<String, Candidate> recovered = new LinkedHashMap<>();
     for (NineKeyLexicon.Entry ending : bestEndings)
     {
       if (!distinct.add(ending.display)) continue;
@@ -442,34 +444,65 @@ public final class NineKeyComposition implements ChineseComposition
         Reading reading = Reading.withWordEnding(prefixes.get(j).spelling, ending);
         if (reading.query.length() <= PinyinDecoder.MAX_PINYIN_LENGTH
             && !seenReadings.contains(reading.spelling) && seenReadings.add(reading.query))
-          addNativeCandidates(unique, reading, raw.length());
+          addNativeCandidates(recovered, reading, raw.length(), true);
       }
       if (distinct.size() >= ENDING_READINGS) break;
     }
+    mergeWordEndings(recovered);
   }
 
-  private int[] addNativeCandidates(Map<String, Candidate> unique, Reading reading, int rawLength)
+  private void mergeWordEndings(Map<String, Candidate> recovered)
+  {
+    for (Candidate candidate : candidates) recovered.remove(candidate.text);
+    if (recovered.isEmpty()) return;
+
+    List<Candidate> firstPage = new ArrayList<>(candidates.subList(0,
+        Math.min(CANDIDATE_PAGE_SIZE, candidates.size())));
+    List<Candidate> ranked = new ArrayList<>(recovered.values());
+    ranked.sort(CANDIDATE_ORDER);
+    int insertion = 0;
+    for (Candidate addition : ranked)
+    {
+      while (insertion < candidates.size()
+          && CANDIDATE_ORDER.compare(candidates.get(insertion), addition) <= 0) insertion++;
+      candidates.add(insertion++, addition);
+    }
+
+    // Full-sentence alternatives must not hide the partial choices already offered.
+    for (int i = 0; i < firstPage.size(); i++)
+    {
+      Candidate previous = firstPage.get(i);
+      if (!previous.partial) continue;
+      int shifted = candidates.indexOf(previous);
+      if (shifted > i) candidates.add(i, candidates.remove(shifted));
+    }
+  }
+
+  private int[] addNativeCandidates(Map<String, Candidate> unique, Reading reading, int rawLength,
+      boolean onlyBestComplete)
   {
     decoder.reset();
     int count = decoder.search(reading.query);
     int[] starts = decoder.getSpellingStarts();
-    for (int i = 0; i < Math.min(count, PER_PATH); i++)
+    for (int i = 0; i < Math.min(count, onlyBestComplete ? 1 : PER_PATH); i++)
     {
       String text = decoder.getCandidate(i);
       if (text.isEmpty() || text.length() >= starts.length) continue;
       int queryEnd = starts[text.length()];
       int consumed = reading.rawEnd(queryEnd);
-      if (consumed <= 0 || consumed > rawLength) continue;
+      if (consumed <= 0 || consumed > rawLength || (onlyBestComplete && consumed != rawLength)) continue;
       int spellingCost = phoneticCost(reading.spelling.substring(0, consumed), false);
       if (spellingCost == IMPOSSIBLE) continue;
       float score = decoder.getCandidateScore(i) / Math.max(1, text.length()) + spellingCost;
       // Fully decoded words/sentences lead; partial choices remain available.
-      if (consumed < rawLength) score += 12000 + (rawLength - consumed) * 100;
+      boolean partial = consumed < rawLength;
+      if (partial) score += 12000 + (rawLength - consumed) * 100;
       Candidate old = unique.get(text);
       if (old != null && old.score <= score) continue;
       Candidate candidate = new Candidate(text, reading, i, score);
       candidate.display = formatSpelling(reading.query, starts);
       candidate.spellingStarts = starts;
+      candidate.partial = partial;
       unique.put(text, candidate);
     }
     return starts;

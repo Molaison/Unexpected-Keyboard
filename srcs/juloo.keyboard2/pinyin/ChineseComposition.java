@@ -3,6 +3,8 @@ package juloo.keyboard2.pinyin;
 /** Editing contract shared by full-pinyin and ambiguous nine-key input. */
 public interface ChineseComposition
 {
+  int CANDIDATE_PAGE_SIZE = 32;
+
   boolean isEmpty();
   boolean isFull();
   String getSpelling();
