@@ -53,6 +53,15 @@ public final class NineKeyLexiconTest
       c.constrainSpelling(c.getSpellings().indexOf("ming"));
       check(c.getComposingText().equals("ming"), "Readings update editor preedit");
       check(c.acceptBest().equals("明"), "Selected reading commits matching Hanzi");
+      List<NineKeyLexicon.Entry> corrections = lex.lookupCorrections("li'5426", 6);
+      check(corrections.stream().anyMatch(e -> e.text.equals("莉莉安")), "Rank corrections before limiting results");
+      for (int i = 1; i < corrections.size(); i++)
+        check(corrections.get(i - 1).frequencyCost <= corrections.get(i).frequencyCost,
+            "Correction results are in frequency order");
+      for (char key : "645426".toCharArray()) c.append(key);
+      int correctedName = rank(c, "莉莉安");
+      check(correctedName >= 0, "The complete corrected name is selectable");
+      check(c.select(correctedName).equals("莉莉安") && c.isEmpty(), "A corrected name consumes the whole input");
       int total=0, oldHits=0, newHits=0;
       for (String row : Files.readAllLines(Paths.get(args[3])))
       {

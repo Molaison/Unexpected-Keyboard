@@ -32,8 +32,15 @@ public final class NineKeyLexicon
   {
     public final String text, spelling, display;
     public final float score;
-    Entry(String text, String spelling, String display, float score)
-    { this.text = text; this.spelling = spelling; this.display = display; this.score = score; }
+    final float frequencyCost;
+    Entry(String text, String spelling, String display, float frequencyCost)
+    {
+      this.text = text;
+      this.spelling = spelling;
+      this.display = display;
+      this.frequencyCost = frequencyCost;
+      this.score = frequencyCost + 800 * text.length();
+    }
   }
 
   private int position(int index) { return data.getInt(8 + index * 4); }
@@ -55,6 +62,16 @@ public final class NineKeyLexicon
   /** Exact numeric spelling lookup, then respect explicit letters/separators. */
   public List<Entry> lookup(String raw, String constraint, int limit)
   {
+    return lookup(raw, constraint, limit, false);
+  }
+
+  List<Entry> lookupCorrections(String raw, int limit)
+  {
+    return lookup(raw, "", limit, true);
+  }
+
+  private List<Entry> lookup(String raw, String constraint, int limit, boolean byFrequency)
+  {
     List<Entry> result = new ArrayList<>();
     if (raw.isEmpty() || limit <= 0) return result;
     StringBuilder key = new StringBuilder();
@@ -74,10 +91,18 @@ public final class NineKeyLexicon
       if (compareKey(mid, digits) < 0) lo = mid + 1;
       else hi = mid;
     }
-    // An equal-key range is already frequency/length ordered by the compiler.
-    for (int i = lo; i < count && result.size() < limit && compareKey(i, digits) == 0; i++)
+    // Only the normal lookup can stop at the compiler's frequency/length order.
+    for (int i = lo; i < count && (byFrequency || result.size() < limit) && compareKey(i, digits) == 0; i++)
     {
       int p = position(i), plen = data.get(p) & 255, tlen = data.get(p + 1) & 255;
+      float frequencyCost = (data.getShort(p + 2) & 65535) / (float)Math.max(1, tlen);
+      int insertion = result.size();
+      if (byFrequency)
+      {
+        if (tlen < 2) continue;
+        while (insertion > 0 && frequencyCost < result.get(insertion - 1).frequencyCost) insertion--;
+        if (insertion >= limit) continue;
+      }
       byte[] bytes = new byte[plen];
       for (int j = 0; j < plen; j++) bytes[j] = data.get(p + 4 + j);
       String display = new String(bytes, StandardCharsets.US_ASCII);
@@ -108,8 +133,8 @@ public final class NineKeyLexicon
       if (!match || !spelling.toString().startsWith(constraint)) continue;
       StringBuilder text = new StringBuilder();
       for (int j = 0; j < tlen; j++) text.append(data.getChar(p + 4 + plen + j * 2));
-      float score = (data.getShort(p + 2) & 65535) / (float)Math.max(1, tlen) + 800 * tlen;
-      result.add(new Entry(text.toString(), spelling.toString(), display, score));
+      result.add(insertion, new Entry(text.toString(), spelling.toString(), display, frequencyCost));
+      if (result.size() > limit) result.remove(limit);
     }
     return result;
   }

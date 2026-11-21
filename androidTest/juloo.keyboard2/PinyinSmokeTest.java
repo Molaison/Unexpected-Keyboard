@@ -1300,7 +1300,7 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     nineKey(true);
     for (String[] example : new String[][] {{"9664486", "中国"}, {"736474", "生日"},
-        {"96249664486", "我爱中国"}})
+        {"96249664486", "我爱中国"}, {"645426", "莉莉安"}})
     {
       clear();
       nineKeys(example[0]);

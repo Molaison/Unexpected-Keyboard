@@ -425,9 +425,8 @@ public final class NineKeyComposition implements ChineseComposition
     Map<String, Candidate> corrected = new LinkedHashMap<>();
     if (lexicon != null)
       for (Edit edit : edits)
-        for (NineKeyLexicon.Entry entry : lexicon.lookup(edit.replace(remaining), "", 6))
-          addCorrection(corrected, entry.text, entry.spelling, entry.display,
-              entry.score - 800 * entry.text.length());
+        for (NineKeyLexicon.Entry entry : lexicon.lookupCorrections(edit.replace(remaining), 6))
+          addCorrection(corrected, entry.text, entry.spelling, entry.display, entry.frequencyCost);
     if (corrected.isEmpty()) addCorrectedSentences(corrected, edits);
     List<Candidate> ranked = new ArrayList<>(corrected.values());
     ranked.sort(Comparator.comparingDouble((Candidate c) -> c.score).thenComparing(c -> c.text));
