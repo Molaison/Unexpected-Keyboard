@@ -121,11 +121,15 @@ public final class PinyinSmokeTest extends Instrumentation
           && findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
         throw new AssertionError("Clipboard toolbar is not discoverable while idle");
       int idlePinyinHeight = onMain(() -> candidatesView().getHeight());
+      float idleKeyY = onMain(() -> keyPoint("n", false)[1]);
       type("nihao");
       int composingPinyinHeight = onMain(() -> candidatesView().getHeight());
       if (composingPinyinHeight != idlePinyinHeight)
         throw new AssertionError("Pinyin strip height changed while composing: "
             + idlePinyinHeight + " -> " + composingPinyinHeight);
+      if (Math.abs(onMain(() -> keyPoint("n", false)[1]) - idleKeyY) > 1f
+          || !onMain(() -> activity.plain.hasFocus()))
+        throw new AssertionError("Composition moved the typing target or stole editor focus");
       if (composingPinyinHeight > Math.round(
             96 * getTargetContext().getResources().getDisplayMetrics().density))
         throw new AssertionError("Chinese preedit and candidates exceed two separate rows");
@@ -281,6 +285,7 @@ public final class PinyinSmokeTest extends Instrumentation
       text(activity.plain, "你好中国");
       passed("candidate UI screenshot and final commit");
       nineKeyChecks();
+      numericLayerChecks();
       clipboardChecks();
       emojiChecks(false);
       narrowLayoutChecks();
@@ -357,7 +362,12 @@ public final class PinyinSmokeTest extends Instrumentation
     });
     ViewGroup emojiPane = onMain(() -> emojiPane());
     if (capture) screenshot("emoji.png");
-    tap(onMain(() -> findDescription(emojiPane, getTargetContext().getString(R.string.emoji_recent_category))));
+    String recentLabel = emojiPane.getContext().getString(R.string.emoji_recent_category);
+    View recent = onMain(() -> findDescription(emojiPane, recentLabel));
+    if (recent == null || (android.os.Build.VERSION.SDK_INT >= 26
+        && !android.text.TextUtils.equals(recentLabel, onMain(() -> recent.getTooltipText()))))
+      throw new AssertionError("The recent emoji icon needs a localized tooltip");
+    tap(recent);
     await("recent emoji empty state", () -> emojiPane.findViewById(R.id.emoji_empty_state).isShown());
     if (capture) screenshot("emoji-empty.png");
     tap(onMain(() -> emojiPane.findViewById(R.id.emoji_browse)));
@@ -712,9 +722,14 @@ public final class PinyinSmokeTest extends Instrumentation
     if (!readings.get(0).isVisibleToUser() || readingBounds.isEmpty())
       throw new AssertionError("The ming reading is not visible");
     down = SystemClock.uptimeMillis();
+    int pickerWindowId = root.getWindowId();
     injectTouch(down, MotionEvent.ACTION_DOWN, readingBounds.exactCenterX(), readingBounds.exactCenterY());
     injectTouch(down, MotionEvent.ACTION_UP, readingBounds.exactCenterX(), readingBounds.exactCenterY());
-    idle();
+    // The selected reading can still be visible in preedit after the menu closes.
+    await("reading picker window dismissed", () -> {
+      android.view.accessibility.AccessibilityNodeInfo active = getUiAutomation().getRootInActiveWindow();
+      return active != null && active.getWindowId() != pickerWindowId;
+    });
     key("space");
     text(activity.plain, "明");
     if (onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
@@ -789,6 +804,23 @@ public final class PinyinSmokeTest extends Instrumentation
     { if(bitmap==null || !bitmap.compress(Bitmap.CompressFormat.PNG,100,output)) throw new AssertionError("Screenshot failed"); }
   }
 
+  private void numericLayerChecks() throws Exception
+  {
+    clear();
+    nineKey(false);
+    // Ctrl's southeast corner opens numbers. The numeric page exposes symbols.
+    float[] ctrl = onMain(() -> keyPoint("ctrl", false));
+    swipe(ctrl[0], ctrl[1], 2 * ctrl[0] - ctrl[2], 2 * ctrl[1] - ctrl[3]);
+    key("7");
+    text(activity.plain, "7");
+    key("switch_greekmath");
+    key("switch_numeric");
+    key("switch_text");
+    key("n");
+    text(activity.plain, "7n");
+    passed("Ctrl corner opens numbers, symbols and return to the same editor through real touches");
+  }
+
   private void clipboardChecks() throws Exception
   {
     clear();
@@ -822,6 +854,15 @@ public final class PinyinSmokeTest extends Instrumentation
     tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
     await("clipboard panel", () -> clipboard()!=null && clipboard().isShown());
     await("clipboard preserves its requested height", () -> clipboard().getHeight() == clipboardHeight);
+    String optionsLabel = onMain(() -> clipboard().getContext().getString(R.string.ux_clipboard_options));
+    String rememberLabel = onMain(() -> clipboard().getContext().getString(R.string.ux_clipboard_remember));
+    View options = onMain(() -> findDescription(clipboard(), optionsLabel));
+    tap(options);
+    menuText(rememberLabel);
+    await("clipboard recording enabled from menu", () -> Config.globalConfig().clipboard_history_enabled);
+    tap(options);
+    menuText(rememberLabel);
+    await("clipboard recording disabled from menu", () -> !Config.globalConfig().clipboard_history_enabled);
     tap(onMain(() -> findText(clipboard(),"A plain current clip")));
     text(activity.plain,"A plain current clip");
     if(!onMain(() -> clipboard().isShown())) throw new AssertionError("Pasting unexpectedly closed the clipboard panel");
@@ -1125,6 +1166,7 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void tap(View view) throws Exception
   {
+    if (view == null) throw new AssertionError("The requested touch target was not found");
     float[] point = onMain(() -> {
       Rect bounds = new Rect();
       if (!view.getGlobalVisibleRect(bounds)) throw new AssertionError("View is not visible");

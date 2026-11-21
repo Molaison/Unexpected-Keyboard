@@ -34,6 +34,7 @@ public class EmojiGroupButtonsBar extends LinearLayout
     button.setTextSize(24); // Emoji glyphs are distinct from UI text roles.
     button.setPadding(0, 0, 0, 0);
     button.setContentDescription(description);
+    if (android.os.Build.VERSION.SDK_INT >= 26) button.setTooltipText(description);
     button.setTag(id);
     addView(button, new LayoutParams(_ui.dp(48), _ui.dp(48)));
   }
