@@ -150,16 +150,22 @@ public final class DoubaoVoiceInput
     {
       run.pendingRetractionUpdates--;
       // A retraction can be reported after a later write restored the span.
-      // If we can inspect the selection, don't mask a real move to that offset.
-      if (run.lastWriteEmpty || !editorSelectionMoved(run)) return;
-      cancel();
+      if (run.lastWriteEmpty) return;
+      int currentCaret = run.lastRenderedCaret >= 0 ? readEditorCaret(run) : CARET_UNAVAILABLE;
+      if (currentCaret >= 0 && currentCaret == run.lastRenderedCaret) return;
+      // A no-span callback can also be a real move. If the editor previously
+      // reported a span, relinquish it even when its current caret is unavailable.
+      if (currentCaret != CARET_UNAVAILABLE || run.composingStart >= 0) cancel();
       return;
     }
     if (composingEnd >= 0 && start == composingEnd && end == composingEnd)
     {
-      run.composingStart = composingStart;
-      if (run.pendingRetractionUpdates > 0 && run.retractionCaret == CARET_UNAVAILABLE)
-        run.retractionCaret = composingStart;
+      if (composingStart >= 0)
+      {
+        run.composingStart = composingStart;
+        if (run.pendingRetractionUpdates > 0 && run.retractionCaret == CARET_UNAVAILABLE)
+          run.retractionCaret = composingStart;
+      }
       if (!run.lastWriteEmpty) run.composingAcknowledged = true;
       return;
     }

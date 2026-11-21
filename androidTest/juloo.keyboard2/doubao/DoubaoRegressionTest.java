@@ -380,6 +380,45 @@ public final class DoubaoRegressionTest
               + " yielded [" + result + "] at " + cursor[0]);
       }
     }
+
+    // Without an absolute-offset read, the two editor states produce the
+    // same updateSelection arguments until the next transcript is ready.
+    for (int scenario = 0; scenario < 3; scenario++)
+    {
+      boolean userMoved = scenario != 0;
+      boolean resumedAcknowledged = scenario == 2;
+      try (Editor editor = new Editor(test, "draft "))
+      {
+        editor.usePrivateConnection();
+        editor.run.onResponse(response(finalJson("初始")));
+        if (!editor.text().equals("draft 初始"))
+          throw new AssertionError("Private replay did not establish the initial transcript");
+        test.runOnMainSync(() -> editor.voice.cancelForSelectionChange(8, 8, 6, 8));
+        editor.run.onResponse(response("{\"results\":[{\"text\":\"\",\"nonstream_result\":true}]}"));
+        if (!editor.text().equals("draft "))
+          throw new AssertionError("Private replay did not retract the initial transcript");
+        editor.run.onResponse(response(finalJson("继续")));
+        if (!editor.text().equals("draft 继续"))
+          throw new AssertionError("Private replay did not resume the transcript");
+        test.runOnMainSync(() -> {
+          if (resumedAcknowledged) editor.voice.cancelForSelectionChange(8, 8, 6, 8);
+          if (userMoved)
+          {
+            editor.currentConnection.finishComposingText();
+            editor.view.setSelection(6);
+          }
+          editor.voice.cancelForSelectionChange(6, 6, -1, -1);
+        });
+        editor.run.onResponse(response(finalJson("晚到的定稿")));
+        String result = editor.text();
+        int[] cursor = new int[1];
+        test.runOnMainSync(() -> cursor[0] = editor.view.getSelectionStart());
+        int expectedCursor = userMoved ? 6 : 8;
+        if (editor.voice.isActive() || !result.equals("draft 继续") || cursor[0] != expectedCursor)
+          violations.add("Private ambiguous update with userMoved=" + userMoved
+              + ", resumedAcknowledged=" + resumedAcknowledged + " yielded [" + result + "] at " + cursor[0]);
+      }
+    }
     if (!violations.isEmpty()) throw new AssertionError(violations.toString());
   }
 
@@ -721,20 +760,11 @@ public final class DoubaoRegressionTest
         catch (Exception error) { throw new AssertionError(error); }
       });
 
-      info.imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
-      editor.voice.setEditorInfo(info);
-      editor.currentConnection = new InputConnectionWrapper(editor.currentConnection, false) {
-        @Override public SurroundingText getSurroundingText(int before, int after, int flags)
-        {
-          throw new AssertionError("Private editor selection was queried during dictation");
-        }
-      };
-      DoubaoVoiceInput.SessionRun privateRun = editor.voice.new SessionRun(editor.currentConnection);
-      set(editor.voice, "activeRun", privateRun);
-      privateRun.onResponse(response(finalJson("初始")));
+      editor.usePrivateConnection();
+      editor.run.onResponse(response(finalJson("初始")));
       if (!editor.text().equals("before初始AFTER"))
         throw new AssertionError("Private editor did not display the initial voice text");
-      privateRun.onResponse(response(finalJson("继续")));
+      editor.run.onResponse(response(finalJson("继续")));
       if (!editor.text().equals("before继续AFTER"))
         throw new AssertionError("Private editor did not continue dictating via the callback path");
     }
@@ -874,6 +904,24 @@ public final class DoubaoRegressionTest
       test.runOnMainSync(() -> text.set(view.getText().toString()));
       if (!failures.isEmpty()) throw new AssertionError("Voice editor failed: " + failures);
       return text.get();
+    }
+
+    void usePrivateConnection() throws Exception
+    {
+      test.runOnMainSync(() -> {
+        EditorInfo info = new EditorInfo();
+        info.inputType = InputType.TYPE_CLASS_TEXT;
+        info.imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
+        voice.setEditorInfo(info);
+        currentConnection = new InputConnectionWrapper(currentConnection, false) {
+          @Override public SurroundingText getSurroundingText(int before, int after, int flags)
+          {
+            throw new AssertionError("Private editor selection was queried during dictation");
+          }
+        };
+        run = voice.new SessionRun(currentConnection);
+      });
+      set(voice, "activeRun", run);
     }
 
     void complete() throws Exception
