@@ -1,14 +1,42 @@
 package juloo.keyboard2.pinyin;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** Complete syllable cuts of a letter reading that already matches the raw keys. */
 final class NineKeySyllableGraph
 {
   private static final int MAX_CUTS = 3;
+  private static final int MAX_EDITS = 24;
   private final Set<String> syllables;
+  private final Map<String, Set<String>> aliases = new HashMap<>();
+
+  static final class Edit
+  {
+    private final int start;
+    private final int end;
+    private final String replacement;
+
+    Edit(int start, int end, String replacement)
+    {
+      this.start = start;
+      this.end = end;
+      this.replacement = replacement;
+    }
+
+    String replace(String input)
+    {
+      String before = input.substring(0, start);
+      String after = input.substring(end);
+      return before + (before.isEmpty() || before.endsWith("'") ? "" : "'") + replacement
+          + (after.isEmpty() || after.startsWith("'") ? "" : "'") + after;
+    }
+  }
 
   static final class Reading
   {
@@ -31,7 +59,43 @@ final class NineKeySyllableGraph
     }
   }
 
-  NineKeySyllableGraph(Set<String> syllables) { this.syllables = syllables; }
+  NineKeySyllableGraph(Set<String> syllables)
+  {
+    this.syllables = syllables;
+    List<String> ordered = new ArrayList<>(syllables);
+    Collections.sort(ordered);
+    for (String syllable : ordered)
+    {
+      if (!PinyinSpelling.hasVowel(syllable)) continue;
+      for (String typed : PinyinSpelling.fuzzyInitials(syllable)) addAlias(typed, syllable);
+      for (String typed : PinyinSpelling.fuzzyFinals(syllable)) addAlias(typed, syllable);
+    }
+  }
+
+  private void addAlias(String typed, String corrected)
+  {
+    if (typed.length() < 2 || typed.length() > 6) return;
+    String keys = NineKeyComposition.digits(typed);
+    if (!keys.equals(NineKeyComposition.digits(corrected)))
+      aliases.computeIfAbsent(keys, ignored -> new LinkedHashSet<>()).add(corrected);
+  }
+
+  List<Edit> edits(String raw)
+  {
+    List<Edit> result = new ArrayList<>();
+    for (int start = 0; start < raw.length(); start++)
+      for (int end = start + 2; end <= Math.min(raw.length(), start + 6); end++)
+      {
+        Set<String> matches = aliases.get(raw.substring(start, end));
+        if (matches == null) continue;
+        for (String replacement : matches)
+        {
+          result.add(new Edit(start, end, replacement));
+          if (result.size() == MAX_EDITS) return result;
+        }
+      }
+    return result;
+  }
 
   List<Reading> splits(String spelling)
   {

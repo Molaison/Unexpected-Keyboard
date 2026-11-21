@@ -218,7 +218,7 @@ final class PinyinSpelling
     if (paths.size() > limit) paths.subList(limit, paths.size()).clear();
   }
 
-  private static List<String> fuzzyInitials(String syllable)
+  static List<String> fuzzyInitials(String syllable)
   {
     List<String> result = new ArrayList<>();
     String[][] pairs = {{"zh", "z"}, {"ch", "c"}, {"sh", "s"}, {"n", "l"}, {"f", "h"}};
@@ -228,7 +228,7 @@ final class PinyinSpelling
     return result;
   }
 
-  private static List<String> fuzzyFinals(String syllable)
+  static List<String> fuzzyFinals(String syllable)
   {
     List<String> result = new ArrayList<>();
     for (String pair : new String[] {"an", "en", "in"})

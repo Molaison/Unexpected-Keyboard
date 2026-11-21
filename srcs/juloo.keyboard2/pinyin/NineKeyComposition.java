@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import juloo.keyboard2.pinyin.NineKeySyllableGraph.Edit;
 import juloo.keyboard2.pinyin.NineKeySyllableGraph.Reading;
 
 /** Bounded phonetic beam plus an exact, memory-mapped nine-key word index.
@@ -20,6 +21,8 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int BEAM = 48;
   private static final int CANDIDATE_PATHS = 24;
   private static final int ALTERNATE_PATHS = 4;
+  private static final int FUZZY_NATIVE_PATHS = 6;
+  private static final int PROMOTED_CORRECTIONS = 2;
   private static final int PER_PATH = 32;
   private static final int MAX_CANDIDATES = 256;
   private static final int IMPOSSIBLE = 1000000;
@@ -28,7 +31,7 @@ public final class NineKeyComposition implements ChineseComposition
   private final NineKeyLexicon lexicon;
   private final Set<String> syllables = new HashSet<>();
   private final Set<String> prefixes = new HashSet<>();
-  private final NineKeySyllableGraph syllableGraph = new NineKeySyllableGraph(syllables);
+  private final NineKeySyllableGraph syllableGraph;
   private final List<Fixed> fixed = new ArrayList<>();
   private final List<Candidate> candidates = new ArrayList<>();
   private final Map<String, List<Path>> cache = new LinkedHashMap<String, List<Path>>() {
@@ -63,6 +66,7 @@ public final class NineKeyComposition implements ChineseComposition
     final int index;
     final float score;
     String display;
+    boolean corrected;
     Candidate(String text, Reading reading, int index, float score)
     {
       this.text = text;
@@ -85,6 +89,7 @@ public final class NineKeyComposition implements ChineseComposition
       syllables.add(s);
       for (int i = 1; i <= s.length(); i++) prefixes.add(s.substring(0, i));
     }
+    syllableGraph = new NineKeySyllableGraph(syllables);
   }
 
   public static String digits(String spelling)
@@ -115,7 +120,7 @@ public final class NineKeyComposition implements ChineseComposition
   private String resolvedSpelling()
   {
     prepare();
-    if (!candidates.isEmpty()) return candidates.get(0).reading.spelling;
+    if (!candidates.isEmpty() && !candidates.get(0).corrected) return candidates.get(0).reading.spelling;
     if (!paths.isEmpty()) return paths.get(0).spelling;
     return raw.substring(fixedEnd); // Unparseable input remains recoverable.
   }
@@ -148,7 +153,7 @@ public final class NineKeyComposition implements ChineseComposition
   {
     prepare();
     List<String> result = new ArrayList<>();
-    if (!candidates.isEmpty()) result.add(candidates.get(0).reading.spelling);
+    if (!candidates.isEmpty() && !candidates.get(0).corrected) result.add(candidates.get(0).reading.spelling);
     for (Path path : paths)
       if (result.size() < CANDIDATE_PATHS && !result.contains(path.spelling)) result.add(path.spelling);
     return result;
@@ -200,8 +205,7 @@ public final class NineKeyComposition implements ChineseComposition
     Candidate c = candidates.get(index);
     if (c.index < 0)
     {
-      // Direct index entries cover the complete remaining spelling. Never replay
-      // their index into the native decoder, whose candidates are a different set.
+      // Whole-word index entries and complete corrections cover every remaining key.
       String result = fixedText + c.text;
       reset();
       return result;
@@ -378,6 +382,8 @@ public final class NineKeyComposition implements ChineseComposition
         int c = Float.compare(a.score, b.score);
         return c == 0 ? a.text.compareTo(b.text) : c;
       });
+      if (constraint.isEmpty() && remaining.length() >= 4)
+        addFuzzyCandidates(remaining);
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
@@ -408,5 +414,77 @@ public final class NineKeyComposition implements ChineseComposition
       unique.put(text, candidate);
     }
     return starts;
+  }
+
+  private void addFuzzyCandidates(String remaining)
+  {
+    for (int i = 0; i < remaining.length(); i++)
+      if (remaining.charAt(i) < '2' || remaining.charAt(i) > '9') return;
+    List<Edit> edits = syllableGraph.edits(remaining);
+    if (edits.isEmpty()) return;
+    Map<String, Candidate> corrected = new LinkedHashMap<>();
+    if (lexicon != null)
+      for (Edit edit : edits)
+        for (NineKeyLexicon.Entry entry : lexicon.lookup(edit.replace(remaining), "", 6))
+          addCorrection(corrected, entry.text, entry.spelling, entry.display,
+              entry.score - 800 * entry.text.length());
+    if (corrected.isEmpty()) addCorrectedSentences(corrected, edits);
+    List<Candidate> ranked = new ArrayList<>(corrected.values());
+    ranked.sort(Comparator.comparingDouble((Candidate c) -> c.score).thenComparing(c -> c.text));
+
+    int slot = Math.min(1, candidates.size());
+    int promoted = 0;
+    for (Candidate correction : ranked)
+    {
+      if (promoted == PROMOTED_CORRECTIONS) break;
+      int index = 0;
+      while (index < candidates.size() && !candidates.get(index).text.equals(correction.text)) index++;
+      if (index < slot) continue;
+      if (index < candidates.size()) candidates.remove(index);
+      candidates.add(slot++, correction);
+      promoted++;
+    }
+    Set<String> offered = new HashSet<>();
+    for (Candidate candidate : candidates) offered.add(candidate.text);
+    for (Candidate correction : ranked)
+      if (candidates.size() < MAX_CANDIDATES && offered.add(correction.text)) candidates.add(correction);
+  }
+
+  private void addCorrectedSentences(Map<String, Candidate> corrected, List<Edit> edits)
+  {
+    Set<String> queried = new HashSet<>();
+    for (int i = 0; i < Math.min(paths.size(), CANDIDATE_PATHS); i++)
+    {
+      String spelling = paths.get(i).spelling;
+      for (Edit edit : edits)
+      {
+        String query = edit.replace(spelling);
+        if (query.length() > PinyinDecoder.MAX_PINYIN_LENGTH || syllableGraph.splits(query).isEmpty()
+            || !queried.add(query)) continue;
+        decoder.reset();
+        int count = decoder.search(query);
+        int[] starts = decoder.getSpellingStarts();
+        for (int j = 0; j < Math.min(count, 6); j++)
+        {
+          String text = decoder.getCandidate(j);
+          if (text.length() < starts.length && starts[text.length()] == query.length())
+            addCorrection(corrected, text, spelling, formatSpelling(query, starts),
+                decoder.getCandidateScore(j) / Math.max(1, text.length()));
+        }
+        if (queried.size() == FUZZY_NATIVE_PATHS) return;
+      }
+    }
+  }
+
+  private static void addCorrection(Map<String, Candidate> corrected, String text, String spelling,
+      String display, float score)
+  {
+    if (text.length() < 2) return;
+    Candidate previous = corrected.get(text);
+    if (previous != null && previous.score <= score) return;
+    Candidate candidate = new Candidate(text, new Reading(spelling), -1, score);
+    candidate.display = display;
+    candidate.corrected = true;
+    corrected.put(text, candidate);
   }
 }
