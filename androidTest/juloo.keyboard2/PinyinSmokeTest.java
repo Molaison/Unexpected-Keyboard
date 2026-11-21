@@ -1711,9 +1711,9 @@ public final class PinyinSmokeTest extends Instrumentation
   /** Real AudioRecord/touches with a silent mic and synthetic ASR sentence replies. */
   private void microphoneInput() throws Exception
   {
-    if ("service_busy".equals(voiceMicrophoneCase))
+    if ("service_busy".equals(voiceMicrophoneCase) || "service_busy_stream".equals(voiceMicrophoneCase))
     {
-      checkVoiceServiceBusy();
+      checkVoiceServiceBusy("service_busy_stream".equals(voiceMicrophoneCase));
       return;
     }
     if (getTargetContext().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
@@ -1840,7 +1840,7 @@ public final class PinyinSmokeTest extends Instrumentation
     }
   }
 
-  private void checkVoiceServiceBusy() throws Exception
+  private void checkVoiceServiceBusy(boolean afterSessionStart) throws Exception
   {
     clear();
     onMain(() -> {
@@ -1859,7 +1859,7 @@ public final class PinyinSmokeTest extends Instrumentation
     try
     {
       onMain(() -> {
-        juloo.keyboard2.doubao.DoubaoRegressionTest.replayBusyService(voice());
+        juloo.keyboard2.doubao.DoubaoRegressionTest.replayBusyService(voice(), afterSessionStart);
         return null;
       });
       await("service rejection notice", () -> message.get() != null);

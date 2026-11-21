@@ -667,21 +667,33 @@ public final class DoubaoRegressionTest
     return DoubaoProtocol.parseResponse(packet("", 20000000, "OK", json));
   }
 
-  public static void replayBusyService(DoubaoVoiceInput voice) throws Exception
+  public static void replayBusyService(DoubaoVoiceInput voice, boolean afterSessionStart) throws Exception
   {
-    try (Transport transport = new Transport())
+    Field host = DoubaoVoiceInput.class.getDeclaredField("host");
+    host.setAccessible(true);
+    InputConnection editor = ((DoubaoVoiceInput.Host)host.get(voice)).getCurrentInputConnection();
+    if (editor == null) throw new AssertionError("Cannot replay voice without a focused editor");
+    DoubaoVoiceInput.SessionRun run = voice.new SessionRun(editor);
+    set(voice, "activeRun", run);
+    try (Transport transport = new Transport(afterSessionStart ? run : null))
     {
+      if (afterSessionStart) transport.receive("SessionStarted", 20000000, "OK", "");
       transport.receive("SessionFailed", 40200011, "concurrency quota exceeded: test backend", "");
       IOException failure = transport.failure.get();
       if (failure == null || !transport.socket.cancelled)
         throw new AssertionError("Quota rejection did not terminate the transport");
-      Field host = DoubaoVoiceInput.class.getDeclaredField("host");
-      host.setAccessible(true);
-      InputConnection editor = ((DoubaoVoiceInput.Host)host.get(voice)).getCurrentInputConnection();
-      if (editor == null) throw new AssertionError("Cannot replay voice without a focused editor");
-      DoubaoVoiceInput.SessionRun run = voice.new SessionRun(editor);
-      set(voice, "activeRun", run);
-      completeVoice(voice, run, failure);
+      if (!afterSessionStart)
+      {
+        completeVoice(voice, run, failure);
+        return;
+      }
+      if (run.asyncFailure.get() == null)
+        throw new AssertionError("The run did not observe the transport failure");
+      // The audio loop checks this same stored error before sending each frame.
+      // Running with an already-failed session consumes it without opening a real socket.
+      ExecutorService voiceThread = Executors.newSingleThreadExecutor();
+      try { voiceThread.submit(run).get(3, TimeUnit.SECONDS); }
+      finally { voiceThread.shutdownNow(); }
     }
   }
 
@@ -752,7 +764,9 @@ public final class DoubaoRegressionTest
     final DoubaoAsrClient.Connection session;
     final WebSocketListener listener;
 
-    Transport() throws Exception
+    Transport() throws Exception { this(null); }
+
+    Transport(DoubaoAsrClient.Listener target) throws Exception
     {
       Class<?> credentialsType = Class.forName("juloo.keyboard2.doubao.DoubaoAsrClient$Credentials");
       Constructor<?> credentialsConstructor = credentialsType.getDeclaredConstructor();
@@ -764,8 +778,15 @@ public final class DoubaoRegressionTest
           OkHttpClient.class, credentialsType, DoubaoAsrClient.Listener.class);
       constructor.setAccessible(true);
       session = constructor.newInstance(client, credentials, new DoubaoAsrClient.Listener() {
-        @Override public void onResponse(DoubaoProtocol.Response response) { }
-        @Override public void onFailure(IOException error) { failure.set(error); }
+        @Override public void onResponse(DoubaoProtocol.Response response)
+        {
+          if (target != null) target.onResponse(response);
+        }
+        @Override public void onFailure(IOException error)
+        {
+          failure.set(error);
+          if (target != null) target.onFailure(error);
+        }
       });
       set(session, "webSocket", socket);
       Constructor<?> socketListener = Class.forName("juloo.keyboard2.doubao.DoubaoAsrClient$Connection$SocketListener")

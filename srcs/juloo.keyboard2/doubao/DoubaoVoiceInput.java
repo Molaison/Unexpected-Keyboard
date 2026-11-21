@@ -691,8 +691,8 @@ public final class DoubaoVoiceInput
           stopRequested = true;
           break;
         case ERROR:
-          asyncFailure.compareAndSet(null, new IOException(
-              "Doubao ASR error " + response.statusCode + ": " + response.errorMessage));
+          asyncFailure.compareAndSet(null,
+              new DoubaoAsrClient.ServiceException(response.statusCode, response.errorMessage));
           stopRequested = true;
           break;
         default:
