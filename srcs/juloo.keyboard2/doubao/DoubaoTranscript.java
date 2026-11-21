@@ -48,7 +48,7 @@ final class DoubaoTranscript
     for (DoubaoProtocol.Fragment fragment : response.fragments)
     {
       lastFragment = Math.max(lastFragment, fragment.index);
-      if (fragment.text.isEmpty() || snapshot.equals(fragment.text) || spans.containsKey(fragment.index))
+      if (fragment.text.isEmpty() || spans.containsKey(fragment.index))
         continue;
       // Fragments can differ from the aggregate after the punctuation pass.
       // Only edit a span that can be located in the actual snapshot.

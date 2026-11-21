@@ -190,6 +190,7 @@ public final class DoubaoRegressionTest
   {
     String revised;
     String appended;
+    String revisedOnlyFragment;
     try (Editor editor = new Editor(test, "前缀"))
     {
       editor.run.onResponse(response("{\"results\":["
@@ -213,8 +214,19 @@ public final class DoubaoRegressionTest
       editor.complete();
       appended = editor.text();
     }
-    if (!revised.equals("前缀第一句修订。第二句。") || !appended.equals("前缀今天散步吧。顺便买点水果。"))
-      throw new AssertionError("Indexed updates produced revised=[" + revised + "], appended=[" + appended + "]");
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"你好。\",\"is_interim\":true,\"index\":0},"
+          + "{\"text\":\"你好。\",\"is_interim\":true,\"index\":1}]}"));
+      editor.run.onResponse(response(finalJson("你好，世界。", 1)));
+      editor.complete();
+      revisedOnlyFragment = editor.text();
+    }
+    if (!revised.equals("前缀第一句修订。第二句。") || !appended.equals("前缀今天散步吧。顺便买点水果。")
+        || !revisedOnlyFragment.equals("前缀你好，世界。"))
+      throw new AssertionError("Indexed updates produced revised=[" + revised + "], appended=[" + appended
+          + "], revisedOnlyFragment=[" + revisedOnlyFragment + "]");
   }
 
   private static void checkWholeTranscript(Instrumentation test) throws Exception
