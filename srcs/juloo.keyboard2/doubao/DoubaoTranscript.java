@@ -19,6 +19,7 @@ final class DoubaoTranscript
     int start;
     int end;
     boolean coversUnassignedTail;
+    boolean openSnapshotDetail;
     Span(int start, int end) { this.start = start; this.end = end; }
   }
 
@@ -56,6 +57,7 @@ final class DoubaoTranscript
       Span span = locateFragment(fragment.text, cursor);
       if (span != null)
       {
+        span.openSnapshotDetail = !fragment.stable;
         cursor = span.end;
         spans.put(fragment.index, span);
       }
@@ -185,12 +187,16 @@ final class DoubaoTranscript
     {
       // An existing detail may describe only the beginning of the visible tail.
       int tailEnd = observedTailEnd(span.start, text);
-      int extension = matchFormattedPrefix(text, 0, snapshot.substring(span.start, span.end));
-      if (tailEnd > span.end && extension >= 0 && extension < text.length()
-          && sharesTail(snapshot.substring(span.end, tailEnd), text.substring(extension)))
+      if (tailEnd > span.end)
       {
-        span.end = tailEnd;
-        span.coversUnassignedTail = true;
+        int extension = matchFormattedPrefix(text, 0, snapshot.substring(span.start, span.end));
+        boolean confirmedOverlap = extension >= 0 && extension < text.length()
+            && sharesTail(snapshot.substring(span.end, tailEnd), text.substring(extension));
+        if (span.openSnapshotDetail || confirmedOverlap)
+        {
+          span.end = tailEnd;
+          span.coversUnassignedTail = true;
+        }
       }
     }
 
@@ -202,6 +208,7 @@ final class DoubaoTranscript
       if (prefixEnd >= 0 && skipFormatting(current, prefixEnd) < current.length()) return null;
     }
     span.coversUnassignedTail = false;
+    span.openSnapshotDetail = false;
     int previousEnd = punctuationEnd(span, text);
     int delta = text.length() - (previousEnd - span.start);
     snapshot = snapshot.substring(0, span.start) + text + snapshot.substring(previousEnd);

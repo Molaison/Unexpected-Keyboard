@@ -43,8 +43,14 @@ public final class DoubaoProtocol
   {
     final int index;
     final String text;
+    final boolean stable;
 
-    Fragment(int index, String text) { this.index = index; this.text = text; }
+    Fragment(int index, String text, boolean stable)
+    {
+      this.index = index;
+      this.text = text;
+      this.stable = stable;
+    }
   }
 
   public static final class Response
@@ -404,7 +410,8 @@ public final class DoubaoProtocol
     // In a multi-result frame, the first item is the full transcript. The
     // other items describe parts of the same text.
     boolean wholeTranscript = results.size() > 1;
-    String text = first == null ? "" : extractResultText(first);
+    String extractedText = first == null ? null : extractResultText(first);
+    String text = extractedText == null ? "" : extractedText;
     int utteranceIndex = first == null ? -1 : optionalInt(first, "index", -1);
     boolean allStable = first != null;
     boolean vadFinished = false;
@@ -414,10 +421,14 @@ public final class DoubaoProtocol
     {
       JsonObject result = results.get(i);
       Boolean interim = firstBoolean(result, "is_interim", "interim");
-      allStable &= Boolean.FALSE.equals(interim) || optionalBoolean(result, "is_final", false);
+      boolean stable = Boolean.FALSE.equals(interim) || optionalBoolean(result, "is_final", false);
+      allStable &= stable;
       vadFinished |= firstBooleanValue(result, false, "is_vad_finished", "vad_finished");
       if (i > 0)
-        fragments.add(new Fragment(optionalInt(result, "index", i), extractResultText(result)));
+      {
+        String detail = extractResultText(result);
+        fragments.add(new Fragment(optionalInt(result, "index", i), detail == null ? "" : detail, stable));
+      }
     }
 
     JsonObject firstExtra = first == null ? null : optionalObject(first, "extra");
@@ -426,7 +437,7 @@ public final class DoubaoProtocol
     boolean isFinal = nonstream || (allStable && (wholeTranscript || vadFinished));
     ResponseType type = isFinal ? ResponseType.FINAL_RESULT
         : vadStart && text.isEmpty() ? ResponseType.VAD_START : ResponseType.INTERIM_RESULT;
-    TranscriptLayout layout = nonstream ? TranscriptLayout.FINAL_WHOLE
+    TranscriptLayout layout = nonstream && extractedText != null ? TranscriptLayout.FINAL_WHOLE
         : wholeTranscript ? TranscriptLayout.WHOLE : TranscriptLayout.INDEXED;
     return new Response(type, text, isFinal, allStable, vadStart, vadFinished, layout,
         utteranceIndex, -1, 0, "", resultJson, fragments);
@@ -478,9 +489,10 @@ public final class DoubaoProtocol
   private static String extractResultText(JsonObject result)
   {
     String direct = firstString(result, "text", "utterance", "transcript");
-    if (!direct.isEmpty())
+    if (direct != null && !direct.isEmpty())
       return direct;
 
+    String emptyText = direct;
     for (String key : new String[]{"alternatives", "words", "utterances"})
     {
       JsonElement nested = result.get(key);
@@ -491,26 +503,34 @@ public final class DoubaoProtocol
         if (!item.isJsonObject())
           continue;
         String text = extractResultText(item.getAsJsonObject());
-        if (!text.isEmpty())
-          return text;
+        if (text != null)
+        {
+          if (!text.isEmpty()) return text;
+          emptyText = text;
+        }
       }
     }
-    return "";
+    return emptyText;
   }
 
   private static String firstString(JsonObject object, String... keys)
   {
+    String emptyText = null;
     for (String key : keys)
     {
       JsonElement value = object.get(key);
       if (value != null && value.isJsonPrimitive())
       {
         JsonPrimitive primitive = value.getAsJsonPrimitive();
-        if (primitive.isString() && !primitive.getAsString().isEmpty())
-          return primitive.getAsString();
+        if (primitive.isString())
+        {
+          String text = primitive.getAsString();
+          if (!text.isEmpty()) return text;
+          emptyText = text;
+        }
       }
     }
-    return "";
+    return emptyText;
   }
 
   private static Boolean firstBoolean(JsonObject object, String... keys)

@@ -171,6 +171,7 @@ public final class DoubaoRegressionTest
     String shortened;
     String expandedDetail;
     String revisedPunctuation;
+    String emptyFinal;
     try (Editor editor = new Editor(test, "前缀"))
     {
       editor.run.onResponse(response("{\"results\":["
@@ -217,7 +218,7 @@ public final class DoubaoRegressionTest
           + "{\"text\":\"First. Today it rains. Tomorrow is sunny.\",\"is_interim\":true,\"index\":0},"
           + "{\"text\":\"First.\",\"is_interim\":false,\"index\":1},"
           + "{\"text\":\"Today\",\"is_interim\":true,\"index\":2}]}"));
-      editor.run.onResponse(response(finalJson("Today it rains.", 2)));
+      editor.run.onResponse(response(finalJson("Today it snowed.", 2)));
       editor.complete();
       expandedDetail = editor.text();
     }
@@ -231,14 +232,27 @@ public final class DoubaoRegressionTest
       editor.complete();
       revisedPunctuation = editor.text();
     }
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response(finalJson("今天")));
+      test.runOnMainSync(() -> editor.voice.toggle());
+      editor.run.onResponse(response("{\"results\":[{\"nonstream_result\":true}]}"));
+      if (!editor.text().equals("前缀今天"))
+        throw new AssertionError("An event with no transcript cleared speech text");
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"\",\"nonstream_result\":true}]}"));
+      editor.run.onResponse(response(finalJson("晚到。", 1)));
+      editor.complete();
+      emptyFinal = editor.text();
+    }
     if (!formatted.equals("前缀先说一句。你好，世界又见。再说一句。")
         || !extended.equals("前缀第一句。今天下雨了。")
         || !reformattedTail.equals("Prefix: One. Today, it rains.") || !shortened.equals("Prefix: One. Today")
-        || !expandedDetail.equals("Prefix: First. Today it rains. Tomorrow is sunny.")
-        || !revisedPunctuation.equals("Prefix: Hello earth!"))
+        || !expandedDetail.equals("Prefix: First. Today it snowed. Tomorrow is sunny.")
+        || !revisedPunctuation.equals("Prefix: Hello earth!") || !emptyFinal.equals("前缀"))
       throw new AssertionError("Fragment boundaries produced formatted=[" + formatted
           + "], extended=[" + extended + "], reformattedTail=[" + reformattedTail + "], shortened=[" + shortened
-          + "], expandedDetail=[" + expandedDetail + "], revisedPunctuation=[" + revisedPunctuation + "]");
+          + "], expandedDetail=[" + expandedDetail + "], revisedPunctuation=[" + revisedPunctuation
+          + "], emptyFinal=[" + emptyFinal + "]");
   }
 
   private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception
