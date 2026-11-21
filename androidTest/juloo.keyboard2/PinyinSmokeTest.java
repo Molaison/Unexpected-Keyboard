@@ -2250,8 +2250,9 @@ public final class PinyinSmokeTest extends Instrumentation
         if (!strip.getGlobalVisibleRect(visible)) throw new AssertionError("Candidate strip is not visible");
         return visible;
       });
-      swipe(bounds.right - bounds.width() * 0.1f,
-          bounds.left + bounds.width() * 0.1f, bounds.exactCenterY());
+      float y = bounds.exactCenterY();
+      swipe(bounds.right - bounds.width() * 0.1f, y,
+          bounds.left + bounds.width() * 0.1f, y, true);
     }
     tap(onMain(() -> findText(candidatesView(), text)));
   }
@@ -2283,6 +2284,11 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void swipe(float startX, float startY, float endX, float endY) throws Exception
   {
+    swipe(startX, startY, endX, endY, false);
+  }
+
+  private void swipe(float startX, float startY, float endX, float endY, boolean stopWithoutFling) throws Exception
+  {
     long down = SystemClock.uptimeMillis();
     injectTouch(down, MotionEvent.ACTION_DOWN, startX, startY);
     for (int step = 1; step <= 12; step++)
@@ -2291,8 +2297,16 @@ public final class PinyinSmokeTest extends Instrumentation
       injectTouch(down, MotionEvent.ACTION_MOVE, startX + (endX - startX) * step / 12,
           startY + (endY - startY) * step / 12);
     }
-    // Stop before lifting the finger so the target does not move under the tap.
-    SystemClock.sleep(150);
+    if (stopWithoutFling)
+    {
+      // Older velocity trackers need stationary samples to finish a drag without a fling.
+      for (int sample = 0; sample < 3; sample++)
+      {
+        SystemClock.sleep(60);
+        injectTouch(down, MotionEvent.ACTION_MOVE, endX, endY);
+      }
+    }
+    else SystemClock.sleep(150);
     injectTouch(down, MotionEvent.ACTION_UP, endX, endY);
     idle();
   }
