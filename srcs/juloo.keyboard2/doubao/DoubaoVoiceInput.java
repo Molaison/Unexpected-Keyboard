@@ -242,15 +242,29 @@ public final class DoubaoVoiceInput
         return;
       }
 
-      // Each reply describes one indexed utterance. Retain the other sentences
-      // so even a delayed revision of an earlier final preserves newer text.
-      int index = response.utteranceIndex >= 0
-          ? response.utteranceIndex : run.currentUtteranceIndex;
-      run.currentUtteranceIndex = Math.max(run.currentUtteranceIndex, index);
-      run.utteranceTexts.put(index, response.text);
-      StringBuilder text = new StringBuilder();
-      for (String utterance : run.utteranceTexts.values())
-        text.append(utterance);
+      CharSequence text;
+      if (response.wholeTranscript)
+      {
+        run.wholeTranscript = true;
+        run.utteranceTexts.clear();
+      }
+      if (run.wholeTranscript)
+      {
+        // Once the provider has sent full text, update it only with a full
+        // frame or an unindexed / index-zero snapshot.
+        if (!response.wholeTranscript && response.utteranceIndex > 0) return;
+        text = response.text;
+      }
+      else
+      {
+        // Single indexed replies can revise any sentence in the run.
+        int index = response.utteranceIndex >= 0 ? response.utteranceIndex : run.currentUtteranceIndex;
+        run.currentUtteranceIndex = Math.max(run.currentUtteranceIndex, index);
+        run.utteranceTexts.put(index, response.text);
+        StringBuilder composed = new StringBuilder();
+        for (String utterance : run.utteranceTexts.values()) composed.append(utterance);
+        text = composed;
+      }
       final boolean accepted = run.connection.setComposingText(text, 1);
       run.hasComposingText = true;
       run.latestInterim = response.text;
@@ -349,6 +363,7 @@ public final class DoubaoVoiceInput
     boolean hasComposingText;
     final TreeMap<Integer, String> utteranceTexts = new TreeMap<>();
     int currentUtteranceIndex;
+    boolean wholeTranscript;
     String latestInterim = "";
     long lastInterimUpdateNs;
 

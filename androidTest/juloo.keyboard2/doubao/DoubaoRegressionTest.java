@@ -119,11 +119,46 @@ public final class DoubaoRegressionTest
 
     checkEditor(test);
     passed(test, "sentence boundaries keep recording; final revisions and subsequent utterances preserve editor text");
+    checkWholeTranscript(test);
+    passed(test, "stream, second pass, and final pass replace complete text without appending result fragments");
     checkContextPrivacy(test);
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=8");
+    passed(test, "DOUBAO_REGRESSION_OK checks=9");
+  }
+
+  private static void checkWholeTranscript(Instrumentation test) throws Exception
+  {
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      DoubaoVoiceInput.SessionRun run = editor.run;
+      run.onResponse(response(finalJson("今天散步吧。", 0)));
+      run.onResponse(response(finalJson("顺便", 1)));
+      if (!editor.text().equals("前缀今天散步吧。顺便"))
+        throw new AssertionError("The indexed text did not establish the stream: " + editor.text());
+
+      test.runOnMainSync(() -> editor.voice.toggle());
+      run.onResponse(response("{\"results\":["
+          + "{\"text\":\"今天散步吧，顺便买水果。\",\"is_interim\":true,\"index\":0},"
+          + "{\"text\":\"顺便买水果。\",\"is_interim\":false,\"is_vad_finished\":true,\"index\":1}]}"));
+      if (!editor.text().equals("前缀今天散步吧，顺便买水果。") || !editor.voice.isActive())
+        throw new AssertionError("Two-pass refinement lost or duplicated the transcript: " + editor.text());
+
+      run.onResponse(response("{\"results\":["
+          + "{\"text\":\"今天散步吧，顺便买点水果。\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"顺便买点水果。\",\"is_interim\":false,\"index\":1}]}"));
+      if (!editor.text().equals("前缀今天散步吧，顺便买点水果。"))
+        throw new AssertionError("The final pass did not replace the full transcript: " + editor.text());
+      run.onResponse(response(finalJson("仅分句。", 1)));
+      if (!editor.text().equals("前缀今天散步吧，顺便买点水果。"))
+        throw new AssertionError("A segment update replaced the full transcript: " + editor.text());
+      run.onResponse(response(finalJson("今天散步吧，顺便买点水果回来。", 0)));
+      run.onResponse(DoubaoProtocol.parseResponse(packet("SessionFinished", 20000000, "OK", "")));
+      editor.complete();
+      if (editor.voice.isActive() || !editor.text().equals("前缀今天散步吧，顺便买点水果回来。"))
+        throw new AssertionError("Session finish committed the wrong transcript: " + editor.text());
+    }
   }
 
   private static void checkEditor(Instrumentation test) throws Exception

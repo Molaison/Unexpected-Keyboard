@@ -44,6 +44,7 @@ public final class DoubaoProtocol
     public final boolean isFinal;
     public final boolean vadStart;
     public final boolean vadFinished;
+    public final boolean wholeTranscript;
     public final int utteranceIndex;
     public final int packetNumber;
     public final int statusCode;
@@ -51,7 +52,7 @@ public final class DoubaoProtocol
     public final String rawJson;
 
     private Response(ResponseType type, String text, boolean isFinal,
-        boolean vadStart, boolean vadFinished, int utteranceIndex, int packetNumber,
+        boolean vadStart, boolean vadFinished, boolean wholeTranscript, int utteranceIndex, int packetNumber,
         int statusCode, String errorMessage, String rawJson)
     {
       this.type = type;
@@ -59,6 +60,7 @@ public final class DoubaoProtocol
       this.isFinal = isFinal;
       this.vadStart = vadStart;
       this.vadFinished = vadFinished;
+      this.wholeTranscript = wholeTranscript;
       this.utteranceIndex = utteranceIndex;
       this.packetNumber = packetNumber;
       this.statusCode = statusCode;
@@ -68,12 +70,12 @@ public final class DoubaoProtocol
 
     static Response simple(ResponseType type)
     {
-      return new Response(type, "", false, false, false, -1, -1, 0, "", null);
+      return new Response(type, "", false, false, false, false, -1, -1, 0, "", null);
     }
 
     static Response error(int statusCode, String message)
     {
-      return new Response(ResponseType.ERROR, "", false, false, false, -1, -1,
+      return new Response(ResponseType.ERROR, "", false, false, false, false, -1, -1,
           statusCode, message, null);
     }
   }
@@ -376,47 +378,37 @@ public final class DoubaoProtocol
     if (resultsElement == null || resultsElement.isJsonNull())
     {
       int packetNumber = optionalInt(extra, "packet_number", -1);
-      return new Response(ResponseType.HEARTBEAT, "", false, false, false,
+      return new Response(ResponseType.HEARTBEAT, "", false, false, false, false,
           -1, packetNumber, 0, "", resultJson);
     }
 
     if (optionalBoolean(extra, "vad_start", false))
-      return new Response(ResponseType.VAD_START, "", false, true, false,
+      return new Response(ResponseType.VAD_START, "", false, true, false, false,
           -1, -1, 0, "", resultJson);
 
     List<JsonObject> results = resultObjects(resultsElement);
-    String text = "";
-    int utteranceIndex = -1;
-    boolean explicitFinal = false;
+    JsonObject first = results.isEmpty() ? null : results.get(0);
+    // In a multi-result frame, the first item is the full transcript. The
+    // other items describe parts of the same text.
+    boolean wholeTranscript = results.size() > 1;
+    String text = first == null ? "" : extractResultText(first);
+    int utteranceIndex = first == null ? -1 : optionalInt(first, "index", -1);
+    boolean allStable = first != null;
     boolean vadFinished = false;
-    boolean nonstreamResult = false;
 
     for (JsonObject result : results)
     {
-      String candidate = extractResultText(result);
-      if (!candidate.isEmpty())
-      {
-        text = candidate;
-        utteranceIndex = optionalInt(result, "index", -1);
-      }
-
       Boolean interim = firstBoolean(result, "is_interim", "interim");
-      if (Boolean.FALSE.equals(interim))
-        explicitFinal = true;
-      if (optionalBoolean(result, "is_final", false))
-        explicitFinal = true;
-      if (firstBooleanValue(result, false, "is_vad_finished", "vad_finished"))
-        vadFinished = true;
-
-      JsonObject resultExtra = optionalObject(result, "extra");
-      if (optionalBoolean(resultExtra, "nonstream_result", false))
-        nonstreamResult = true;
+      allStable &= Boolean.FALSE.equals(interim) || optionalBoolean(result, "is_final", false);
+      vadFinished |= firstBooleanValue(result, false, "is_vad_finished", "vad_finished");
     }
 
-    boolean isFinal = nonstreamResult || (explicitFinal && vadFinished);
+    JsonObject firstExtra = first == null ? null : optionalObject(first, "extra");
+    boolean isFinal = optionalBoolean(firstExtra, "nonstream_result", false)
+        || (allStable && (wholeTranscript || vadFinished));
     return new Response(
         isFinal ? ResponseType.FINAL_RESULT : ResponseType.INTERIM_RESULT,
-        text, isFinal, false, vadFinished, utteranceIndex, -1, 0, "", resultJson);
+        text, isFinal, false, vadFinished, wholeTranscript, utteranceIndex, -1, 0, "", resultJson);
   }
 
   private static byte[] request(String requestId, String token,

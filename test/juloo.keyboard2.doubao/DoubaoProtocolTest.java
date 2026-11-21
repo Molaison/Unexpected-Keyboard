@@ -92,6 +92,34 @@ public class DoubaoProtocolTest
   }
 
   @Test
+  public void multiResultFrameUsesWholeTranscriptAndDistinguishesPasses() throws Exception
+  {
+    String pending = "{\"results\":["
+        + "{\"text\":\"今天散步吧。顺便\",\"is_interim\":true,\"index\":0},"
+        + "{\"text\":\"今天散步吧。\",\"is_interim\":false,\"index\":1},"
+        + "{\"text\":\"顺便\",\"is_interim\":true,\"index\":2}]}";
+    DoubaoProtocol.Response interim = DoubaoProtocol.parseResponse(response("", 20000000, "OK", pending));
+    assertEquals("今天散步吧。顺便", interim.text);
+    assertEquals(0, interim.utteranceIndex);
+    assertEquals(DoubaoProtocol.ResponseType.INTERIM_RESULT, interim.type);
+
+    String refinement = "{\"results\":["
+        + "{\"text\":\"今天散步吧，顺便买水果。\",\"is_interim\":true,\"index\":0},"
+        + "{\"text\":\"顺便买水果。\",\"is_interim\":false,\"is_vad_finished\":true,\"index\":2}]}";
+    DoubaoProtocol.Response stableSegment = DoubaoProtocol.parseResponse(response("", 20000000, "OK", refinement));
+    assertEquals("今天散步吧，顺便买水果。", stableSegment.text);
+    assertEquals(DoubaoProtocol.ResponseType.INTERIM_RESULT, stableSegment.type);
+    assertTrue(stableSegment.vadFinished);
+
+    String settled = "{\"results\":["
+        + "{\"text\":\"今天散步吧，顺便买点水果。\",\"is_interim\":false,\"index\":0},"
+        + "{\"text\":\"顺便买点水果。\",\"is_interim\":false,\"index\":2}]}";
+    DoubaoProtocol.Response finalPass = DoubaoProtocol.parseResponse(response("", 20000000, "OK", settled));
+    assertEquals("今天散步吧，顺便买点水果。", finalPass.text);
+    assertEquals(DoubaoProtocol.ResponseType.FINAL_RESULT, finalPass.type);
+  }
+
+  @Test
   public void preservesSentenceIndexesWithoutVadStart() throws Exception
   {
     DoubaoProtocol.Response first = DoubaoProtocol.parseResponse(response("", 20000000, "OK",
