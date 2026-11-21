@@ -8,10 +8,12 @@ import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
+import android.widget.ListPopupWindow;
+import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.ArrayList;
@@ -44,6 +46,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private final TextView preedit;
   private final TextView readings;
   private final TextView spellings;
+  private final String spellingsLabel;
   private final TextView more;
   private final HorizontalScrollView candidateScroll;
   private final LinearLayout items;
@@ -54,6 +57,9 @@ public final class PinyinCandidatesView extends LinearLayout
   private int candidateRowHeight;
   private View latinCandidates;
   private boolean chinese;
+  private boolean nineKey;
+  private boolean sharedToolbarMenu;
+  private ListPopupWindow readingMenu;
   private boolean expanded;
   private int expandedWidth;
   private boolean hasMore;
@@ -77,12 +83,12 @@ public final class PinyinCandidatesView extends LinearLayout
     clipboard.setContentDescription(context.getString(R.string.ux_clipboard));
     clipboard.setBackground(ui.round(ui.background, 10));
     clipboard.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
-    clipboard.setMinimumWidth(ui.dp(48));
-    clipboard.setMinimumHeight(ui.dp(48));
+    clipboard.setMinimumWidth(ui.dp(CONTROL_DP));
+    clipboard.setMinimumHeight(ui.dp(CONTROL_DP));
     clipboard.setOnClickListener(v -> {
       if (listener != null) listener.onClipboard();
     });
-    header.addView(clipboard, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
+    header.addView(clipboard, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
     preedit = ui.label("", 15, false);
     preedit.setSingleLine(true);
     preedit.setEllipsize(TextUtils.TruncateAt.START);
@@ -91,17 +97,22 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setPadding(ui.dp(10), 0, ui.dp(6), 0);
     preedit.setFocusable(false);
     preedit.setOnClickListener(v -> { if (listener != null && !previousComposition.isEmpty()) listener.onCommitRaw(); });
-    preedit.setOnLongClickListener(v -> { showReadings(); return !spellingOptions.isEmpty(); });
+    preedit.setOnLongClickListener(v -> {
+      if (spellingOptions.isEmpty()) return false;
+      showReadings(preedit, false);
+      return true;
+    });
     preedit.setLongClickable(false);
     header.addView(preedit, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
-    spellings = ui.button(context.getString(R.string.ux_candidate_spellings), this::showReadings);
+    spellingsLabel = context.getString(R.string.ux_candidate_spellings);
+    spellings = ui.button(spellingsLabel, this::showStandaloneReadings);
     spellings.setTextSize(13);
+    spellings.setSingleLine(true);
     spellings.setContentDescription(context.getString(R.string.ux_candidate_spellings_description));
     header.addView(spellings, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT));
-    readings = ui.button("26", () -> {
-      if (listener != null) listener.onLayoutSwitch();
-    });
+    readings = ui.button("26", this::openLayoutControl);
     readings.setTextSize(14);
+    readings.setSingleLine(true);
     header.addView(readings);
     addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(CONTROL_DP)));
 
@@ -136,21 +147,69 @@ public final class PinyinCandidatesView extends LinearLayout
     addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
   }
 
-  private void showReadings()
+  private void showStandaloneReadings() { showReadings(spellings, false); }
+
+  private void openLayoutControl()
+  {
+    if (sharedToolbarMenu && !spellingOptions.isEmpty()) showReadings(readings, true);
+    else if (listener != null) listener.onLayoutSwitch();
+  }
+
+  private void showReadings(View anchor, boolean includeLayoutSwitch)
   {
     if (spellingOptions.isEmpty()) return;
-    PopupMenu menu = new PopupMenu(getContext(), spellings);
-    for (int i = 0; i < spellingOptions.size(); i++) menu.getMenu().add(0, i, i, spellingOptions.get(i));
-    menu.setOnMenuItemClickListener(item -> {
+    dismissReadingMenu();
+    ListPopupWindow menu = new ListPopupWindow(getContext());
+    readingMenu = menu;
+    List<String> choices = spellingOptions;
+    String composition = previousComposition;
+    boolean wasNineKey = nineKey;
+    List<String> labels = new ArrayList<>(choices);
+    if (includeLayoutSwitch)
+      labels.add(0, getContext().getString(nineKey ? R.string.ux_candidate_layout_full : R.string.ux_candidate_layout_nine));
+    menu.setAnchorView(anchor);
+    menu.setWidth(Math.min(ui.dp(180), availableWidth(getWidth())));
+    // Keep the editor's input focus while the user chooses a reading.
+    menu.setModal(false);
+    menu.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
+    menu.setAdapter(new ArrayAdapter<>(getContext(), android.R.layout.simple_list_item_1, labels));
+    menu.setOnDismissListener(() -> { if (readingMenu == menu) readingMenu = null; });
+    menu.setOnItemClickListener((parent, view, choice, id) -> {
+      menu.dismiss();
+      if (listener == null || !composition.equals(previousComposition) || wasNineKey != nineKey) return;
       expanded = false;
-      if (listener != null) listener.onSpellingSelected(item.getItemId());
-      return true;
+      int reading = includeLayoutSwitch ? choice - 1 : choice;
+      if (reading < 0) listener.onLayoutSwitch();
+      else
+      {
+        int index = spellingOptions.indexOf(choices.get(reading));
+        if (index >= 0) listener.onSpellingSelected(index);
+      }
     });
     menu.show();
   }
 
+  private void dismissReadingMenu()
+  {
+    ListPopupWindow menu = readingMenu;
+    readingMenu = null;
+    if (menu != null) menu.dismiss();
+  }
+
+  @Override protected void onDetachedFromWindow()
+  {
+    dismissReadingMenu();
+    super.onDetachedFromWindow();
+  }
+
   public void setListener(Listener listener) { this.listener = listener; }
-  public void setSpellingOptions(List<String> options) { spellingOptions = new ArrayList<>(options); }
+
+  public void setSpellingOptions(List<String> options)
+  {
+    if (spellingOptions.equals(options)) return;
+    dismissReadingMenu();
+    spellingOptions = new ArrayList<>(options);
+  }
 
   public void attachLatinCandidates(View view)
   {
@@ -186,6 +245,7 @@ public final class PinyinCandidatesView extends LinearLayout
     this.chinese = chinese;
     this.hasMore = hasMore;
     boolean changed = !composition.equals(previousComposition);
+    if (changed || !chinese) dismissReadingMenu();
     if (changed) expanded = false;
     // Keep the key origin fixed: composition replaces the concise idle mode
     // label within the same context bar, above the reserved candidate row.
@@ -197,17 +257,11 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setContentDescription(composition.isEmpty()
       ? getContext().getString(chinese ? R.string.pinyin_mode_chinese : R.string.pinyin_mode_english)
       : getContext().getString(R.string.pinyin_commit_raw, composition));
-    boolean nineKey = DirectBootAwarePreferences.get_shared_preferences(getContext())
+    nineKey = DirectBootAwarePreferences.get_shared_preferences(getContext())
         .getBoolean("chinese_nine_key", false);
-    readings.setText(getContext().getString(nineKey
-        ? R.string.ux_candidate_layout_nine : R.string.ux_candidate_layout_full));
-    readings.setContentDescription(getContext().getString(nineKey
-        ? R.string.ux_candidate_switch_full : R.string.ux_candidate_switch_nine));
     boolean hasReadings = chinese && !spellingOptions.isEmpty();
     preedit.setLongClickable(hasReadings);
-    spellings.setVisibility(hasReadings ? VISIBLE : GONE);
-    // INVISIBLE reserves the same width while the user switches languages.
-    readings.setVisibility(chinese ? VISIBLE : INVISIBLE);
+    if (getWidth() > 0) measureToolbarControls(availableWidth(getWidth()));
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
     // The candidate strip is a reserved row. Only its contents change, so
     // every keystroke has the same keyboard origin and cannot move the editor.
@@ -272,18 +326,52 @@ public final class PinyinCandidatesView extends LinearLayout
     return Math.max(1, width - getPaddingLeft() - getPaddingRight());
   }
 
+  private int paddedTextWidth(TextView view, String label)
+  {
+    return Math.max(view.getMinWidth(), (int)Math.ceil(view.getPaint().measureText(label))
+        + view.getPaddingLeft() + view.getPaddingRight());
+  }
+
+  private void measureToolbarControls(int width)
+  {
+    String layoutLabel = getContext().getString(nineKey
+        ? R.string.ux_candidate_layout_nine : R.string.ux_candidate_layout_full);
+    boolean hasReadings = chinese && !spellingOptions.isEmpty();
+    // Keep room for a short spelling at the current font size. A stable
+    // sample keeps the controls from moving as the user edits the spelling.
+    int actionsWidth = width - ui.dp(CONTROL_DP) - paddedTextWidth(preedit, "nihao");
+    String spellingText = spellingsLabel;
+    int spellingsWidth = hasReadings ? paddedTextWidth(spellings, spellingText) : 0;
+    if (paddedTextWidth(readings, layoutLabel) + spellingsWidth > actionsWidth)
+    {
+      layoutLabel = nineKey ? "9" : "26";
+      spellingText = "▾";
+      spellingsWidth = hasReadings ? paddedTextWidth(spellings, spellingText) : 0;
+    }
+    sharedToolbarMenu = hasReadings && paddedTextWidth(readings, layoutLabel) + spellingsWidth > actionsWidth;
+    if (sharedToolbarMenu) layoutLabel = "⋯";
+
+    if (!TextUtils.equals(readings.getText(), layoutLabel)) readings.setText(layoutLabel);
+    if (!TextUtils.equals(spellings.getText(), spellingText)) spellings.setText(spellingText);
+    int switchAction = nineKey ? R.string.ux_candidate_switch_full : R.string.ux_candidate_switch_nine;
+    readings.setContentDescription(getContext().getString(sharedToolbarMenu ? R.string.ux_candidate_options : switchAction));
+    // INVISIBLE keeps the layout slot while switching languages.
+    readings.setVisibility(chinese ? VISIBLE : INVISIBLE);
+    spellings.setVisibility(hasReadings && !sharedToolbarMenu ? VISIBLE : GONE);
+  }
+
   @Override protected void onMeasure(int widthSpec, int heightSpec)
   {
     int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
         ? getResources().getDisplayMetrics().widthPixels : MeasureSpec.getSize(widthSpec);
+    measureToolbarControls(availableWidth(width));
     if (expanded)
     {
       int control = ui.dp(CONTROL_DP);
       int available = availableWidth(width) - control;
       if (hasMore)
       {
-        int labelWidth = Math.max(control, (int)Math.ceil(loadMore.getPaint().measureText(loadMoreLabel))
-            + loadMore.getPaddingLeft() + loadMore.getPaddingRight());
+        int labelWidth = paddedTextWidth(loadMore, loadMoreLabel);
         // Keep space for the list. The accessible label stays the same when
         // the visual action switches from its full text to a plus sign.
         boolean showLabel = labelWidth <= available / 2;

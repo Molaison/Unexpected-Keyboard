@@ -2,6 +2,7 @@
 <resources>
   <string name="ux_candidate_spellings">Pinyin ▾</string>
   <string name="ux_candidate_spellings_description">Choose pinyin spelling</string>
+  <string name="ux_candidate_options">Pinyin options</string>
   <string name="ux_candidate_layout_nine">9-key</string>
   <string name="ux_candidate_layout_full">26-key</string>
   <string name="ux_candidate_switch_full">Switch to 26-key Chinese layout</string>

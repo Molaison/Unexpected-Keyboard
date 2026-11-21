@@ -2,6 +2,7 @@ package juloo.keyboard2;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -15,6 +16,8 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -35,6 +38,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean largePinyinFont;
   private boolean lowerPinyinEditor;
   private boolean pinyinPagingSelection;
+  private boolean pinyinToolbar;
   private boolean voiceLive;
   private boolean voiceFresh;
   private boolean voiceContinuous;
@@ -49,6 +53,7 @@ public final class PinyinSmokeTest extends Instrumentation
     largePinyinFont = arguments != null && "true".equals(arguments.getString("large_pinyin_font"));
     lowerPinyinEditor = arguments != null && "true".equals(arguments.getString("lower_pinyin_editor"));
     pinyinPagingSelection = arguments != null && "true".equals(arguments.getString("pinyin_paging_selection"));
+    pinyinToolbar = arguments != null && "true".equals(arguments.getString("pinyin_toolbar"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
@@ -126,6 +131,13 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         checkLargePinyinWindow();
         result.putString("stream", "PINYIN_LARGE_FONT_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (pinyinToolbar)
+      {
+        checkPinyinToolbar();
+        result.putString("stream", "PINYIN_TOOLBAR_OK checks=" + checks + "\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -526,6 +538,103 @@ public final class PinyinSmokeTest extends Instrumentation
     passed("editing a composition immediately hides its old expanded candidates");
 
     checkLongExpandedCandidate();
+  }
+
+  private void checkPinyinToolbar() throws Exception
+  {
+    View panel = onMain(this::candidatesView);
+    TextView preedit = onMain(() -> (TextView)field(panel, "preedit"));
+    View layoutSwitch = onMain(() -> (View)field(panel, "readings"));
+    View spellings = onMain(() -> (View)field(panel, "spellings"));
+    int panelHeight = onMain(panel::getHeight);
+    float keyY = onMain(() -> keyPoint("n", false)[1]);
+
+    type("nihao");
+    screenshot("pinyin-toolbar-composing.png");
+    int available = onMain(() -> {
+      int width = assertReadableToolbarText(preedit, "nihao");
+      if (panel.getHeight() != panelHeight || Math.abs(keyPoint("n", false)[1] - keyY) > 1f)
+        throw new AssertionError("Composing resized the keyboard");
+      return width;
+    });
+    tap(preedit);
+    text(activity.plain, "nihao");
+    if (!onMain(() -> activity.plain.hasFocus()
+        && !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing()))
+      throw new AssertionError("Tapping preedit did not commit raw spelling in the editor");
+    passed("five-letter preedit is fully visible in " + available + "px and keeps its raw-spelling action");
+
+    clear();
+    tap(layoutSwitch);
+    await("toolbar switches to nine-key", () -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
+    nineKeys("6464");
+    screenshot("pinyin-toolbar-ambiguous.png");
+    String current = onMain(() -> {
+      String value = activity.plain.getText().toString();
+      String displayed = preedit.getText().toString();
+      if (value.length() < 4 || !displayed.replace(" ", "").equals(value) || !preedit.isLongClickable())
+        throw new AssertionError("The ambiguous reading did not reach the toolbar");
+      assertReadableToolbarText(preedit, displayed);
+      return displayed;
+    });
+    boolean separate = onMain(spellings::isShown);
+    tap(separate ? spellings : layoutSwitch);
+    screenshot("pinyin-toolbar-menu.png");
+    choosePinyinMenuItem("ming");
+    text(activity.plain, "ming");
+    key("space");
+    text(activity.plain, "明");
+    passed("ambiguous preedit " + current + " is readable and "
+        + (separate ? "the separate picker" : "the shared toolbar menu") + " commits 明");
+
+    clear();
+    nineKeys("6464");
+    Rect preeditBounds = onMain(() -> {
+      Rect bounds = new Rect();
+      if (!preedit.getGlobalVisibleRect(bounds)) throw new AssertionError("Preedit cannot be long-pressed");
+      return bounds;
+    });
+    long down = SystemClock.uptimeMillis();
+    injectTouch(down, MotionEvent.ACTION_DOWN, preeditBounds.exactCenterX(), preeditBounds.exactCenterY());
+    SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 100);
+    injectTouch(down, MotionEvent.ACTION_UP, preeditBounds.exactCenterX(), preeditBounds.exactCenterY());
+    choosePinyinMenuItem("ming");
+    text(activity.plain, "ming");
+    key("space");
+    text(activity.plain, "明");
+    passed("long-pressing preedit opens the reading picker directly");
+
+    clear();
+    nineKeys("6464");
+    tap(separate ? spellings : layoutSwitch);
+    choosePinyinMenuItem("ming");
+    text(activity.plain, "ming");
+    onMain(() -> { activity.plain.setSelection(0); return null; });
+    await("moving the cursor ends the selected spelling", () ->
+        !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing());
+    key("space");
+    text(activity.plain, " ming");
+    passed("moving the cursor after the picker leaves the original spelling alone");
+
+    clear();
+    nineKeys("6464");
+    tap(layoutSwitch);
+    if (!separate)
+      choosePinyinMenuItem(panel.getContext().getString(R.string.ux_candidate_layout_full));
+    await("toolbar returns to 26-key", () -> !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
+    if (!onMain(() -> activity.plain.hasFocus())) throw new AssertionError("Layout switch stole editor focus");
+    passed("both layout switch directions work while preserving the editor focus");
+  }
+
+  private int assertReadableToolbarText(TextView preedit, String text)
+  {
+    Rect bounds = new Rect();
+    int usable = preedit.getWidth() - preedit.getCompoundPaddingLeft() - preedit.getCompoundPaddingRight();
+    int needed = (int)Math.ceil(preedit.getPaint().measureText(text));
+    if (!text.contentEquals(preedit.getText()) || !preedit.getGlobalVisibleRect(bounds)
+        || usable < needed || preedit.getLayout().getEllipsisCount(0) != 0)
+      throw new AssertionError("Preedit '" + text + "' gets " + usable + "px but needs " + needed + "px");
+    return usable;
   }
 
   private void checkLongExpandedCandidate() throws Exception
@@ -1064,27 +1173,7 @@ public final class PinyinSmokeTest extends Instrumentation
     if (!onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
       throw new AssertionError("Preedit has readings but cannot open the picker by long press");
     tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_candidate_spellings_description))));
-    idle();
-    long down;
-    android.view.accessibility.AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
-    java.util.List<android.view.accessibility.AccessibilityNodeInfo> readings = root.findAccessibilityNodeInfosByText("ming");
-    if (readings.isEmpty())
-      throw new AssertionError("Nine-key reading picker did not offer ming");
-    // PopupMenu exposes the title as a non-clickable TextView; the containing
-    // menu row owns the click. Tap its visible text like a user instead.
-    Rect readingBounds = new Rect();
-    readings.get(0).getBoundsInScreen(readingBounds);
-    if (!readings.get(0).isVisibleToUser() || readingBounds.isEmpty())
-      throw new AssertionError("The ming reading is not visible");
-    down = SystemClock.uptimeMillis();
-    int pickerWindowId = root.getWindowId();
-    injectTouch(down, MotionEvent.ACTION_DOWN, readingBounds.exactCenterX(), readingBounds.exactCenterY());
-    injectTouch(down, MotionEvent.ACTION_UP, readingBounds.exactCenterX(), readingBounds.exactCenterY());
-    // The selected reading can still be visible in preedit after the menu closes.
-    await("reading picker window dismissed", () -> {
-      android.view.accessibility.AccessibilityNodeInfo active = getUiAutomation().getRootInActiveWindow();
-      return active != null && active.getWindowId() != pickerWindowId;
-    });
+    choosePinyinMenuItem("ming");
     key("space");
     text(activity.plain, "明");
     if (onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
@@ -1129,6 +1218,47 @@ public final class PinyinSmokeTest extends Instrumentation
       throw new AssertionError("Stale predictions survived cursor movement");
     nineKey(false);
     passed("nine-key sentence, context prediction, cursor invalidation and layout restoration");
+  }
+
+  private void choosePinyinMenuItem(String label) throws Exception
+  {
+    AccessibilityServiceInfo services = getUiAutomation().getServiceInfo();
+    if ((services.flags & AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS) == 0)
+    {
+      services.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+      getUiAutomation().setServiceInfo(services);
+    }
+    idle();
+    AccessibilityNodeInfo option = null;
+    search: for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
+    {
+      AccessibilityNodeInfo root = window.getRoot();
+      if (root == null) continue;
+      for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(label))
+        if (node.isVisibleToUser() && label.equals(String.valueOf(node.getText())) && isPinyinMenuListItem(node))
+        {
+          option = node;
+          break search;
+        }
+    }
+    if (option == null) throw new AssertionError("Pinyin menu did not offer " + label);
+    Rect bounds = new Rect();
+    option.getBoundsInScreen(bounds);
+    if (bounds.isEmpty()) throw new AssertionError("The menu choice is not visible: " + label);
+    int menuWindowId = option.getWindowId();
+    touch(bounds.exactCenterX(), bounds.exactCenterY());
+    await("pinyin menu dismissed", () -> {
+      for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
+        if (window.getId() == menuWindowId) return false;
+      return true;
+    });
+  }
+
+  private boolean isPinyinMenuListItem(AccessibilityNodeInfo node)
+  {
+    for (AccessibilityNodeInfo parent = node.getParent(); parent != null; parent = parent.getParent())
+      if (android.widget.ListView.class.getName().contentEquals(parent.getClassName())) return true;
+    return false;
   }
 
   private ClipboardPaneView clipboard() throws Exception
