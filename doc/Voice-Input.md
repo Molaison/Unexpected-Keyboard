@@ -1,5 +1,23 @@
 # 豆包语音修复与验收
 
+## 同一音频的在线对照
+
+将三段离线合成的普通话、中英混输和术语语音保存为 `mandarin.pcm`、`mixed.pcm` 和
+`terms.pcm`。文件格式为 16 kHz、单声道、16 位小端 PCM。用同一测试 APK 和同一目录
+依次运行两个应用 APK，每次写入独立日志。
+
+```sh
+DOUBAO_APP_APK=/path/to/app-debug.apk \
+DOUBAO_TEST_APK=/path/to/app-debug-androidTest.apk \
+DOUBAO_TEST_LOG=/path/to/result.log \
+  bash tools/run-doubao-live-test.sh emulator-5584 false quality /path/to/fixtures
+```
+
+每条 `DOUBAO_QUALITY_SAMPLE` 记录音频帧数、首条非空转写相对首帧发送的时间、停止至
+编辑器定稿的时间和最终文本。它使用真实豆包服务、原生 Opus 和应用的编辑器提交逻辑。
+用固定的参考文本计算字错率，保留原始转写以检查标点。在线模式需要显式运行，只发送
+提供的合成音频。脚本通过 `adb push` 暂存文件，避免 Windows 上二进制标准输入截断。
+
 ## 2026-09-17：点按持续录音
 
 点按开始后，说完一句或在句间停顿不会结束录音；再次点按才停止，长按仍在

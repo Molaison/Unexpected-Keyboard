@@ -11,7 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import org.json.JSONObject;
 
 /** Opt-in online test using a synthetic PCM fixture, never microphone audio. */
 public final class DoubaoLiveTest
@@ -219,6 +221,76 @@ public final class DoubaoLiveTest
     {
       if (session != null && !complete) session.cancel();
       client.shutdown();
+    }
+  }
+
+  /** Reports live service timing and the text committed by the production editor path. */
+  public static void runQuality(Instrumentation test) throws Exception
+  {
+    DoubaoAsrClient client = new DoubaoAsrClient(test.getTargetContext());
+    try
+    {
+      File cache = test.getTargetContext().getCacheDir();
+      for (String name : new String[]{"mandarin", "mixed", "terms"})
+        measureFixture(test, client, name, new File(cache, "voice-" + name + ".pcm"));
+    }
+    finally { client.shutdown(); }
+  }
+
+  private static void measureFixture(Instrumentation test, DoubaoAsrClient client,
+      String name, File fixture) throws Exception
+  {
+    List<byte[]> frames;
+    byte[] lastFrame;
+    try (OpusFrameEncoder encoder = new OpusFrameEncoder())
+    {
+      frames = encodeFixture(encoder, fixture);
+      lastFrame = encoder.encode(new short[320]);
+    }
+    status(test, "Measuring synthetic fixture: " + name);
+    AtomicLong firstTextAt = new AtomicLong(-1);
+    try (DoubaoRegressionTest.Editor editor = new DoubaoRegressionTest.Editor(test, ""))
+    {
+      DoubaoAsrClient.Session session = client.open(new DoubaoAsrClient.Listener() {
+        @Override public void onFailure(IOException error) { editor.run.onFailure(error); }
+        @Override public void onResponse(DoubaoProtocol.Response response)
+        {
+          if (!response.text.isEmpty())
+            firstTextAt.compareAndSet(-1, SystemClock.elapsedRealtime());
+          editor.run.onResponse(response);
+        }
+      });
+      boolean complete = false;
+      try
+      {
+        session.startSession();
+        long started = SystemClock.elapsedRealtime();
+        long timestamp = System.currentTimeMillis();
+        for (int i = 0; i < frames.size(); i++)
+        {
+          if (session.isFinished()) throw new IOException("ASR ended during " + name);
+          session.sendAudio(frames.get(i), i == 0 ? DoubaoProtocol.FRAME_FIRST
+              : DoubaoProtocol.FRAME_MIDDLE, timestamp + 20L * i);
+          long wait = started + 20L * (i + 1) - SystemClock.elapsedRealtime();
+          if (wait > 0) SystemClock.sleep(wait);
+        }
+        test.runOnMainSync(() -> editor.voice.toggle());
+        long stopped = SystemClock.elapsedRealtime();
+        session.sendAudio(lastFrame, DoubaoProtocol.FRAME_LAST, timestamp + 20L * frames.size());
+        session.finish();
+        if (!session.awaitSessionFinished(10000)) throw new IOException("No terminal ASR result for " + name);
+        session.close();
+        editor.complete();
+        String text = editor.text();
+        long committed = SystemClock.elapsedRealtime();
+        long first = firstTextAt.get();
+        status(test, "DOUBAO_QUALITY_SAMPLE " + new JSONObject()
+            .put("fixture", name).put("frames", frames.size())
+            .put("first_text_ms", first < started ? -1 : first - started)
+            .put("final_after_stop_ms", committed - stopped).put("text", text));
+        complete = true;
+      }
+      finally { if (!complete) session.cancel(); }
     }
   }
 

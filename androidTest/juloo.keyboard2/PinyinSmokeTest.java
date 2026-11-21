@@ -52,6 +52,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean voiceLive;
   private boolean voiceFresh;
   private boolean voiceContinuous;
+  private boolean voiceQuality;
   private boolean voiceRegression;
   private boolean voiceMicrophone;
   private String voiceMicrophoneCase;
@@ -72,6 +73,7 @@ public final class PinyinSmokeTest extends Instrumentation
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
     voiceContinuous = arguments != null && "true".equals(arguments.getString("voice_continuous"));
+    voiceQuality = arguments != null && "true".equals(arguments.getString("voice_quality"));
     voiceRegression = arguments != null && "true".equals(arguments.getString("voice_regression"));
     voiceMicrophone = arguments != null && "true".equals(arguments.getString("voice_microphone"));
     voiceMicrophoneCase = arguments == null ? "all" : arguments.getString("voice_microphone_case", "all");
@@ -87,6 +89,13 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         juloo.keyboard2.doubao.DoubaoRegressionTest.run(this);
         result.putString("stream", "DOUBAO_REGRESSION_OK\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (voiceQuality)
+      {
+        juloo.keyboard2.doubao.DoubaoLiveTest.runQuality(this);
+        result.putString("stream", "DOUBAO_QUALITY_OK\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
