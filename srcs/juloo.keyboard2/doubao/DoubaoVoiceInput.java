@@ -138,6 +138,7 @@ public final class DoubaoVoiceInput
     DoubaoAsrClient.Session session = run.session;
     if (session != null)
       session.cancel();
+    clearPendingTranscript(run);
     if (run.hasComposingText)
       finishComposingText(run);
     host.onVoiceStateChanged(State.IDLE);
@@ -244,14 +245,43 @@ public final class DoubaoVoiceInput
 
       String text = run.transcript.update(response, stopping);
       if (text == null) return;
-      final boolean accepted = run.connection.setComposingText(text, 1);
-      run.hasComposingText = true;
-      if (!accepted)
-        failInputConnection(run, "The target editor rejected voice text");
+      run.pendingTranscript = text;
+      long waitNs = INTERIM_UPDATE_INTERVAL_NS - (System.nanoTime() - run.lastAppliedTranscriptNs);
+      if (response.isFinal || response.vadFinished || waitNs <= 0)
+        applyPendingTranscript(run);
       else
-        Log.i(TAG, "transcript_applied final=" + response.isFinal
-            + " chars=" + response.text.length());
+      {
+        // Consume every frame above. Only the editor update is rate-limited.
+        mainHandler.removeCallbacks(run.renderTranscript);
+        mainHandler.postDelayed(run.renderTranscript, (waitNs + 999999L) / 1000000L);
+      }
     });
+  }
+
+  private void applyPendingTranscript(SessionRun run)
+  {
+    mainHandler.removeCallbacks(run.renderTranscript);
+    if (!isCurrent(run) || run.cancelled || run.pendingTranscript == null) return;
+    if (host.getCurrentInputConnection() != run.connection)
+    {
+      failInputConnection(run, "The target editor changed during voice input");
+      return;
+    }
+    String text = run.pendingTranscript;
+    run.pendingTranscript = null;
+    boolean accepted = run.connection.setComposingText(text, 1);
+    run.hasComposingText = true;
+    run.lastAppliedTranscriptNs = System.nanoTime();
+    if (!accepted)
+      failInputConnection(run, "The target editor rejected voice text");
+    else
+      Log.i(TAG, "transcript_applied chars=" + text.length());
+  }
+
+  private void clearPendingTranscript(SessionRun run)
+  {
+    mainHandler.removeCallbacks(run.renderTranscript);
+    run.pendingTranscript = null;
   }
 
   private void failInputConnection(SessionRun run, String message)
@@ -267,6 +297,7 @@ public final class DoubaoVoiceInput
     DoubaoAsrClient.Session session = run.session;
     if (session != null)
       session.cancel();
+    clearPendingTranscript(run);
     host.onVoiceFailure(message);
     host.onVoiceStateChanged(State.IDLE);
   }
@@ -282,12 +313,15 @@ public final class DoubaoVoiceInput
   private void complete(SessionRun run, Throwable problem)
   {
     mainHandler.post(() -> {
+      if (!isCurrent(run)) return;
+      if (problem == null) applyPendingTranscript(run);
       synchronized (lock)
       {
         if (activeRun != run)
           return;
         activeRun = null;
       }
+      clearPendingTranscript(run);
       if (run.hasComposingText)
         finishComposingText(run);
       if (problem != null)
@@ -339,7 +373,9 @@ public final class DoubaoVoiceInput
 
     boolean hasComposingText;
     final DoubaoTranscript transcript = new DoubaoTranscript();
-    long lastInterimUpdateNs;
+    final Runnable renderTranscript = () -> applyPendingTranscript(this);
+    long lastAppliedTranscriptNs;
+    String pendingTranscript;
 
     SessionRun(InputConnection connection)
     {
@@ -597,14 +633,6 @@ public final class DoubaoVoiceInput
       switch (response.type)
       {
         case INTERIM_RESULT:
-          long now = System.nanoTime();
-          if (response.vadFinished
-              || now - lastInterimUpdateNs >= INTERIM_UPDATE_INTERVAL_NS)
-          {
-            lastInterimUpdateNs = now;
-            handleTranscript(this, response);
-          }
-          break;
         case FINAL_RESULT:
           handleTranscript(this, response);
           break;

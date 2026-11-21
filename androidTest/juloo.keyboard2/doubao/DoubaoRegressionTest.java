@@ -123,11 +123,38 @@ public final class DoubaoRegressionTest
     passed(test, "stream, second pass, and final pass replace complete text without appending result fragments");
     checkIndexedUpdatesAfterSnapshot(test);
     passed(test, "indexed updates after a full snapshot can revise or append a sentence without losing the rest");
+    checkBurstResults(test);
+    passed(test, "rapid frames preserve transcript state and pending text reaches the editor before completion");
     checkContextPrivacy(test);
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=10");
+    passed(test, "DOUBAO_REGRESSION_OK checks=11");
+  }
+
+  private static void checkBurstResults(Instrumentation test) throws Exception
+  {
+    String withFragment;
+    String completed;
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"第一句。\",\"is_interim\":true,\"index\":0}]}"));
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"第一句。第二句。\",\"is_interim\":true,\"index\":0},"
+          + "{\"text\":\"第一句。\",\"is_interim\":false,\"index\":1},"
+          + "{\"text\":\"第二句。\",\"is_interim\":true,\"index\":2}]}"));
+      editor.run.onResponse(response(finalJson("第三句。", 3)));
+      withFragment = editor.text();
+    }
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"临时\",\"is_interim\":true}]}"));
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"最后收到的文本\",\"is_interim\":true}]}"));
+      editor.complete();
+      completed = editor.text();
+    }
+    if (!withFragment.equals("前缀第一句。第二句。第三句。") || !completed.equals("前缀最后收到的文本"))
+      throw new AssertionError("Burst updates produced live=[" + withFragment + "], completed=[" + completed + "]");
   }
 
   private static void checkIndexedUpdatesAfterSnapshot(Instrumentation test) throws Exception
