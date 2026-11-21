@@ -20,6 +20,7 @@ final class DoubaoTranscript
     int end;
     boolean coversUnassignedTail;
     boolean openSnapshotDetail;
+    boolean alignedWithSnapshot;
     Span(int start, int end) { this.start = start; this.end = end; }
   }
 
@@ -65,6 +66,7 @@ final class DoubaoTranscript
       if (span != null)
       {
         span.openSnapshotDetail = !fragment.stable;
+        span.alignedWithSnapshot = true;
         cursor = span.end;
         spans.put(fragment.index, span);
       }
@@ -140,25 +142,151 @@ final class DoubaoTranscript
 
   private static boolean isClosingPunctuation(char character)
   {
-    int kind = Character.getType(character);
-    return kind == Character.END_PUNCTUATION || kind == Character.FINAL_QUOTE_PUNCTUATION
-        || kind == Character.OTHER_PUNCTUATION;
+    return isClosingDelimiter(character) || Character.getType(character) == Character.OTHER_PUNCTUATION;
   }
 
-  private int punctuationEnd(Span span, String text)
+  private static boolean isClosingDelimiter(char character)
   {
+    int kind = Character.getType(character);
+    return kind == Character.END_PUNCTUATION || kind == Character.FINAL_QUOTE_PUNCTUATION
+        || character == '"' || character == '\'';
+  }
+
+  private static boolean isEnclosingDelimiter(char character)
+  {
+    int kind = Character.getType(character);
+    return isClosingDelimiter(character)
+        || kind == Character.START_PUNCTUATION || kind == Character.INITIAL_QUOTE_PUNCTUATION;
+  }
+
+  private static boolean isBoundaryFormatting(char character)
+  {
+    return isEnclosingDelimiter(character) || Character.getType(character) == Character.OTHER_PUNCTUATION
+        || isSpacing(character);
+  }
+
+  private static int trailingPunctuationStart(String text, int start, int end)
+  {
+    while (end > start && isClosingPunctuation(text.charAt(end - 1))) end--;
+    return end;
+  }
+
+  private int endBeforeEnclosingPunctuation(int start, int end)
+  {
+    int marks = trailingPunctuationStart(snapshot, start, end);
+    // Leave enclosing punctuation outside the enlarged text span so the
+    // replacement can match it without taking ownership of it.
+    for (int i = marks; i < end; i++)
+      if (isClosingDelimiter(snapshot.charAt(i))) return marks;
+    return end;
+  }
+
+  private static int nextClosingDelimiter(String text, int start, int end)
+  {
+    while (start < end && !isClosingDelimiter(text.charAt(start))) start++;
+    return start;
+  }
+
+  private int startAfterEnclosingPunctuation(int start)
+  {
+    int end = start;
+    boolean encloses = false;
+    while (end < snapshot.length() && isBoundaryFormatting(snapshot.charAt(end)))
+    {
+      encloses |= isEnclosingDelimiter(snapshot.charAt(end));
+      end++;
+    }
+    return encloses ? end : start;
+  }
+
+  private String withoutRepeatedLeadingPunctuation(Span span, String text)
+  {
+    if (!span.alignedWithSnapshot || text.isEmpty() || !isBoundaryFormatting(text.charAt(0))) return text;
+    int precedingEnd = 0;
+    for (Span earlier : spans.values())
+      if (earlier != span && earlier.end <= span.start)
+        precedingEnd = Math.max(precedingEnd, earlier.end);
+    int start = span.start;
+    boolean encloses = false;
+    while (start > precedingEnd && isBoundaryFormatting(snapshot.charAt(start - 1)))
+    {
+      start--;
+      encloses |= isEnclosingDelimiter(snapshot.charAt(start));
+    }
+    if (!encloses) return text;
+
+    // The surrounding format stays outside the detail across all its revisions.
+    int copied = 0;
+    for (int i = start; i < span.start && copied < text.length(); i++)
+      if (snapshot.charAt(i) == text.charAt(copied)) copied++;
+    return text.substring(copied);
+  }
+
+  private String replaceFragment(Span span, String text)
+  {
+    text = withoutRepeatedLeadingPunctuation(span, text);
+    int previousEnd = span.end;
+    int enclosingOffset = -1;
     int textEnd = text.length();
     while (textEnd > 0 && isSpacing(text.charAt(textEnd - 1))) textEnd--;
-    if (textEnd == 0 || !isClosingPunctuation(text.charAt(textEnd - 1))) return span.end;
+    if (textEnd > 0 && isClosingPunctuation(text.charAt(textEnd - 1))
+        && previousEnd < snapshot.length() && isClosingPunctuation(snapshot.charAt(previousEnd)))
+    {
+      int limit = snapshot.length();
+      for (Span later : spans.values())
+        if (later != span && later.start >= span.end) limit = Math.min(limit, later.start);
 
-    // Consume old terminal punctuation only when the replacement supplies its
-    // own. It must remain outside any subsequent fragment's span.
-    int limit = snapshot.length();
+      int oldMarksEnd = previousEnd;
+      while (oldMarksEnd < limit && isClosingPunctuation(snapshot.charAt(oldMarksEnd))) oldMarksEnd++;
+      int replacement = trailingPunctuationStart(text, 0, textEnd);
+      int replacementCloser = nextClosingDelimiter(text, replacement, textEnd);
+      // Account for delimiters already in the old detail before matching the enclosing marks.
+      for (int i = trailingPunctuationStart(snapshot, span.start, span.end);
+          i < span.end && replacementCloser < textEnd; i++)
+        if (snapshot.charAt(i) == text.charAt(replacementCloser))
+        {
+          replacement = replacementCloser + 1;
+          replacementCloser = nextClosingDelimiter(text, replacement, textEnd);
+        }
+
+      StringBuilder merged = new StringBuilder(text.length());
+      merged.append(text, 0, replacement);
+      while (previousEnd < oldMarksEnd && replacement < textEnd)
+      {
+        int previousCloser = nextClosingDelimiter(snapshot, previousEnd, oldMarksEnd);
+        // Replace ordinary punctuation only at the same nesting level.
+        if (replacement < replacementCloser)
+        {
+          merged.append(text, replacement, replacementCloser);
+          previousEnd = previousCloser;
+          replacement = replacementCloser;
+        }
+        if (replacementCloser == textEnd) break;
+        int matchedCloser = previousCloser;
+        while (matchedCloser < oldMarksEnd && snapshot.charAt(matchedCloser) != text.charAt(replacementCloser))
+          matchedCloser++;
+        if (matchedCloser == oldMarksEnd) break;
+
+        // Keep matched and omitted enclosing marks outside the detail.
+        if (enclosingOffset < 0) enclosingOffset = merged.length();
+        merged.append(snapshot, previousEnd, matchedCloser + 1);
+        previousEnd = matchedCloser + 1;
+        replacement = replacementCloser + 1;
+        replacementCloser = nextClosingDelimiter(text, replacement, textEnd);
+      }
+      merged.append(text, replacement, text.length());
+      text = merged.toString();
+    }
+    int delta = text.length() - (previousEnd - span.start);
+    snapshot = snapshot.substring(0, span.start) + text + snapshot.substring(previousEnd);
+    span.end = span.start + (enclosingOffset < 0 ? text.length() : enclosingOffset);
     for (Span later : spans.values())
-      if (later != span && later.start >= span.end) limit = Math.min(limit, later.start);
-    int end = span.end;
-    while (end < limit && isClosingPunctuation(snapshot.charAt(end))) end++;
-    return end;
+      if (later != span && later.start >= previousEnd)
+      {
+        later.start += delta;
+        later.end += delta;
+      }
+    return snapshot;
   }
 
   private String updateFragment(int index, String text, boolean stable)
@@ -174,18 +302,20 @@ final class DoubaoTranscript
       Span previous = spans.get(lastFragment);
       if (previous != null)
       {
-        int tailEnd = observedTailEnd(previous.end, text);
-        String tail = snapshot.substring(previous.end, tailEnd);
+        int tailStart = startAfterEnclosingPunctuation(previous.end);
+        int tailEnd = observedTailEnd(tailStart, text);
+        String tail = snapshot.substring(tailStart, tailEnd);
         if (sharesTail(tail, text))
         {
-          start = previous.end;
+          start = tailStart;
           // Retain the separator if the revised fragment doesn't provide one.
           if (!isSpacing(text.charAt(0)))
             while (start < tailEnd && isSpacing(snapshot.charAt(start))) start++;
-          end = tailEnd;
+          end = endBeforeEnclosingPunctuation(start, tailEnd);
         }
       }
       span = new Span(start, end);
+      span.alignedWithSnapshot = span.start < span.end;
       span.coversUnassignedTail = span.start < span.end;
       spans.put(index, span);
       lastFragment = index;
@@ -193,7 +323,7 @@ final class DoubaoTranscript
     else if (span == spans.get(lastFragment) && span.end < snapshot.length())
     {
       // An existing detail may describe only the beginning of the visible tail.
-      int tailEnd = observedTailEnd(span.start, text);
+      int tailEnd = endBeforeEnclosingPunctuation(span.end, observedTailEnd(span.start, text));
       if (tailEnd > span.end)
       {
         int extension = matchFormattedPrefix(text, 0, snapshot.substring(span.start, span.end));
@@ -216,17 +346,7 @@ final class DoubaoTranscript
     }
     span.coversUnassignedTail = false;
     span.openSnapshotDetail = false;
-    int previousEnd = punctuationEnd(span, text);
-    int delta = text.length() - (previousEnd - span.start);
-    snapshot = snapshot.substring(0, span.start) + text + snapshot.substring(previousEnd);
-    span.end = span.start + text.length();
-    for (Span later : spans.values())
-      if (later != span && later.start >= previousEnd)
-      {
-        later.start += delta;
-        later.end += delta;
-      }
-    return snapshot;
+    return replaceFragment(span, text);
   }
 
   void clear()

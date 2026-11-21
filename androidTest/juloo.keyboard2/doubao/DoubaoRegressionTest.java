@@ -8,6 +8,7 @@ import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputConnectionWrapper;
 import android.view.inputmethod.SurroundingText;
 import android.widget.EditText;
+import com.google.gson.JsonPrimitive;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
@@ -149,6 +150,8 @@ public final class DoubaoRegressionTest
     passed(test, "a new fragment replaces its pending overlap, and stopping still accepts revisions before the final snapshot");
     checkFormattedAndPartialDetails(test);
     passed(test, "punctuated snapshots and shorter interim fragments preserve revision boundaries");
+    checkQuotedRevisions(test);
+    passed(test, "indexed revisions preserve closing quotes and brackets from the full transcript");
     checkManualInputHandoff(test);
     passed(test, "manual input commits the pending voice text before typing in the same editor");
     checkInterruptedConnection(test);
@@ -159,7 +162,7 @@ public final class DoubaoRegressionTest
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
     checkVoiceSelectionOrdering(test);
     passed(test, "delayed or coalesced selection updates preserve speech retractions and user cursor moves");
-    passed(test, "DOUBAO_REGRESSION_OK checks=18");
+    passed(test, "DOUBAO_REGRESSION_OK checks=19");
   }
 
   private static void checkPeerCloseAfterSession(Instrumentation test) throws Exception
@@ -540,6 +543,52 @@ public final class DoubaoRegressionTest
           + "], extended=[" + extended + "], reformattedTail=[" + reformattedTail + "], shortened=[" + shortened
           + "], expandedDetail=[" + expandedDetail + "], revisedPunctuation=[" + revisedPunctuation
           + "], emptyFinal=[" + emptyFinal + "], emptyWhole=[" + emptyWhole + "], resumed=[" + resumed + "]");
+  }
+
+  private static void checkQuotedRevisions(Instrumentation test) throws Exception
+  {
+    StringBuilder failures = new StringBuilder();
+    for (String[] example : new String[][] {
+        {"他说：“明天见。”然后挂断。", "明天见", "然后挂断。", "明早见。", "他说：“明早见。”然后挂断。"},
+        {"他说：“明天见。”然后挂断。", "明天见", "然后挂断。", "明早见。”", "他说：“明早见。”然后挂断。"},
+        {"He said (\"One.\"). Next.", "One", "Next.", "Two.", "He said (\"Two.\"). Next."},
+        {"He said (\"One.\"). Next.", "One", "Next.", "Two.\"", "He said (\"Two.\"). Next."},
+        {"他说：“明天见。”然后挂断。", "明天见", "", "明早见。", "他说：“明早见。”然后挂断。"},
+        {"He said (\"One.\"). Next.", "One.\"", "Next.", "Two.\").", "He said (\"Two.\"). Next."},
+        {"He said (\"One.\"). Next.", "One", "Next.", "Two.\"", "He said (\"Three.\"). Next.", "Three."},
+        {"He said (\"One.\"). Next.", "One", "Next.", "Two.\")", "He said (\"Two.\"). Next."},
+        {"他说：“你问‘去哪。’？”然后挂断。", "去哪", "然后挂断。", "上海。’”", "他说：“你问‘上海。’？”然后挂断。"},
+        {"他说：“明天见。”然后挂断。", "明天见", "", "明早见。", "他说：“明早见。”然后挂断。", "然后挂断。"},
+        {"他说：“明天见。”然后挂断。", "明天见", "", "明早见。", "他说：“明早见。”然后挂断。", "”然后挂断。"},
+        {"First. “Second?” Next.", "First.", "", "First.", "First. “Second!” Next.", "Second!"},
+        {"First. “Second?” Next.", "First.", "", "First.", "First. “Second!” Next.", "“Second!”"},
+        {"First. “Second?” Next.", "First.", "", "First.", "First. “Third!” Next.", "“Second!”", "“Third!”"},
+        {"First. “Second?” Next.", "Second?", "Next.", "“Second!”", "First. “Second!” Next."},
+        {"He said (\"One.\"). Next.", "One", "Next.", "Two.)", "He said (\"Two.\"). Next."}})
+      try (Editor editor = new Editor(test, "Prefix: "))
+      {
+        boolean lastDetail = example[2].isEmpty();
+        String following = lastDetail ? ""
+            : ",{\"text\":" + new JsonPrimitive(example[2]) + ",\"is_interim\":false,\"index\":2}";
+        editor.run.onResponse(response("{\"results\":["
+            + "{\"text\":" + new JsonPrimitive(example[0]) + ",\"is_interim\":true,\"index\":0},"
+            + "{\"text\":" + new JsonPrimitive(example[1])
+            + ",\"is_interim\":" + lastDetail + ",\"index\":1}" + following + "]}"));
+        reviseQuotedDetail(editor, 1, example[3]);
+        if (example.length > 5) reviseQuotedDetail(editor, lastDetail ? 2 : 1, example[5]);
+        if (example.length > 6) reviseQuotedDetail(editor, 2, example[6]);
+        editor.complete();
+        String actual = editor.text();
+        if (!actual.equals("Prefix: " + example[4]))
+          failures.append(" replacement=[").append(example[3]).append("] actual=[").append(actual).append(']');
+      }
+    if (failures.length() != 0) throw new AssertionError("Quoted revision lost punctuation:" + failures);
+  }
+
+  private static void reviseQuotedDetail(Editor editor, int index, String text) throws Exception
+  {
+    editor.run.onResponse(response("{\"results\":[{\"text\":" + new JsonPrimitive(text)
+        + ",\"is_interim\":false,\"index\":" + index + "}]}"));
   }
 
   private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception
