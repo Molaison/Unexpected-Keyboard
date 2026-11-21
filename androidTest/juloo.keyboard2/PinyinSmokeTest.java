@@ -691,13 +691,19 @@ public final class PinyinSmokeTest extends Instrumentation
     View panel = onMain(this::candidatesView);
     TextView preedit = onMain(() -> (TextView)field(panel, "preedit"));
     View layoutSwitch = onMain(() -> (View)field(panel, "readings"));
-    View spellings = onMain(() -> (View)field(panel, "spellings"));
+    String clipboardLabel = panel.getContext().getString(R.string.ux_clipboard);
+    View clipboard = onMain(() -> findDescription(panel, clipboardLabel));
     int panelHeight = onMain(panel::getHeight);
     float keyY = onMain(() -> keyPoint("n", false)[1]);
+    if (clipboard == null || !onMain(() -> layoutSwitch.isShown() && clipboard.isShown()))
+      throw new AssertionError("Idle input tools are not available");
+    screenshot("pinyin-toolbar-idle.png");
 
     type("nihao");
     screenshot("pinyin-toolbar-composing.png");
     int available = onMain(() -> {
+      if (layoutSwitch.isShown() || clipboard.isShown())
+        throw new AssertionError("Tool buttons still visible while composing");
       int width = assertReadableToolbarText(preedit, "nihao");
       if (panel.getHeight() != panelHeight || Math.abs(keyPoint("n", false)[1] - keyY) > 1f)
         throw new AssertionError("Composing resized the keyboard");
@@ -708,7 +714,8 @@ public final class PinyinSmokeTest extends Instrumentation
     if (!onMain(() -> activity.plain.hasFocus()
         && !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing()))
       throw new AssertionError("Tapping preedit did not commit raw spelling in the editor");
-    passed("five-letter preedit is fully visible in " + available + "px and keeps its raw-spelling action");
+    await("idle tools return after committing", () -> layoutSwitch.isShown() && clipboard.isShown());
+    passed("preedit has " + available + "px, tools hide during typing and return after committing");
 
     clear();
     tap(layoutSwitch);
@@ -718,13 +725,24 @@ public final class PinyinSmokeTest extends Instrumentation
     String current = onMain(() -> {
       String value = activity.plain.getText().toString();
       String displayed = preedit.getText().toString();
-      if (value.length() < 4 || !displayed.replace(" ", "").equals(value) || !preedit.isLongClickable())
+      if (value.length() < 4 || !displayed.replace(" ", "").equals(value) || !preedit.isLongClickable()
+          || layoutSwitch.isShown() || clipboard.isShown())
         throw new AssertionError("The ambiguous reading did not reach the toolbar");
       assertReadableToolbarText(preedit, displayed);
       return displayed;
     });
-    boolean separate = onMain(spellings::isShown);
-    tap(separate ? spellings : layoutSwitch);
+    if (!onMain(() -> {
+      AccessibilityNodeInfo node = preedit.createAccessibilityNodeInfo();
+      try
+      {
+        String label = panel.getContext().getString(R.string.ux_candidate_options);
+        for (AccessibilityNodeInfo.AccessibilityAction action : node.getActionList())
+          if (action.getId() == AccessibilityNodeInfo.ACTION_LONG_CLICK && label.contentEquals(action.getLabel())) return true;
+        return false;
+      }
+      finally { node.recycle(); }
+    })) throw new AssertionError("Missing accessible options on the preedit");
+    longPressPreedit(preedit);
     screenshot("pinyin-toolbar-menu.png");
     int menuWindowId = pinyinMenuItem("ming").getWindowId();
     if (!getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
@@ -736,34 +754,16 @@ public final class PinyinSmokeTest extends Instrumentation
       throw new AssertionError("Back closed the keyboard or changed the composition: " + onMain(() -> activity.plain.getText().toString()));
     passed("system Back dismisses only the reading menu and keeps the composition");
 
-    tap(separate ? spellings : layoutSwitch);
+    longPressPreedit(preedit);
     choosePinyinMenuItem("ming");
     text(activity.plain, "ming");
     key("space");
     text(activity.plain, "明");
-    passed("ambiguous preedit " + current + " is readable and "
-        + (separate ? "the separate picker" : "the shared toolbar menu") + " commits 明");
+    passed("the readable preedit exposes named options and lets the user choose and commit 明");
 
     clear();
     nineKeys("6464");
-    Rect preeditBounds = onMain(() -> {
-      Rect bounds = new Rect();
-      if (!preedit.getGlobalVisibleRect(bounds)) throw new AssertionError("Preedit cannot be long-pressed");
-      return bounds;
-    });
-    long down = SystemClock.uptimeMillis();
-    injectTouch(down, MotionEvent.ACTION_DOWN, preeditBounds.exactCenterX(), preeditBounds.exactCenterY());
-    SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 100);
-    injectTouch(down, MotionEvent.ACTION_UP, preeditBounds.exactCenterX(), preeditBounds.exactCenterY());
-    choosePinyinMenuItem("ming");
-    text(activity.plain, "ming");
-    key("space");
-    text(activity.plain, "明");
-    passed("long-pressing preedit opens the reading picker directly");
-
-    clear();
-    nineKeys("6464");
-    tap(separate ? spellings : layoutSwitch);
+    longPressPreedit(preedit);
     choosePinyinMenuItem("ming");
     text(activity.plain, "ming");
     onMain(() -> { activity.plain.setSelection(0); return null; });
@@ -775,16 +775,69 @@ public final class PinyinSmokeTest extends Instrumentation
 
     clear();
     nineKeys("6464");
-    tap(layoutSwitch);
-    if (!separate)
-      choosePinyinMenuItem(panel.getContext().getString(R.string.ux_candidate_layout_full));
+    longPressPreedit(preedit);
+    choosePinyinMenuItem(panel.getContext().getString(R.string.ux_candidate_layout_full));
     await("toolbar returns to 26-key", () -> !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
     if (!onMain(() -> activity.plain.hasFocus())) throw new AssertionError("Layout switch stole editor focus");
     passed("both layout switch directions work while preserving the editor focus");
+    checkEnglishCandidateTools();
     if (!getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
       throw new AssertionError("Could not send system Back");
     await("Back without a menu still hides the keyboard", () -> !panel.isShown());
     passed("system Back still hides the keyboard when no reading menu is open");
+  }
+
+  private void longPressPreedit(View view) throws Exception
+  {
+    Rect bounds = onMain(() -> {
+      Rect visible = new Rect();
+      if (!view.getGlobalVisibleRect(visible)) throw new AssertionError("Preedit cannot be long-pressed");
+      return visible;
+    });
+    long down = SystemClock.uptimeMillis();
+    injectTouch(down, MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY());
+    SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 100);
+    injectTouch(down, MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY());
+  }
+
+  private void checkEnglishCandidateTools() throws Exception
+  {
+    int previousType = onMain(activity.plain::getInputType);
+    try
+    {
+      clear();
+      onMain(() -> { activity.plain.setInputType(android.text.InputType.TYPE_CLASS_TEXT); return null; });
+      focus(activity.plain);
+      chinese(false);
+      type("teh");
+      englishCandidate("the");
+      await("English suggestions row is visible", () -> {
+        View panel = candidatesView();
+        View latin = (View)field(panel, "latinCandidates");
+        return latin.isShown();
+      });
+      onMain(() -> {
+        juloo.keyboard2.suggestions.CandidatesView latin = (juloo.keyboard2.suggestions.CandidatesView)
+            field(candidatesView(), "latinCandidates");
+        latin.set_candidates(((KeyEventHandler)Config.globalConfig().handler)._suggestions);
+        return null;
+      });
+      await("clipboard hides only when the English candidate is rendered", () -> {
+        View panel = candidatesView();
+        View candidate = findText(panel, "the");
+        View clipboard = findDescription(panel, getTargetContext().getString(R.string.ux_clipboard));
+        return candidate != null && candidate.isShown() && clipboard != null && !clipboard.isShown();
+      });
+      screenshot("pinyin-toolbar-english.png");
+      passed("a visible English candidate replaces the clipboard action while typing");
+    }
+    finally
+    {
+      onMain(() -> { activity.plain.setInputType(previousType); return null; });
+      focus(activity.plain);
+      chinese(true);
+      clear();
+    }
   }
 
   private int assertReadableToolbarText(TextView preedit, String text)
@@ -1475,13 +1528,13 @@ public final class PinyinSmokeTest extends Instrumentation
     nineKeys("6464");
     if (!onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
       throw new AssertionError("Preedit has readings but cannot open the picker by long press");
-    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_candidate_spellings_description))));
+    longPressPreedit(onMain(() -> (View)field(candidatesView(), "preedit")));
     choosePinyinMenuItem("ming");
     key("space");
     text(activity.plain, "明");
     if (onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
       throw new AssertionError("Preedit still exposes the reading action after committing");
-    passed("visible Pinyin button chooses an ambiguous reading");
+    passed("long-pressing preedit chooses an ambiguous reading");
 
     onMain(() -> { activity.password.setText(""); return null; });
     focus(activity.password);
@@ -1728,6 +1781,8 @@ public final class PinyinSmokeTest extends Instrumentation
     onMain(() -> { DirectBootAwarePreferences.get_shared_preferences(getTargetContext()).edit().putString("theme","soft_dark").apply(); return null; });
     idle(); focus(activity.plain); clear(); nineKeys("64426");
     screenshot("nine-key-dark.png");
+    key("space");
+    text(activity.plain, "你好");
     tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
     await("dark clipboard panel", () -> clipboard().isShown());
     screenshot("clipboard-dark.png");
