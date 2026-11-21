@@ -1332,7 +1332,8 @@ public final class PinyinSmokeTest extends Instrumentation
     StringBuilder missingEndings = new StringBuilder();
     for (String[] example : new String[][] {
         {"5464'2646649826", "静安公园", "5"},
-        {"94267823454649244849426", "先去北京再回西安", "64"}})
+        {"94267823454649244849426", "先去北京再回西安", "64"},
+        {"64648426966367874264424", "明天我们去上海", "5"}})
     {
       clear();
       nineKeys(example[0]);

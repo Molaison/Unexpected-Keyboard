@@ -417,6 +417,7 @@ public final class NineKeyComposition implements ChineseComposition
     // Pick a dictionary word ending at a boundary the native decoder already found.
     Candidate best = Collections.min(unique.values(), CANDIDATE_ORDER);
     int prefixEnd = 0;
+    int prefixCharacters = 0;
     List<NineKeyLexicon.Entry> bestEndings = Collections.emptyList();
     for (int i = best.spellingStarts.length - 1; i > 0; i--)
     {
@@ -428,6 +429,7 @@ public final class NineKeyComposition implements ChineseComposition
       if (endings.isEmpty() || (!bestEndings.isEmpty() && endings.get(0).score >= bestEndings.get(0).score))
         continue;
       prefixEnd = cut;
+      prefixCharacters = i;
       bestEndings = endings;
     }
     if (bestEndings.isEmpty()) return;
@@ -447,7 +449,36 @@ public final class NineKeyComposition implements ChineseComposition
       }
       if (distinct.size() >= ENDING_READINGS) break;
     }
+    Candidate homophone = homophoneEnding(best, prefixEnd, prefixCharacters, bestEndings);
+    if (homophone != null && !unique.containsKey(homophone.text) && !recovered.containsKey(homophone.text))
+      recovered.put(homophone.text, homophone);
     mergeWordEndings(recovered);
+  }
+
+  private Candidate homophoneEnding(Candidate best, int prefixEnd, int prefixCharacters,
+      List<NineKeyLexicon.Entry> endings)
+  {
+    if (best.partial || prefixCharacters >= best.text.length()) return null;
+    String suffix = best.reading.spelling.substring(prefixEnd);
+    String original = best.text.substring(prefixCharacters);
+    String replacement = null;
+    for (NineKeyLexicon.Entry ending : endings)
+    {
+      if (ending.text.length() != original.length() || !suffix.equals(ending.spelling)
+          || !best.display.endsWith(" " + ending.display)) continue;
+      if (ending.text.equals(original))
+      {
+        // Both endings must be words in the index, with the replacement ranked higher there.
+        if (replacement == null) return null;
+        String text = best.text.substring(0, prefixCharacters) + replacement;
+        // Keep the original sentence ahead of its same-reading dictionary alternative.
+        Candidate alternative = new Candidate(text, best.reading, -1, Math.nextUp(best.score));
+        alternative.display = best.display;
+        return alternative;
+      }
+      if (replacement == null) replacement = ending.text;
+    }
+    return null;
   }
 
   private void mergeWordEndings(Map<String, Candidate> recovered)
