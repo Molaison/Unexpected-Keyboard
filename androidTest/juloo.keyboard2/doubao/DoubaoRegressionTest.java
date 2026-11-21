@@ -153,7 +153,8 @@ public final class DoubaoRegressionTest
       run.onResponse(response(finalJson("仅分句。", 1)));
       if (!editor.text().equals("前缀今天散步吧，顺便买点水果。"))
         throw new AssertionError("A segment update replaced the full transcript: " + editor.text());
-      run.onResponse(response(finalJson("今天散步吧，顺便买点水果回来。", 0)));
+      run.onResponse(response("{\"results\":[{\"text\":\"今天散步吧，顺便买点水果回来。\","
+          + "\"is_interim\":true,\"nonstream_result\":true,\"index\":0}]}"));
       run.onResponse(DoubaoProtocol.parseResponse(packet("SessionFinished", 20000000, "OK", "")));
       editor.complete();
       if (editor.voice.isActive() || !editor.text().equals("前缀今天散步吧，顺便买点水果回来。"))

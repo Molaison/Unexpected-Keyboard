@@ -120,6 +120,27 @@ public class DoubaoProtocolTest
   }
 
   @Test
+  public void keepsTextWhenVadStartSharesTheFirstRecognitionFrame() throws Exception
+  {
+    String json = "{\"results\":[{\"text\":\"今天天气不错\",\"is_interim\":true,\"index\":0}],"
+        + "\"extra\":{\"vad_start\":true}}";
+    DoubaoProtocol.Response heard = DoubaoProtocol.parseResponse(response("", 20000000, "OK", json));
+    assertEquals("今天天气不错", heard.text);
+    assertTrue(heard.vadStart);
+    assertEquals(DoubaoProtocol.ResponseType.INTERIM_RESULT, heard.type);
+  }
+
+  @Test
+  public void recognizesNonstreamResultOnTheDocumentedResultItem() throws Exception
+  {
+    String json = "{\"results\":[{\"text\":\"今天散步吧，顺便买点水果。\","
+        + "\"is_interim\":true,\"nonstream_result\":true,\"index\":0}]}";
+    DoubaoProtocol.Response finalPass = DoubaoProtocol.parseResponse(response("", 20000000, "OK", json));
+    assertEquals(DoubaoProtocol.ResponseType.FINAL_RESULT, finalPass.type);
+    assertEquals("今天散步吧，顺便买点水果。", finalPass.text);
+  }
+
+  @Test
   public void preservesSentenceIndexesWithoutVadStart() throws Exception
   {
     DoubaoProtocol.Response first = DoubaoProtocol.parseResponse(response("", 20000000, "OK",

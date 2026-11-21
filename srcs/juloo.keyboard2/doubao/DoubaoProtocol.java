@@ -374,17 +374,15 @@ public final class DoubaoProtocol
     }
 
     JsonObject extra = optionalObject(root, "extra");
+    boolean vadStart = optionalBoolean(extra, "vad_start", false);
     JsonElement resultsElement = root.get("results");
     if (resultsElement == null || resultsElement.isJsonNull())
     {
       int packetNumber = optionalInt(extra, "packet_number", -1);
-      return new Response(ResponseType.HEARTBEAT, "", false, false, false, false,
+      return new Response(vadStart ? ResponseType.VAD_START : ResponseType.HEARTBEAT,
+          "", false, vadStart, false, false,
           -1, packetNumber, 0, "", resultJson);
     }
-
-    if (optionalBoolean(extra, "vad_start", false))
-      return new Response(ResponseType.VAD_START, "", false, true, false, false,
-          -1, -1, 0, "", resultJson);
 
     List<JsonObject> results = resultObjects(resultsElement);
     JsonObject first = results.isEmpty() ? null : results.get(0);
@@ -404,11 +402,13 @@ public final class DoubaoProtocol
     }
 
     JsonObject firstExtra = first == null ? null : optionalObject(first, "extra");
-    boolean isFinal = optionalBoolean(firstExtra, "nonstream_result", false)
+    boolean isFinal = optionalBoolean(first, "nonstream_result", false)
+        || optionalBoolean(firstExtra, "nonstream_result", false)
         || (allStable && (wholeTranscript || vadFinished));
-    return new Response(
-        isFinal ? ResponseType.FINAL_RESULT : ResponseType.INTERIM_RESULT,
-        text, isFinal, false, vadFinished, wholeTranscript, utteranceIndex, -1, 0, "", resultJson);
+    ResponseType type = isFinal ? ResponseType.FINAL_RESULT
+        : vadStart && text.isEmpty() ? ResponseType.VAD_START : ResponseType.INTERIM_RESULT;
+    return new Response(type, text, isFinal, vadStart, vadFinished, wholeTranscript,
+        utteranceIndex, -1, 0, "", resultJson);
   }
 
   private static byte[] request(String requestId, String token,
