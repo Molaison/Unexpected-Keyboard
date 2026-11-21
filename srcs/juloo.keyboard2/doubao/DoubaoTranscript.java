@@ -21,13 +21,13 @@ final class DoubaoTranscript
 
   String update(DoubaoProtocol.Response response, boolean stopping)
   {
-    if (response.wholeTranscript || (snapshot != null && response.utteranceIndex < 0))
-    {
-      if (sealed && !response.isFinal) return null;
+    if (sealed && response.layout != DoubaoProtocol.TranscriptLayout.FINAL_WHOLE)
+      return null;
+    if (response.layout != DoubaoProtocol.TranscriptLayout.INDEXED
+        || (snapshot != null && response.utteranceIndex < 0))
       return setSnapshot(response, stopping);
-    }
     if (snapshot != null)
-      return sealed ? null : updateFragment(response.utteranceIndex, response.text);
+      return updateFragment(response.utteranceIndex, response.text);
 
     int index = response.utteranceIndex >= 0 ? response.utteranceIndex : currentIndex;
     currentIndex = Math.max(currentIndex, index);
@@ -40,7 +40,7 @@ final class DoubaoTranscript
   private String setSnapshot(DoubaoProtocol.Response response, boolean stopping)
   {
     snapshot = response.text;
-    sealed = stopping && response.isFinal;
+    sealed = stopping && response.layout == DoubaoProtocol.TranscriptLayout.FINAL_WHOLE;
     utterances.clear();
     spans.clear();
     lastFragment = -1;
@@ -70,9 +70,15 @@ final class DoubaoTranscript
     if (span == null)
     {
       if (index <= lastFragment || index <= 0) return null;
-      spans.put(index, new Span(snapshot.length(), snapshot.length() + text.length()));
+      int start = snapshot.length();
+      Span previous = spans.get(lastFragment);
+      // A newly indexed fragment may complete the tail of the full snapshot.
+      // Keep characters already anchored to a preceding fragment.
+      if (previous != null && text.startsWith(snapshot.substring(previous.end)))
+        start = previous.end;
+      spans.put(index, new Span(start, start + text.length()));
       lastFragment = index;
-      snapshot += text;
+      snapshot = snapshot.substring(0, start) + text;
       return snapshot;
     }
 

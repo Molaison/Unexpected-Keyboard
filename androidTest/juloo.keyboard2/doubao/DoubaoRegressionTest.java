@@ -125,11 +125,40 @@ public final class DoubaoRegressionTest
     passed(test, "indexed updates after a full snapshot can revise or append a sentence without losing the rest");
     checkBurstResults(test);
     passed(test, "rapid frames preserve transcript state and pending text reaches the editor before completion");
+    checkOverlappingAndStoppedResults(test);
+    passed(test, "a new fragment replaces its pending overlap, and stopping still accepts revisions before the final snapshot");
     checkContextPrivacy(test);
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=11");
+    passed(test, "DOUBAO_REGRESSION_OK checks=12");
+  }
+
+  private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception
+  {
+    String overlap;
+    String revisedWhileStopping;
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"昨天。今天\",\"is_interim\":false},"
+          + "{\"text\":\"昨天。\",\"is_interim\":false,\"index\":1}]}"));
+      editor.run.onResponse(response(finalJson("今天下雨。", 2)));
+      overlap = editor.text();
+    }
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      test.runOnMainSync(() -> editor.voice.toggle());
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"第一句。第二句。\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"第一句。\",\"is_interim\":false,\"index\":1},"
+          + "{\"text\":\"第二句。\",\"is_interim\":false,\"index\":2}]}"));
+      editor.run.onResponse(response(finalJson("第二句修订。", 2)));
+      editor.complete();
+      revisedWhileStopping = editor.text();
+    }
+    if (!overlap.equals("前缀昨天。今天下雨。") || !revisedWhileStopping.equals("前缀第一句。第二句修订。"))
+      throw new AssertionError("Overlap/stop updates produced overlap=[" + overlap
+          + "], revised=[" + revisedWhileStopping + "]");
   }
 
   private static void checkBurstResults(Instrumentation test) throws Exception
@@ -206,7 +235,7 @@ public final class DoubaoRegressionTest
         throw new AssertionError("Two-pass refinement lost or duplicated the transcript: " + editor.text());
 
       run.onResponse(response("{\"results\":["
-          + "{\"text\":\"今天散步吧，顺便买点水果。\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"今天散步吧，顺便买点水果。\",\"is_interim\":false,\"nonstream_result\":true,\"index\":0},"
           + "{\"text\":\"顺便买点水果。\",\"is_interim\":false,\"index\":1}]}"));
       if (!editor.text().equals("前缀今天散步吧，顺便买点水果。"))
         throw new AssertionError("The final pass did not replace the full transcript: " + editor.text());
