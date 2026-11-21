@@ -133,6 +133,27 @@ public final class DoubaoVoiceInput
     cancel();
   }
 
+  public boolean cancelForSelectionChange(int start, int end, int composingEnd)
+  {
+    requireMainThread();
+    final SessionRun run;
+    synchronized (lock) { run = activeRun; }
+    if (run == null || !run.hasComposingText || start < 0 || end < 0
+        || host.getCurrentInputConnection() != run.connection)
+      return false;
+    if (composingEnd >= 0 && start == composingEnd && end == composingEnd)
+    {
+      run.composingAcknowledged = true;
+      return false;
+    }
+    // Some editors omit composing bounds even for their normal write callbacks.
+    if (composingEnd < 0 && !run.composingAcknowledged) return false;
+    // The editor keeps the visible text at the old cursor. Drop pending results
+    // before relinquishing the composing span so none can follow the new cursor.
+    cancel();
+    return true;
+  }
+
   public void cancel()
   {
     requireMainThread();
@@ -283,6 +304,7 @@ public final class DoubaoVoiceInput
     }
     String text = run.pendingTranscript;
     run.pendingTranscript = null;
+    if (text.isEmpty()) run.composingAcknowledged = false;
     boolean accepted = run.connection.setComposingText(text, 1);
     run.hasComposingText = true;
     run.lastAppliedTranscriptNs = System.nanoTime();
@@ -392,6 +414,7 @@ public final class DoubaoVoiceInput
     volatile long audioFramesSent;
 
     boolean hasComposingText;
+    boolean composingAcknowledged;
     final DoubaoTranscript transcript = new DoubaoTranscript();
     final Runnable renderTranscript = () -> applyPendingTranscript(this);
     long lastAppliedTranscriptNs;

@@ -1711,6 +1711,11 @@ public final class PinyinSmokeTest extends Instrumentation
   /** Real AudioRecord/touches with a silent mic and synthetic ASR sentence replies. */
   private void microphoneInput() throws Exception
   {
+    if ("cursor_move".equals(voiceMicrophoneCase) || "cursor_clears_composition".equals(voiceMicrophoneCase))
+    {
+      checkVoiceCursorMove("cursor_clears_composition".equals(voiceMicrophoneCase));
+      return;
+    }
     if ("service_busy".equals(voiceMicrophoneCase) || "service_busy_stream".equals(voiceMicrophoneCase))
     {
       checkVoiceServiceBusy("service_busy_stream".equals(voiceMicrophoneCase));
@@ -1838,6 +1843,70 @@ public final class PinyinSmokeTest extends Instrumentation
         throw new AssertionError("The buffered recording did not reach ASR");
       passed("recording begins while connecting and early stop still sends captured audio");
     }
+  }
+
+  private void checkVoiceCursorMove(boolean clearCompositionOnTouch) throws Exception
+  {
+    clear();
+    onMain(() -> {
+      activity.plain.setText("draft ");
+      activity.plain.setSelection(activity.plain.length());
+      return null;
+    });
+    idle();
+    juloo.keyboard2.doubao.DoubaoAsrClient.Listener replay = onMain(() ->
+        juloo.keyboard2.doubao.DoubaoRegressionTest.attachEditorReplay(voice()));
+    replay.onResponse(juloo.keyboard2.doubao.DoubaoRegressionTest.response(
+        "{\"results\":[{\"text\":\"试说\",\"index\":0,\"is_interim\":true}]}"));
+    text(activity.plain, "draft 试说");
+    idle();
+    replay.onResponse(juloo.keyboard2.doubao.DoubaoRegressionTest.response(
+        "{\"results\":[{\"text\":\"\",\"nonstream_result\":true}]}"));
+    text(activity.plain, "draft ");
+    idle();
+    replay.onResponse(juloo.keyboard2.doubao.DoubaoRegressionTest.response(
+        "{\"results\":[{\"text\":\"正常转写\",\"index\":0,\"is_interim\":true}]}"));
+    text(activity.plain, "draft 正常转写");
+    idle();
+    if (!onMain(() -> voice().isActive()))
+      throw new AssertionError("The editor's own composing update stopped voice input");
+
+    float[] point = onMain(() -> {
+      EditText editor = activity.plain;
+      int[] location = new int[2];
+      editor.getLocationOnScreen(location);
+      float x = location[0] + editor.getTotalPaddingLeft() + 1 - editor.getScrollX();
+      float y = location[1] + editor.getTotalPaddingTop()
+          + editor.getLayout().getLineBottom(0) / 2f - editor.getScrollY();
+      return new float[]{x, y};
+    });
+    if (clearCompositionOnTouch)
+      onMain(() -> {
+        activity.plain.setOnTouchListener((view, event) -> {
+          if (event.getActionMasked() == MotionEvent.ACTION_DOWN) activity.plain.clearComposingText();
+          return false;
+        });
+        return null;
+      });
+    try { touch(point[0], point[1]); }
+    finally
+    {
+      if (clearCompositionOnTouch) onMain(() -> { activity.plain.setOnTouchListener(null); return null; });
+    }
+    await("editor tap moves the cursor to the start", () -> activity.plain.getSelectionStart() == 0);
+    idle();
+    replay.onResponse(juloo.keyboard2.doubao.DoubaoRegressionTest.response(
+        "{\"results\":[{\"text\":\"晚到的定稿\",\"index\":0,\"is_final\":true,\"is_vad_finished\":true}]}"));
+    idle();
+    onMain(() -> {
+      String text = activity.plain.getText().toString();
+      int cursor = activity.plain.getSelectionStart();
+      boolean active = voice().isActive();
+      if (!"draft 正常转写".equals(text) || cursor != 0 || active)
+        throw new AssertionError("After cursor move: text=" + text + ", cursor=" + cursor + ", active=" + active);
+      return null;
+    });
+    passed("moving the cursor preserves the existing dictation and rejects a late ASR result");
   }
 
   private void checkVoiceServiceBusy(boolean afterSessionStart) throws Exception

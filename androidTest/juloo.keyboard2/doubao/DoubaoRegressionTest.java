@@ -713,7 +713,7 @@ public final class DoubaoRegressionTest
     return DoubaoProtocol.parseResponse(packet("", 20000000, "OK", json));
   }
 
-  public static void replayBusyService(DoubaoVoiceInput voice, boolean afterSessionStart) throws Exception
+  public static DoubaoAsrClient.Listener attachEditorReplay(DoubaoVoiceInput voice) throws Exception
   {
     Field host = DoubaoVoiceInput.class.getDeclaredField("host");
     host.setAccessible(true);
@@ -721,6 +721,12 @@ public final class DoubaoRegressionTest
     if (editor == null) throw new AssertionError("Cannot replay voice without a focused editor");
     DoubaoVoiceInput.SessionRun run = voice.new SessionRun(editor);
     set(voice, "activeRun", run);
+    return run;
+  }
+
+  public static void replayBusyService(DoubaoVoiceInput voice, boolean afterSessionStart) throws Exception
+  {
+    DoubaoVoiceInput.SessionRun run = (DoubaoVoiceInput.SessionRun)attachEditorReplay(voice);
     try (Transport transport = new Transport(afterSessionStart ? run : null))
     {
       if (afterSessionStart) transport.receive("SessionStarted", 20000000, "OK", "");
