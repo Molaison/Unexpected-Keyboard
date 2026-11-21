@@ -141,6 +141,8 @@ public final class DoubaoRegressionTest
     String formatted;
     String extended;
     String reformattedTail;
+    String shortened;
+    String expandedDetail;
     try (Editor editor = new Editor(test, "前缀"))
     {
       editor.run.onResponse(response("{\"results\":["
@@ -172,11 +174,32 @@ public final class DoubaoRegressionTest
       editor.complete();
       reformattedTail = editor.text();
     }
+    try (Editor editor = new Editor(test, "Prefix: "))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"One. Today it rains.\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"One.\",\"is_interim\":false,\"index\":1}]}"));
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"Today\",\"is_interim\":false,\"index\":2}]}"));
+      editor.complete();
+      shortened = editor.text();
+    }
+    try (Editor editor = new Editor(test, "Prefix: "))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"First. Today it rains.\",\"is_interim\":true,\"index\":0},"
+          + "{\"text\":\"First.\",\"is_interim\":false,\"index\":1},"
+          + "{\"text\":\"Today\",\"is_interim\":true,\"index\":2}]}"));
+      editor.run.onResponse(response(finalJson("Today it rains.", 2)));
+      editor.complete();
+      expandedDetail = editor.text();
+    }
     if (!formatted.equals("前缀先说一句。你好，世界又见。再说一句。")
         || !extended.equals("前缀第一句。今天下雨了。")
-        || !reformattedTail.equals("Prefix: One. Today, it rains."))
+        || !reformattedTail.equals("Prefix: One. Today, it rains.") || !shortened.equals("Prefix: One. Today")
+        || !expandedDetail.equals("Prefix: First. Today it rains."))
       throw new AssertionError("Fragment boundaries produced formatted=[" + formatted
-          + "], extended=[" + extended + "], reformattedTail=[" + reformattedTail + "]");
+          + "], extended=[" + extended + "], reformattedTail=[" + reformattedTail + "], shortened=[" + shortened
+          + "], expandedDetail=[" + expandedDetail + "]");
   }
 
   private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception

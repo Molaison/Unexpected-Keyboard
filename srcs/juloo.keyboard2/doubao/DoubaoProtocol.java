@@ -52,6 +52,7 @@ public final class DoubaoProtocol
     public final ResponseType type;
     public final String text;
     public final boolean isFinal;
+    final boolean stable;
     public final boolean vadStart;
     public final boolean vadFinished;
     final TranscriptLayout layout;
@@ -62,13 +63,14 @@ public final class DoubaoProtocol
     public final String rawJson;
     final List<Fragment> fragments;
 
-    private Response(ResponseType type, String text, boolean isFinal,
+    private Response(ResponseType type, String text, boolean isFinal, boolean stable,
         boolean vadStart, boolean vadFinished, TranscriptLayout layout, int utteranceIndex, int packetNumber,
         int statusCode, String errorMessage, String rawJson, List<Fragment> fragments)
     {
       this.type = type;
       this.text = text;
       this.isFinal = isFinal;
+      this.stable = stable;
       this.vadStart = vadStart;
       this.vadFinished = vadFinished;
       this.layout = layout;
@@ -82,13 +84,13 @@ public final class DoubaoProtocol
 
     static Response simple(ResponseType type)
     {
-      return new Response(type, "", false, false, false, TranscriptLayout.INDEXED, -1, -1, 0, "", null,
+      return new Response(type, "", false, false, false, false, TranscriptLayout.INDEXED, -1, -1, 0, "", null,
           java.util.Collections.emptyList());
     }
 
     static Response error(int statusCode, String message)
     {
-      return new Response(ResponseType.ERROR, "", false, false, false, TranscriptLayout.INDEXED, -1, -1,
+      return new Response(ResponseType.ERROR, "", false, false, false, false, TranscriptLayout.INDEXED, -1, -1,
           statusCode, message, null, java.util.Collections.emptyList());
     }
   }
@@ -393,7 +395,7 @@ public final class DoubaoProtocol
     {
       int packetNumber = optionalInt(extra, "packet_number", -1);
       return new Response(vadStart ? ResponseType.VAD_START : ResponseType.HEARTBEAT,
-          "", false, vadStart, false, TranscriptLayout.INDEXED,
+          "", false, false, vadStart, false, TranscriptLayout.INDEXED,
           -1, packetNumber, 0, "", resultJson, java.util.Collections.emptyList());
     }
 
@@ -426,7 +428,7 @@ public final class DoubaoProtocol
         : vadStart && text.isEmpty() ? ResponseType.VAD_START : ResponseType.INTERIM_RESULT;
     TranscriptLayout layout = nonstream ? TranscriptLayout.FINAL_WHOLE
         : wholeTranscript ? TranscriptLayout.WHOLE : TranscriptLayout.INDEXED;
-    return new Response(type, text, isFinal, vadStart, vadFinished, layout,
+    return new Response(type, text, isFinal, allStable, vadStart, vadFinished, layout,
         utteranceIndex, -1, 0, "", resultJson, fragments);
   }
 

@@ -28,7 +28,7 @@ final class DoubaoTranscript
         || (snapshot != null && response.utteranceIndex < 0))
       return setSnapshot(response, stopping);
     if (snapshot != null)
-      return updateFragment(response.utteranceIndex, response.text, response.isFinal);
+      return updateFragment(response.utteranceIndex, response.text, response.stable);
 
     int index = response.utteranceIndex >= 0 ? response.utteranceIndex : currentIndex;
     currentIndex = Math.max(currentIndex, index);
@@ -118,6 +118,12 @@ final class DoubaoTranscript
     return Character.isSpaceChar(character) || Character.isWhitespace(character);
   }
 
+  private static boolean sharesTail(String tail, String text)
+  {
+    return text.startsWith(tail) || tail.startsWith(text)
+        || matchFormattedPrefix(tail, 0, text) >= 0 || matchFormattedPrefix(text, 0, tail) >= 0;
+  }
+
   private String updateFragment(int index, String text, boolean stable)
   {
     Span span = spans.get(index);
@@ -131,8 +137,7 @@ final class DoubaoTranscript
       if (previous != null)
       {
         String tail = snapshot.substring(previous.end);
-        if (text.startsWith(tail) || tail.startsWith(text)
-            || matchFormattedPrefix(tail, 0, text) >= 0 || matchFormattedPrefix(text, 0, tail) >= 0)
+        if (sharesTail(tail, text))
         {
           start = previous.end;
           // Retain the separator if the revised fragment doesn't provide one.
@@ -144,6 +149,17 @@ final class DoubaoTranscript
       span.coversUnassignedTail = span.start < span.end;
       spans.put(index, span);
       lastFragment = index;
+    }
+    else if (span == spans.get(lastFragment) && span.end < snapshot.length())
+    {
+      // An existing detail may describe only the beginning of the visible tail.
+      int extension = matchFormattedPrefix(text, 0, snapshot.substring(span.start, span.end));
+      if (extension >= 0 && extension < text.length()
+          && sharesTail(snapshot.substring(span.end), text.substring(extension)))
+      {
+        span.end = snapshot.length();
+        span.coversUnassignedTail = true;
+      }
     }
 
     int previousEnd = span.end;
