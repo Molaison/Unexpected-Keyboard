@@ -27,6 +27,10 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int EARLIER_ENDING_PREFIXES = 4;
   private static final int EARLIER_ENDING_WORDS = 3;
   private static final int SENTENCE_READINGS = 12;
+  private static final String SEQUENCE_CUE_KEYS = digits("xian");
+  private static final String SEQUENCE_JOIN_KEYS = digits("zai");
+  private static final int SEQUENCE_WORD_KEYS = 12;
+  private static final int SEQUENCE_ENDINGS = 16;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
   private static final int TRANSPOSED_WORDS = 3;
@@ -425,7 +429,12 @@ public final class NineKeyComposition implements ChineseComposition
       if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
           && candidates.size() < MAX_CANDIDATES
           && fixedEnd == 0 && constraint.isEmpty() && remaining.indexOf('\'') < 0)
+      {
         addSequentialSentence(remaining, unique);
+        if (remaining.startsWith(SEQUENCE_CUE_KEYS) && !candidates.isEmpty()
+            && candidates.size() < MAX_CANDIDATES)
+          addWordSequence(remaining, candidates.get(0));
+      }
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
@@ -537,6 +546,82 @@ public final class NineKeyComposition implements ChineseComposition
         corrected = candidate;
       }
     return corrected;
+  }
+
+  private void addWordSequence(String raw, Candidate first)
+  {
+    if (first.index != 0 || first.partial || first.text.startsWith("先")) return;
+    int start = SEQUENCE_CUE_KEYS.length();
+    int joinLength = SEQUENCE_JOIN_KEYS.length();
+    int limit = Math.min(raw.length() - joinLength - 4, start + SEQUENCE_WORD_KEYS);
+    for (int cut = raw.indexOf(SEQUENCE_JOIN_KEYS, start + 4); cut >= 0 && cut <= limit;
+         cut = raw.indexOf(SEQUENCE_JOIN_KEYS, cut + 1))
+    {
+      int tail = cut + joinLength;
+      if (raw.length() - tail > SEQUENCE_WORD_KEYS) continue;
+      NineKeyLexicon.Entry middle = lexicon.firstWord(raw.substring(start, cut));
+      if (middle == null) continue;
+      String prefix = "xian " + middle.display;
+      String firstClause = "先" + middle.text;
+      if (!decodeCompleteDisplay(prefix).equals(firstClause)) continue;
+      String clause = firstClause + '再';
+      float score = Math.nextUp(first.score);
+      Candidate known = conflictingSentencePrefix(clause, score, first.text.length());
+      if (known != null && !known.corrected) continue;
+
+      Map<String, Candidate> alternatives = new LinkedHashMap<>();
+      for (NineKeyLexicon.Entry word : lexicon.lookupWords(raw.substring(cut), ENDING_WORDS))
+      {
+        if (!word.text.startsWith("再") || !word.display.startsWith("zai ") || word.text.length() < 3) continue;
+        // Trust a complete sequential reading already decoded with this indexed ending.
+        if (hasSequentialEnding(word.text)) return;
+        String display = prefix + " " + word.display;
+        Candidate candidate = new Candidate(firstClause + word.text,
+            new Reading(display.replace(" ", "")), -1, score);
+        candidate.display = display;
+        alternatives.put(candidate.text, candidate);
+        break;
+      }
+      if (alternatives.isEmpty())
+        for (NineKeyLexicon.Entry word : lexicon.lookupWords(raw.substring(tail), SEQUENCE_ENDINGS))
+        {
+          if (alternatives.size() == 2 || candidates.size() + alternatives.size() == MAX_CANDIDATES) break;
+          String display = prefix + " zai " + word.display;
+          // Both a complete word and the native sequential reading must agree at this cut.
+          if (!decodeCompleteDisplay(display).startsWith(clause)
+              || !decodeCompleteDisplay(word.display).equals(word.text)) continue;
+          Candidate candidate = new Candidate(clause + word.text,
+              new Reading(display.replace(" ", "")), -1, score);
+          candidate.display = display;
+          alternatives.put(candidate.text, candidate);
+          score = Math.nextUp(score);
+        }
+      if (!alternatives.isEmpty())
+      {
+        mergeWordEndings(alternatives);
+        return;
+      }
+    }
+  }
+
+  private boolean hasSequentialEnding(String ending)
+  {
+    for (Candidate candidate : candidates)
+      if (!candidate.partial && !candidate.corrected && candidate.text.startsWith("先")
+          && candidate.text.length() >= ending.length() + 3 && candidate.text.endsWith(ending)) return true;
+    return false;
+  }
+
+  private String decodeCompleteDisplay(String display)
+  {
+    String query = display.replace(' ', '\'');
+    if (query.length() > PinyinDecoder.MAX_PINYIN_LENGTH) return "";
+    decoder.reset();
+    if (decoder.search(query) == 0) return "";
+    int[] starts = decoder.getSpellingStarts();
+    if (starts.length == 0 || starts[starts.length - 1] != query.length()
+        || !formatSpelling(query, starts).equals(display)) return "";
+    return decoder.getCandidate(0);
   }
 
   private String syllableReading(String[] syllables, int start, int end)
