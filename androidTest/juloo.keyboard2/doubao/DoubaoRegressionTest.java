@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
@@ -24,7 +25,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import juloo.keyboard2.Keyboard2;
 import okhttp3.OkHttpClient;
+import okhttp3.Protocol;
 import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import okio.ByteString;
@@ -87,6 +91,8 @@ public final class DoubaoRegressionTest
       finally { worker.shutdownNow(); }
     }
     passed(test, "cancel wakes a pending handshake instead of blocking the next recording");
+    checkCredentialCancellation(test);
+    passed(test, "cancel interrupts a pending credential request and the next request can proceed");
 
     try (Transport fixture = new Transport())
     {
@@ -138,7 +144,72 @@ public final class DoubaoRegressionTest
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=15");
+    passed(test, "DOUBAO_REGRESSION_OK checks=16");
+  }
+
+  private static void checkCredentialCancellation(Instrumentation test) throws Exception
+  {
+    CountDownLatch pending = new CountDownLatch(1);
+    OkHttpClient client = new OkHttpClient.Builder().addInterceptor(chain -> {
+      if (chain.request().url().encodedPath().equals("/pending"))
+      {
+        pending.countDown();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!chain.call().isCanceled() && System.nanoTime() < deadline)
+          android.os.SystemClock.sleep(10);
+        throw new IOException(chain.call().isCanceled() ? "cancelled test request" : "test request timed out");
+      }
+      return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+          .code(200).message("OK").body(ResponseBody.create("{}", null)).build();
+    }).build();
+    Class<?> credentialStore = Class.forName("juloo.keyboard2.doubao.DoubaoAsrClient$CredentialStore");
+    Constructor<?> constructor = credentialStore.getDeclaredConstructor(android.content.Context.class, OkHttpClient.class);
+    constructor.setAccessible(true);
+    Object store = constructor.newInstance(test.getTargetContext(), client);
+    Method execute = credentialStore.getDeclaredMethod("executeJson", Request.class, String.class,
+        DoubaoAsrClient.CredentialRequests.class);
+    execute.setAccessible(true);
+    ExecutorService worker = Executors.newSingleThreadExecutor();
+    DoubaoAsrClient.CredentialRequests abandoned = new DoubaoAsrClient.CredentialRequests();
+    try
+    {
+      Future<?> first = worker.submit(() -> requestCredentials(execute, store, "/pending", abandoned));
+      if (!pending.await(2, TimeUnit.SECONDS)) throw new AssertionError("Credential request did not start");
+      Future<?> next = worker.submit(() -> requestCredentials(execute, store, "/next",
+          new DoubaoAsrClient.CredentialRequests()));
+      abandoned.cancel();
+      try
+      {
+        first.get(2, TimeUnit.SECONDS);
+        throw new AssertionError("Cancelled credential request completed successfully");
+      }
+      catch (ExecutionException error)
+      {
+        if (!(error.getCause() instanceof IOException)
+            || !"cancelled test request".equals(error.getCause().getMessage())) throw error;
+      }
+      if (!"{}".equals(String.valueOf(next.get(2, TimeUnit.SECONDS))))
+        throw new AssertionError("The next voice run could not request credentials");
+    }
+    finally
+    {
+      abandoned.cancel();
+      worker.shutdownNow();
+      client.dispatcher().executorService().shutdownNow();
+      client.connectionPool().evictAll();
+    }
+  }
+
+  private static Object requestCredentials(Method execute, Object store, String path,
+      DoubaoAsrClient.CredentialRequests requests) throws Exception
+  {
+    Request request = new Request.Builder().url("https://localhost" + path).build();
+    try { return execute.invoke(store, request, "test credentials", requests); }
+    catch (InvocationTargetException error)
+    {
+      if (error.getCause() instanceof IOException) throw (IOException)error.getCause();
+      throw error;
+    }
   }
 
   private static void checkInterruptedConnection(Instrumentation test) throws Exception

@@ -24,6 +24,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -82,11 +83,17 @@ public final class DoubaoAsrClient
 
   public Session open(Listener listener) throws IOException
   {
+    return open(listener, new CredentialRequests());
+  }
+
+  Session open(Listener listener, CredentialRequests requests) throws IOException
+  {
     if (listener == null)
       throw new IllegalArgumentException("listener must not be null");
-    Credentials credentials = credentialStore.ensureCredentials();
+    Credentials credentials = credentialStore.ensureCredentials(requests);
+    requests.throwIfCancelled();
     Log.i(TAG, "credentials_ready");
-    Session session = new Session(httpClient, credentialStore, credentials, listener);
+    Session session = new Session(httpClient, credentialStore, credentials, listener, requests);
     try
     {
       listener.onConnecting(session);
@@ -106,6 +113,25 @@ public final class DoubaoAsrClient
     httpClient.connectionPool().evictAll();
   }
 
+  /** Owns the HTTP request for one voice run, including credential refresh. */
+  static final class CredentialRequests
+  {
+    private volatile boolean cancelled;
+    private volatile Call inFlight;
+
+    void cancel()
+    {
+      cancelled = true;
+      Call call = inFlight;
+      if (call != null) call.cancel();
+    }
+
+    private void throwIfCancelled() throws IOException
+    {
+      if (cancelled) throw new IOException("Voice input was cancelled while requesting credentials");
+    }
+  }
+
   public static final class Session
   {
     private static final int MAX_RECOVERY_BYTES = 4 * 1024 * 1024;
@@ -113,6 +139,7 @@ public final class DoubaoAsrClient
     private final CredentialStore credentialStore;
     private final Credentials originalCredentials;
     private final Listener listener;
+    private final CredentialRequests credentialRequests;
     private final List<AudioFrame> bufferedAudio = new ArrayList<>();
     private volatile Connection connection;
     private volatile boolean cancelled;
@@ -129,12 +156,13 @@ public final class DoubaoAsrClient
     private Credentials replacement;
 
     Session(OkHttpClient httpClient, CredentialStore credentialStore,
-        Credentials credentials, Listener listener)
+        Credentials credentials, Listener listener, CredentialRequests credentialRequests)
     {
       this.httpClient = httpClient;
       this.credentialStore = credentialStore;
       this.originalCredentials = credentials;
       this.listener = listener;
+      this.credentialRequests = credentialRequests;
       connection = newConnection(credentials);
     }
 
@@ -230,6 +258,7 @@ public final class DoubaoAsrClient
     public void cancel()
     {
       cancelled = true;
+      credentialRequests.cancel();
       Connection current = connection;
       if (current != null) current.cancel();
     }
@@ -257,7 +286,7 @@ public final class DoubaoAsrClient
       Connection previous = connection;
       connection = null;
       previous.cancel();
-      replacement = credentialStore.acquireFreshCredentials();
+      replacement = credentialStore.acquireFreshCredentials(credentialRequests);
       if (cancelled) throw new IOException("Voice input was cancelled during credential refresh");
       connection = newConnection(replacement);
       connection.connectAndStartTask();
@@ -376,6 +405,7 @@ public final class DoubaoAsrClient
 
     void connectAndStartTask() throws IOException
     {
+      throwIfFailed();
       HttpUrl url = buildWebSocketUrl(credentials.deviceId);
       Request request = new Request.Builder()
         .url(url)
@@ -385,6 +415,11 @@ public final class DoubaoAsrClient
         .build();
 
       webSocket = httpClient.newWebSocket(request, new SocketListener());
+      if (closeRequested.get())
+      {
+        webSocket.cancel();
+        throw new IOException("Doubao ASR session was cancelled");
+      }
       await(openLatch, HANDSHAKE_TIMEOUT_MS, "WebSocket open");
       throwIfFailed();
       send(DoubaoProtocol.buildStartTask(requestId, credentials.token));
@@ -668,8 +703,9 @@ public final class DoubaoAsrClient
       preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     }
 
-    synchronized Credentials ensureCredentials() throws IOException
+    synchronized Credentials ensureCredentials(CredentialRequests requests) throws IOException
     {
+      requests.throwIfCancelled();
       Credentials credentials = load();
       if (credentials.cdid.isEmpty())
         credentials.cdid = UUID.randomUUID().toString();
@@ -680,19 +716,20 @@ public final class DoubaoAsrClient
 
       if (credentials.deviceId.isEmpty())
       {
-        registerDevice(credentials);
+        registerDevice(credentials, requests);
         save(credentials);
       }
       if (credentials.token.isEmpty())
       {
-        requestToken(credentials);
+        requestToken(credentials, requests);
         save(credentials);
       }
       return credentials;
     }
 
-    synchronized Credentials acquireFreshCredentials() throws IOException
+    synchronized Credentials acquireFreshCredentials(CredentialRequests requests) throws IOException
     {
+      requests.throwIfCancelled();
       Credentials credentials = new Credentials();
       credentials.deviceId = "";
       credentials.installId = "";
@@ -700,8 +737,8 @@ public final class DoubaoAsrClient
       credentials.cdid = UUID.randomUUID().toString();
       credentials.openudid = generateOpenudid();
       credentials.clientudid = UUID.randomUUID().toString();
-      registerDevice(credentials);
-      requestToken(credentials);
+      registerDevice(credentials, requests);
+      requestToken(credentials, requests);
       return credentials;
     }
 
@@ -739,7 +776,7 @@ public final class DoubaoAsrClient
         throw new IOException("Failed to persist Doubao ASR credentials");
     }
 
-    private void registerDevice(Credentials credentials) throws IOException
+    private void registerDevice(Credentials credentials, CredentialRequests requests) throws IOException
     {
       long now = System.currentTimeMillis();
       DeviceIdentity identity = new DeviceIdentity(context);
@@ -770,7 +807,7 @@ public final class DoubaoAsrClient
         .header("User-Agent", userAgent())
         .post(RequestBody.create(body.toString(), JSON))
         .build();
-      JsonObject result = executeJson(request, "device registration");
+      JsonObject result = executeJson(request, "device registration", requests);
       credentials.deviceId = requiredId(result, "device_id");
       credentials.installId = requiredId(result, "install_id");
       if (credentials.deviceId.equals("0"))
@@ -778,7 +815,7 @@ public final class DoubaoAsrClient
       Log.i(TAG, "device_registered");
     }
 
-    private void requestToken(Credentials credentials) throws IOException
+    private void requestToken(Credentials credentials, CredentialRequests requests) throws IOException
     {
       long now = System.currentTimeMillis();
       HttpUrl url = commonUrl(SETTINGS_URL, credentials, now)
@@ -792,7 +829,7 @@ public final class DoubaoAsrClient
         .post(RequestBody.create(body, null))
         .build();
 
-      JsonObject root = executeJson(request, "ASR settings");
+      JsonObject root = executeJson(request, "ASR settings", requests);
       credentials.token = requiredString(
           requiredJsonObject(
               requiredJsonObject(
@@ -820,29 +857,37 @@ public final class DoubaoAsrClient
         .addQueryParameter("version_name", VERSION_NAME);
     }
 
-    private JsonObject executeJson(Request request, String operation)
+    private JsonObject executeJson(Request request, String operation, CredentialRequests requests)
         throws IOException
     {
-      try (Response response = httpClient.newCall(request).execute())
+      Call call = httpClient.newCall(request);
+      requests.inFlight = call;
+      try
       {
-        String body = response.body() == null ? "" : response.body().string();
-        if (!response.isSuccessful())
-          throw new IOException("Doubao " + operation + " failed with HTTP "
-              + response.code() + ": " + body);
-        try
+        requests.throwIfCancelled();
+        try (Response response = call.execute())
         {
-          JsonElement parsed = JsonParser.parseString(body);
-          if (!parsed.isJsonObject())
+          String body = response.body() == null ? "" : response.body().string();
+          requests.throwIfCancelled();
+          if (!response.isSuccessful())
+            throw new IOException("Doubao " + operation + " failed with HTTP "
+                + response.code() + ": " + body);
+          try
+          {
+            JsonElement parsed = JsonParser.parseString(body);
+            if (!parsed.isJsonObject())
+              throw new IOException("Doubao " + operation
+                  + " returned non-object JSON");
+            return parsed.getAsJsonObject();
+          }
+          catch (JsonParseException e)
+          {
             throw new IOException("Doubao " + operation
-                + " returned non-object JSON");
-          return parsed.getAsJsonObject();
-        }
-        catch (JsonParseException e)
-        {
-          throw new IOException("Doubao " + operation
-              + " returned invalid JSON", e);
+                + " returned invalid JSON", e);
+          }
         }
       }
+      finally { requests.inFlight = null; }
     }
 
     private JsonObject requiredJsonObject(JsonObject object, String key)

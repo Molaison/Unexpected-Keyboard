@@ -147,6 +147,8 @@ public final class DoubaoVoiceInput
     DoubaoAsrClient.Session session = run.session;
     if (session != null)
       session.cancel();
+    else
+      run.credentialRequests.cancel();
     clearPendingTranscript(run);
     if (run.hasComposingText)
       finishComposingText(run);
@@ -375,6 +377,8 @@ public final class DoubaoVoiceInput
     String contextJson = "";
     final AtomicReference<IOException> asyncFailure =
         new AtomicReference<IOException>();
+    final DoubaoAsrClient.CredentialRequests credentialRequests =
+        new DoubaoAsrClient.CredentialRequests();
 
     volatile DoubaoAsrClient.Session session;
     volatile AudioRecord recorder;
@@ -405,7 +409,7 @@ public final class DoubaoVoiceInput
         if (stopRequested) return;
         capture = startCapture();
         throwIfCancelledOrFailed();
-        session = asrClient.open(this);
+        session = asrClient.open(this, credentialRequests);
         throwIfCancelledOrFailed();
         session.startSession(contextJson);
         throwIfCancelledOrFailed();
@@ -423,8 +427,7 @@ public final class DoubaoVoiceInput
       }
       finally
       {
-        problem = stopCapture(capture, problem);
-        problem = releaseRecorder(problem);
+        problem = capture == null ? releaseRecorder(problem) : stopCapture(capture, problem);
         DoubaoAsrClient.Session currentSession = session;
         if (currentSession != null)
         {
@@ -519,12 +522,10 @@ public final class DoubaoVoiceInput
       }
       finally
       {
-        try { audioRecord.stop(); }
-        catch (RuntimeException error)
-        {
-          IOException failure = new IOException("Could not stop microphone capture", error);
-          if (!capture.failure.compareAndSet(null, failure)) capture.failure.get().addSuppressed(error);
-        }
+        Throwable problem = releaseRecorder(capture.failure.get());
+        if (problem != null)
+          capture.failure.set(problem instanceof IOException ? (IOException)problem
+              : new IOException("Could not release microphone capture", problem));
       }
     }
 
@@ -537,7 +538,8 @@ public final class DoubaoVoiceInput
       try (OpusFrameEncoder encoder = new OpusFrameEncoder())
       {
         long startedAtMs = System.currentTimeMillis();
-        long startedAtNs = System.nanoTime();
+        long nextFrameAtNs = System.nanoTime();
+        long framePeriodNs = TimeUnit.MILLISECONDS.toNanos(FRAME_DURATION_MS);
         long frameIndex = 0;
         while (!cancelled && !session.isFinished())
         {
@@ -551,15 +553,18 @@ public final class DoubaoVoiceInput
           }
 
           // Frames recorded during the handshake must use the normal audio cadence.
-          long elapsedMs = frameIndex * FRAME_DURATION_MS;
-          long waitNs = startedAtNs + TimeUnit.MILLISECONDS.toNanos(elapsedMs) - System.nanoTime();
+          byte[] opus = encoder.encode(pcmFrame);
+          long waitNs = nextFrameAtNs - System.nanoTime();
           if (waitNs > 0) TimeUnit.NANOSECONDS.sleep(waitNs);
           throwIfCancelledOrFailed();
           if (session.isFinished()) break;
-          byte[] opus = encoder.encode(pcmFrame);
           int frameState = frameIndex == 0
               ? DoubaoProtocol.FRAME_FIRST : DoubaoProtocol.FRAME_MIDDLE;
-          session.sendAudio(opus, frameState, startedAtMs + elapsedMs);
+          nextFrameAtNs = System.nanoTime() + framePeriodNs;
+          session.sendAudio(opus, frameState, startedAtMs + frameIndex * FRAME_DURATION_MS);
+          long sentAtNs = System.nanoTime();
+          if (sentAtNs >= nextFrameAtNs)
+            nextFrameAtNs = sentAtNs + framePeriodNs;
           frameIndex++;
           audioFramesSent = frameIndex;
           if (frameIndex == 1 || frameIndex % 50 == 0)
@@ -581,7 +586,6 @@ public final class DoubaoVoiceInput
     private Throwable stopCapture(Capture capture, Throwable problem)
     {
       stopRequested = true;
-      if (capture == null) return problem;
       try
       {
         capture.thread.join(2000);
@@ -592,6 +596,12 @@ public final class DoubaoVoiceInput
         if (problem == null) return error;
         problem.addSuppressed(error);
         if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+      }
+      IOException failure = capture.failure.get();
+      if (failure != null)
+      {
+        if (problem == null) return failure;
+        if (problem != failure) problem.addSuppressed(failure);
       }
       return problem;
     }
@@ -625,7 +635,6 @@ public final class DoubaoVoiceInput
     private Throwable releaseRecorder(Throwable problem)
     {
       AudioRecord audioRecord = recorder;
-      recorder = null;
       if (audioRecord == null)
         return problem;
 
@@ -653,6 +662,7 @@ public final class DoubaoVoiceInput
         else
           problem.addSuppressed(releaseError);
       }
+      recorder = null;
       return problem;
     }
 
