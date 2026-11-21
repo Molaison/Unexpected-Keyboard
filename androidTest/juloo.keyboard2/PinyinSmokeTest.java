@@ -250,19 +250,28 @@ public final class PinyinSmokeTest extends Instrumentation
       int beforeMore = onMain(() -> ((ViewGroup)field(candidatesView(), "items")).getChildCount());
       tap(onMain(() -> (View)field(candidatesView(), "more")));
       await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
-      View loadMore = onMain(() -> findText((View)field(candidatesView(), "expandedItems"), getTargetContext().getString(R.string.pinyin_more_candidates)));
-      for (int attempt=0; !onMain(() -> loadMore.getGlobalVisibleRect(new Rect())); attempt++)
-      {
-        if (attempt >= 30) throw new AssertionError("More candidates button is unreachable");
-        Rect r = onMain(() -> { Rect b=new Rect(); ((View)field(candidatesView(), "expandedScroll")).getGlobalVisibleRect(b); return b; });
-        swipe(r.exactCenterX(), r.bottom-10, r.exactCenterX(), r.top+10);
-      }
+      View loadMore = onMain(() -> findText(candidatesView(),
+          getTargetContext().getString(R.string.pinyin_more_candidates)));
+      Rect pagingBounds = onMain(() -> {
+        Rect bounds = new Rect();
+        if (loadMore == null || !loadMore.getGlobalVisibleRect(bounds)
+            || bounds.height() != loadMore.getHeight())
+          throw new AssertionError("More candidates must be fully visible without scrolling");
+        return bounds;
+      });
       tap(loadMore);
       await("additional candidate cells", () ->
           ((ViewGroup)field(candidatesView(), "items")).getChildCount() > beforeMore);
+      onMain(() -> {
+        Rect bounds = new Rect();
+        if (loadMore.isShown() && (!loadMore.getGlobalVisibleRect(bounds) || !pagingBounds.equals(bounds)))
+          throw new AssertionError("Loading a page moved the paging control");
+        if (!activity.plain.hasFocus()) throw new AssertionError("Paging stole the editor focus");
+        return null;
+      });
       key("enter");
       text(activity.plain, "shi");
-      passed("scrolling to and loading additional candidates");
+      passed("fixed paging control loads additional candidates and preserves editor focus");
 
       clear();
       type("nihao");

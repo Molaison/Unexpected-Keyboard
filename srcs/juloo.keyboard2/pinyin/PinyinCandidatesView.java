@@ -44,8 +44,10 @@ public final class PinyinCandidatesView extends LinearLayout
   private final TextView more;
   private final HorizontalScrollView candidateScroll;
   private final LinearLayout items;
+  private final LinearLayout expandedPanel;
   private final ScrollView expandedScroll;
   private final LinearLayout expandedItems;
+  private final TextView loadMore;
   private View latinCandidates;
   private boolean expanded;
   private int expandedWidth;
@@ -112,12 +114,19 @@ public final class PinyinCandidatesView extends LinearLayout
     more.setContentDescription(context.getString(R.string.ux_more_candidates));
     row.addView(more, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
     addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    expandedPanel = new LinearLayout(context);
+    expandedPanel.setOrientation(VERTICAL);
     expandedScroll = new ScrollView(context);
     expandedItems = new LinearLayout(context);
     expandedItems.setOrientation(VERTICAL);
     expandedScroll.addView(expandedItems);
-    expandedScroll.setVisibility(GONE);
-    addView(expandedScroll, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(144)));
+    expandedPanel.addView(expandedScroll, new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1));
+    loadMore = ui.button(context.getString(R.string.pinyin_more_candidates), () -> {
+      if (listener != null) listener.onMoreCandidates();
+    });
+    expandedPanel.addView(loadMore, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    expandedPanel.setVisibility(GONE);
+    addView(expandedPanel, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(144)));
   }
 
   private void showReadings()
@@ -217,7 +226,8 @@ public final class PinyinCandidatesView extends LinearLayout
         ? R.string.ux_candidate_collapse : R.string.ux_more_candidates));
     more.setEnabled(!previousCandidates.isEmpty());
     more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
-    expandedScroll.setVisibility(expanded ? VISIBLE : GONE);
+    expandedPanel.setVisibility(expanded ? VISIBLE : GONE);
+    loadMore.setVisibility(hasMore ? VISIBLE : GONE);
     if (expanded) renderExpandedItems(availableWidth(getWidth()));
   }
 
@@ -256,9 +266,5 @@ public final class PinyinCandidatesView extends LinearLayout
       line.addView(v, new LayoutParams(need, -1));
       width += need;
     }
-    if (hasMore)
-      expandedItems.addView(ui.button(getContext().getString(R.string.pinyin_more_candidates), () -> {
-        if (listener != null) listener.onMoreCandidates();
-      }), new LayoutParams(-1, ui.dp(48)));
   }
 }
