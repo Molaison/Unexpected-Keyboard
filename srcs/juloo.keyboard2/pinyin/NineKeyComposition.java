@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import juloo.keyboard2.pinyin.NineKeySyllableGraph.Reading;
 
 /** Bounded phonetic beam plus an exact, memory-mapped nine-key word index.
  * Raw keys are retained independently of the decoder's mutable search workspace.
@@ -18,6 +19,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final String[] LETTERS = {"", "", "abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz"};
   private static final int BEAM = 48;
   private static final int CANDIDATE_PATHS = 24;
+  private static final int ALTERNATE_PATHS = 8;
   private static final int PER_PATH = 32;
   private static final int MAX_CANDIDATES = 256;
   private static final int IMPOSSIBLE = 1000000;
@@ -26,6 +28,7 @@ public final class NineKeyComposition implements ChineseComposition
   private final NineKeyLexicon lexicon;
   private final Set<String> syllables = new HashSet<>();
   private final Set<String> prefixes = new HashSet<>();
+  private final NineKeySyllableGraph syllableGraph = new NineKeySyllableGraph(syllables);
   private final List<Fixed> fixed = new ArrayList<>();
   private final List<Candidate> candidates = new ArrayList<>();
   private final Map<String, List<Path>> cache = new LinkedHashMap<String, List<Path>>() {
@@ -56,16 +59,17 @@ public final class NineKeyComposition implements ChineseComposition
   private static final class Candidate
   {
     final String text;
-    final String spelling;
+    final Reading reading;
     final int index;
-    final int consumed;
     final float score;
     String display;
-    Candidate(String text, String spelling, int index, int consumed, float score)
+    Candidate(String text, Reading reading, int index, float score)
     {
-      this.text = text; this.spelling = spelling; this.index = index;
-      this.consumed = consumed; this.score = score;
-      this.display = spelling;
+      this.text = text;
+      this.reading = reading;
+      this.index = index;
+      this.score = score;
+      this.display = reading.spelling;
     }
   }
 
@@ -111,7 +115,7 @@ public final class NineKeyComposition implements ChineseComposition
   private String resolvedSpelling()
   {
     prepare();
-    if (!candidates.isEmpty()) return candidates.get(0).spelling;
+    if (!candidates.isEmpty()) return candidates.get(0).reading.spelling;
     if (!paths.isEmpty()) return paths.get(0).spelling;
     return raw.substring(fixedEnd); // Unparseable input remains recoverable.
   }
@@ -144,7 +148,7 @@ public final class NineKeyComposition implements ChineseComposition
   {
     prepare();
     List<String> result = new ArrayList<>();
-    if (!candidates.isEmpty()) result.add(candidates.get(0).spelling);
+    if (!candidates.isEmpty()) result.add(candidates.get(0).reading.spelling);
     for (Path path : paths)
       if (result.size() < CANDIDATE_PATHS && !result.contains(path.spelling)) result.add(path.spelling);
     return result;
@@ -207,14 +211,14 @@ public final class NineKeyComposition implements ChineseComposition
     try
     {
       decoder.reset();
-      decoder.search(c.spelling);
+      decoder.search(c.reading.query);
       if (c.index >= decoder.getCandidateCount() || !c.text.equals(decoder.getCandidate(c.index)))
         throw new IllegalStateException("Nine-key candidate changed during replay");
     }
     finally { decoder.setLearningEnabled(learning); }
     decoder.choose(c.index);
     int[] starts = decoder.getSpellingStarts();
-    int consumed = starts[decoder.getFixedLength()];
+    int consumed = c.reading.rawEnd(starts[decoder.getFixedLength()]);
     if (consumed <= 0 || consumed > raw.length() - fixedEnd)
       throw new IllegalStateException("Nine-key choice did not consume a valid prefix");
     fixedEnd += consumed;
@@ -343,34 +347,29 @@ public final class NineKeyComposition implements ChineseComposition
       for (Path path : paths) if (seenReadings.add(path.spelling)) rescued.add(path);
       paths = rescued;
       Map<String, Candidate> unique = new LinkedHashMap<>();
+      List<Reading> alternatives = new ArrayList<>(ALTERNATE_PATHS);
       int pathCount = 0;
       for (Path path : paths)
       {
         if (pathCount++ >= CANDIDATE_PATHS) break;
-        decoder.reset();
-        int count = decoder.search(path.spelling);
-        int[] starts = decoder.getSpellingStarts();
-        for (int i = 0; i < Math.min(count, PER_PATH); i++)
+        int[] starts = addNativeCandidates(unique, new Reading(path.spelling), remaining.length());
+        if (alternatives.size() < ALTERNATE_PATHS && remaining.length() < PinyinDecoder.MAX_PINYIN_LENGTH)
         {
-          String text = decoder.getCandidate(i);
-          if (text.isEmpty() || text.length() >= starts.length) continue;
-          int consumed = starts[text.length()];
-          if (consumed <= 0) continue;
-          int spellingCost = phoneticCost(path.spelling.substring(0, consumed), false);
-          if (spellingCost == IMPOSSIBLE) continue;
-          float score = decoder.getCandidateScore(i) / Math.max(1, text.length()) + spellingCost;
-          // Fully decoded words/sentences lead; partial choices remain available.
-          if (consumed < remaining.length()) score += 12000 + (remaining.length() - consumed) * 100;
-          Candidate c = new Candidate(text, path.spelling, i, consumed, score);
-          c.display = formatSpelling(path.spelling, starts);
-          Candidate old = unique.get(text);
-          if (old == null || c.score < old.score) unique.put(text, c);
+          String decoded = formatSpelling(path.spelling, starts);
+          for (Reading split : syllableGraph.splits(path.spelling))
+          {
+            if (split.query.length() <= PinyinDecoder.MAX_PINYIN_LENGTH
+                && !decoded.equals(split.query.replace('\'', ' ')) && seenReadings.add(split.query))
+              alternatives.add(split);
+            if (alternatives.size() >= ALTERNATE_PATHS) break;
+          }
         }
       }
+      for (Reading reading : alternatives) addNativeCandidates(unique, reading, remaining.length());
       for (NineKeyLexicon.Entry e : direct)
       {
         if (unique.containsKey(e.text)) continue; // Prefer native choice/learning when present.
-        Candidate c = new Candidate(e.text, e.spelling, -1, remaining.length(), e.score);
+        Candidate c = new Candidate(e.text, new Reading(e.spelling), -1, e.score);
         c.display = e.display;
         unique.put(e.text, c);
       }
@@ -383,5 +382,31 @@ public final class NineKeyComposition implements ChineseComposition
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
     dirty = false;
+  }
+
+  private int[] addNativeCandidates(Map<String, Candidate> unique, Reading reading, int rawLength)
+  {
+    decoder.reset();
+    int count = decoder.search(reading.query);
+    int[] starts = decoder.getSpellingStarts();
+    for (int i = 0; i < Math.min(count, PER_PATH); i++)
+    {
+      String text = decoder.getCandidate(i);
+      if (text.isEmpty() || text.length() >= starts.length) continue;
+      int queryEnd = starts[text.length()];
+      int consumed = reading.rawEnd(queryEnd);
+      if (consumed <= 0 || consumed > rawLength) continue;
+      int spellingCost = phoneticCost(reading.spelling.substring(0, consumed), false);
+      if (spellingCost == IMPOSSIBLE) continue;
+      float score = decoder.getCandidateScore(i) / Math.max(1, text.length()) + spellingCost;
+      // Fully decoded words/sentences lead; partial choices remain available.
+      if (consumed < rawLength) score += 12000 + (rawLength - consumed) * 100;
+      Candidate old = unique.get(text);
+      if (old != null && old.score <= score) continue;
+      Candidate candidate = new Candidate(text, reading, i, score);
+      candidate.display = formatSpelling(reading.query, starts);
+      unique.put(text, candidate);
+    }
+    return starts;
   }
 }

@@ -177,7 +177,7 @@ final class PinyinSpelling
     return matched[input.length()];
   }
 
-  private static boolean hasVowel(String text)
+  static boolean hasVowel(String text)
   {
     for (int i = 0; i < text.length(); i++)
       if ("aeiouv".indexOf(text.charAt(i)) != -1) return true;

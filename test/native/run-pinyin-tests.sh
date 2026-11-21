@@ -20,6 +20,7 @@ g++ -std=c++11 -O2 -I"$pinyin_root/vendor/pinyin/include" \
   "$pinyin_root/srcs/juloo.keyboard2/pinyin/PinyinComposition.java" \
   "$pinyin_root/srcs/juloo.keyboard2/pinyin/NineKeyComposition.java" \
   "$pinyin_root/srcs/juloo.keyboard2/pinyin/NineKeyLexicon.java" \
+  "$pinyin_root/srcs/juloo.keyboard2/pinyin/NineKeySyllableGraph.java" \
   "$pinyin_root/srcs/juloo.keyboard2/pinyin/PredictionContext.java" \
   "$pinyin_root/srcs/juloo.keyboard2/suggestions/SuggestionRanker.java" \
   "$pinyin_root/test/native/NineKeyCompositionTest.java" \

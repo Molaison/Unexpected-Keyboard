@@ -45,6 +45,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean lowerPinyinEditor;
   private boolean pinyinPagingSelection;
   private boolean pinyinToolbar;
+  private boolean nineKeySplitting;
   private int landscapeEditorHeight;
   private boolean voiceLive;
   private boolean voiceFresh;
@@ -61,6 +62,7 @@ public final class PinyinSmokeTest extends Instrumentation
     lowerPinyinEditor = arguments != null && "true".equals(arguments.getString("lower_pinyin_editor"));
     pinyinPagingSelection = arguments != null && "true".equals(arguments.getString("pinyin_paging_selection"));
     pinyinToolbar = arguments != null && "true".equals(arguments.getString("pinyin_toolbar"));
+    nineKeySplitting = arguments != null && "true".equals(arguments.getString("nine_key_splitting"));
     landscapeEditorHeight = Integer.parseInt(arguments == null ? "0" : arguments.getString("landscape_editor_height", "0"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
@@ -121,6 +123,13 @@ public final class PinyinSmokeTest extends Instrumentation
       focus(activity.plain);
       chinese(true);
       nineKey(false);
+      if (nineKeySplitting)
+      {
+        checkNineKeySplitting();
+        result.putString("stream", "NINE_KEY_SPLIT_OK\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
       if (voiceMicrophone)
       {
         microphoneInput();
@@ -1241,6 +1250,42 @@ public final class PinyinSmokeTest extends Instrumentation
     for (char key : keys.toCharArray()) key("pinyin_" + key);
   }
 
+  private void checkNineKeySplitting() throws Exception
+  {
+    clear();
+    nineKey(true);
+    nineKeys("942624832");
+    int rank = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
+        .getCandidates().indexOf("西安出发") + 1);
+    if (rank == 0 || rank > 5)
+      throw new AssertionError("Nine-key alternate split 西安出发 ranked " + rank);
+    tapCandidate("西安出发");
+    text(activity.plain, "西安出发");
+
+    clear();
+    nineKeys("942624832");
+    onMain(() -> {
+      juloo.keyboard2.pinyin.PinyinInput input = ((KeyEventHandler)Config.globalConfig().handler)._pinyin;
+      int prefix = input.getCandidates().indexOf("西安");
+      while (prefix < 0 && input.getCandidates().size() < 256)
+      {
+        int previous = input.getCandidates().size();
+        input.showMoreCandidates();
+        prefix = input.getCandidates().indexOf("西安");
+        if (input.getCandidates().size() == previous) break;
+      }
+      if (prefix < 0) throw new AssertionError("The alternate reading has no partial 西安 candidate");
+      input.selectCandidate(prefix);
+      return null;
+    });
+    for (int i = 0; i < 5; i++) key("backspace");
+    text(activity.plain, "西安");
+    key("backspace");
+    await("the four original keys remain after reopening the first syllables", () ->
+      ((KeyEventHandler)Config.globalConfig().handler)._pinyin.getCandidates().contains("西安"));
+    passed("nine-key alternate split commits and backspace preserves the original key boundaries");
+  }
+
   private void nineKeyChecks() throws Exception
   {
     clear();
@@ -1250,6 +1295,8 @@ public final class PinyinSmokeTest extends Instrumentation
     tapCandidate("你好");
     text(activity.plain, "你好");
     passed("real nine-key taps, readable pinyin preedit, Chinese candidate commit");
+
+    checkNineKeySplitting();
 
     onMain(() -> {
       Object index = field(((KeyEventHandler)Config.globalConfig().handler)._pinyin, "lexicon");
