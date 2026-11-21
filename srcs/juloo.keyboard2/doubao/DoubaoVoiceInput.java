@@ -122,6 +122,16 @@ public final class DoubaoVoiceInput
     }
   }
 
+  public void finishForManualInput()
+  {
+    requireMainThread();
+    final SessionRun run;
+    synchronized (lock) { run = activeRun; }
+    if (run != null && host.getCurrentInputConnection() == run.connection)
+      applyPendingTranscript(run);
+    cancel();
+  }
+
   public void cancel()
   {
     requireMainThread();

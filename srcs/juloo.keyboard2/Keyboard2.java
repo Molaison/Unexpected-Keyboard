@@ -836,7 +836,7 @@ public class Keyboard2 extends InputMethodService
     public void beforeManualInput()
     {
       _voicePushToTalkActive = false;
-      _doubaoVoiceInput.cancel();
+      _doubaoVoiceInput.finishForManualInput();
     }
 
     public void onPinyinChanged()

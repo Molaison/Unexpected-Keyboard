@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import juloo.keyboard2.Keyboard2;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.WebSocket;
@@ -129,11 +130,37 @@ public final class DoubaoRegressionTest
     passed(test, "a new fragment replaces its pending overlap, and stopping still accepts revisions before the final snapshot");
     checkFormattedAndPartialDetails(test);
     passed(test, "punctuated snapshots and shorter interim fragments preserve revision boundaries");
+    checkManualInputHandoff(test);
+    passed(test, "manual input commits the pending voice text before typing in the same editor");
     checkContextPrivacy(test);
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=13");
+    passed(test, "DOUBAO_REGRESSION_OK checks=14");
+  }
+
+  private static void checkManualInputHandoff(Instrumentation test) throws Exception
+  {
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      AtomicReference<Keyboard2> keyboard = new AtomicReference<>();
+      test.runOnMainSync(() -> keyboard.set(new Keyboard2()));
+      set(keyboard.get(), "_doubaoVoiceInput", editor.voice);
+      Keyboard2.Receiver receiver = keyboard.get().new Receiver();
+
+      editor.run.onResponse(response(finalJson("今天")));
+      test.runOnMainSync(() -> editor.run.lastAppliedTranscriptNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"天气\",\"is_interim\":true,\"index\":1}]}"));
+      if (!editor.text().equals("前缀今天"))
+        throw new AssertionError("Expected the newest frame to be pending before manual input");
+      test.runOnMainSync(() -> {
+        receiver.beforeManualInput();
+        editor.currentConnection.commitText("！", 1);
+      });
+      editor.run.onResponse(response(finalJson("迟到结果")));
+      if (!editor.text().equals("前缀今天天气！") || editor.voice.isActive())
+        throw new AssertionError("Manual input handoff produced [" + editor.text() + "]");
+    }
   }
 
   private static void checkFormattedAndPartialDetails(Instrumentation test) throws Exception
