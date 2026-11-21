@@ -276,7 +276,8 @@ public final class DoubaoLiveTest
         }
         test.runOnMainSync(() -> editor.voice.toggle());
         long stopped = SystemClock.elapsedRealtime();
-        session.sendAudio(lastFrame, DoubaoProtocol.FRAME_LAST, timestamp + 20L * frames.size());
+        session.sendAudio(lastFrame, DoubaoProtocol.FRAME_LAST,
+            timestamp + 20L * frames.size(), true, true);
         session.finish();
         if (!session.awaitSessionFinished(10000)) throw new IOException("No terminal ASR result for " + name);
         session.close();
