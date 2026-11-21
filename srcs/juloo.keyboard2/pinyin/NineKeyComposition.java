@@ -19,7 +19,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final String[] LETTERS = {"", "", "abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz"};
   private static final int BEAM = 48;
   private static final int CANDIDATE_PATHS = 24;
-  private static final int ALTERNATE_PATHS = 8;
+  private static final int ALTERNATE_PATHS = 4;
   private static final int PER_PATH = 32;
   private static final int MAX_CANDIDATES = 256;
   private static final int IMPOSSIBLE = 1000000;
