@@ -989,6 +989,13 @@ public final class PinyinSmokeTest extends Instrumentation
     if(!onMain(() -> service.clear_expired_and_get_history().isEmpty())) throw new AssertionError("Disabled recording saved a clip");
     passed("visible toolbar and whole-card paste work with history recording disabled");
 
+    // A previous run restores this fixture's pin when it verifies undo.
+    View previousPin = onMain(() -> {
+      View clip = findText(clipboard(), "A plain current clip");
+      if (clip == null) throw new AssertionError("Current clip left the pane after paste");
+      return findDescription((View)clip.getParent(), clip.getContext().getString(R.string.ux_unpin));
+    });
+    if (previousPin != null) tap(previousPin);
     tap(onMain(() -> findDescription(clipboard(),getTargetContext().getString(R.string.ux_pin))));
     if(!onMain(() -> "A plain current clip".equals(service.current_text()))) throw new AssertionError("Pinning erased the system clipboard");
     tap(onMain(() -> (View)field(clipboard(),"pinnedTab")));
