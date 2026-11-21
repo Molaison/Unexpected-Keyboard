@@ -132,11 +132,51 @@ public final class DoubaoRegressionTest
     passed(test, "punctuated snapshots and shorter interim fragments preserve revision boundaries");
     checkManualInputHandoff(test);
     passed(test, "manual input commits the pending voice text before typing in the same editor");
+    checkInterruptedConnection(test);
+    passed(test, "a failed connection retains received voice text in its owner and reports the failure");
     checkContextPrivacy(test);
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=14");
+    passed(test, "DOUBAO_REGRESSION_OK checks=15");
+  }
+
+  private static void checkInterruptedConnection(Instrumentation test) throws Exception
+  {
+    String appended;
+    String withdrawn;
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response(finalJson("今天")));
+      test.runOnMainSync(() -> editor.run.lastAppliedTranscriptNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"天气\",\"is_interim\":true,\"index\":1}]}"));
+      if (!editor.text().equals("前缀今天"))
+        throw new AssertionError("Expected the newest frame to be pending before failure");
+      appended = textAfterDisconnect(editor);
+    }
+    try (Editor editor = new Editor(test, "Prefix: "))
+    {
+      editor.run.onResponse(response(finalJson("Hello.")));
+      test.runOnMainSync(() -> editor.run.lastAppliedTranscriptNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"\",\"is_interim\":true},"
+          + "{\"text\":\"\",\"is_interim\":true,\"index\":1}]}"));
+      if (!editor.text().equals("Prefix: Hello."))
+        throw new AssertionError("Expected the withdrawal to be pending before failure");
+      withdrawn = textAfterDisconnect(editor);
+    }
+    if (!appended.equals("前缀今天天气") || !withdrawn.equals("Prefix: "))
+      throw new AssertionError("Interrupted voice run produced appended=[" + appended + "], withdrawn=[" + withdrawn + "]");
+  }
+
+  private static String textAfterDisconnect(Editor editor) throws Exception
+  {
+    editor.complete(new IOException("Simulated ASR disconnect"));
+    if (editor.voice.isActive() || editor.failures.size() != 1
+        || !editor.failures.get(0).equals("Simulated ASR disconnect"))
+      throw new AssertionError("The voice session did not report its connection failure");
+    editor.failures.clear();
+    return editor.text();
   }
 
   private static void checkManualInputHandoff(Instrumentation test) throws Exception
@@ -595,9 +635,14 @@ public final class DoubaoRegressionTest
 
     void complete() throws Exception
     {
+      complete(null);
+    }
+
+    void complete(Throwable problem) throws Exception
+    {
       Method complete = DoubaoVoiceInput.class.getDeclaredMethod("complete", DoubaoVoiceInput.SessionRun.class, Throwable.class);
       complete.setAccessible(true);
-      complete.invoke(voice, run, null);
+      complete.invoke(voice, run, problem);
       test.waitForIdleSync();
     }
 

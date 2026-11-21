@@ -325,7 +325,8 @@ public final class DoubaoVoiceInput
   {
     mainHandler.post(() -> {
       if (!isCurrent(run)) return;
-      if (problem == null) applyPendingTranscript(run);
+      if (problem == null || host.getCurrentInputConnection() == run.connection)
+        applyPendingTranscript(run);
       synchronized (lock)
       {
         if (activeRun != run)
