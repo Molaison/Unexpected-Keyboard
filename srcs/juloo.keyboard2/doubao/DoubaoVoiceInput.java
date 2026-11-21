@@ -408,6 +408,10 @@ public final class DoubaoVoiceInput
         throwIfCancelledOrFailed();
         if (stopRequested) return;
         capture = startCapture();
+        mainHandler.post(() -> {
+          if (isCurrent(this) && !cancelled && !stopRequested)
+            host.onVoiceStateChanged(State.LISTENING);
+        });
         throwIfCancelledOrFailed();
         session = asrClient.open(this, credentialRequests);
         throwIfCancelledOrFailed();
@@ -531,10 +535,6 @@ public final class DoubaoVoiceInput
 
     private void streamAudio(Capture capture) throws Exception
     {
-      mainHandler.post(() -> {
-        if (isCurrent(this) && !cancelled && !stopRequested)
-          host.onVoiceStateChanged(State.LISTENING);
-      });
       try (OpusFrameEncoder encoder = new OpusFrameEncoder())
       {
         long startedAtMs = System.currentTimeMillis();

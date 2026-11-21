@@ -17,6 +17,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -1729,6 +1730,11 @@ public final class PinyinSmokeTest extends Instrumentation
       checkVoiceWhileConnecting("connecting_cancel".equals(voiceMicrophoneCase));
       return;
     }
+    if ("capture_status".equals(voiceMicrophoneCase))
+    {
+      checkVoiceCaptureStatus();
+      return;
+    }
     if (!"all".equals(voiceMicrophoneCase))
       throw new IllegalArgumentException("Unknown microphone case: " + voiceMicrophoneCase);
     clear();
@@ -1827,6 +1833,55 @@ public final class PinyinSmokeTest extends Instrumentation
         throw new AssertionError("The buffered recording did not reach ASR");
       passed("recording begins while connecting and early stop still sends captured audio");
     }
+  }
+
+  /** Run with delayed ASR traffic so the recording prompt precedes transmission. */
+  private void checkVoiceCaptureStatus() throws Exception
+  {
+    clear();
+    String listening = getTargetContext().getString(R.string.toast_voice_listening);
+    String connecting = getTargetContext().getString(R.string.toast_voice_connecting);
+    AtomicReference<String> prompt = new AtomicReference<>();
+    getUiAutomation().setOnAccessibilityEventListener(event -> {
+      if (event.getEventType() != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) return;
+      for (CharSequence text : event.getText())
+      {
+        if (listening.contentEquals(text) || connecting.contentEquals(text))
+          prompt.set(text.toString());
+      }
+    });
+    try
+    {
+      key("voice_typing");
+      Object run = onMain(() -> field(voice(), "activeRun"));
+      if (run == null) throw new AssertionError("Voice did not start");
+      long deadline = SystemClock.elapsedRealtime() + 650;
+      while (!listening.equals(prompt.get()) && SystemClock.elapsedRealtime() < deadline)
+        SystemClock.sleep(20);
+      if (uxCapture) SystemClock.sleep(250); // Let the toast reach the physical display frame.
+      android.media.AudioRecord recorder = (android.media.AudioRecord)field(run, "recorder");
+      boolean recording = recorder != null
+          && recorder.getRecordingState() == android.media.AudioRecord.RECORDSTATE_RECORDING;
+      long sent = (Long)field(run, "audioFramesSent");
+      String visiblePrompt = prompt.get();
+      if (uxCapture)
+      {
+        Bitmap bitmap = getUiAutomation().takeScreenshot();
+        File screenshot = new File(getTargetContext().getCacheDir(), "voice-capture-status.png");
+        try (FileOutputStream output = new FileOutputStream(screenshot))
+        {
+          if (bitmap == null || !bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+            throw new AssertionError("Unable to save the recording prompt screenshot");
+        }
+      }
+      type("a");
+      await("release microphone after dismissing the prompt", () -> field(run, "recorder") == null);
+      text(activity.plain, "a");
+      if (!recording || sent != 0 || !listening.equals(visiblePrompt))
+        throw new AssertionError("Recording=" + recording + ", frames sent=" + sent + ", prompt=" + visiblePrompt);
+      passed("the listening prompt appears while recording and before ASR transmission");
+    }
+    finally { getUiAutomation().setOnAccessibilityEventListener(null); }
   }
 
   private Object awaitRecording() throws Exception
