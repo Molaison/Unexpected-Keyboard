@@ -14,7 +14,6 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import androidx.core.content.ContextCompat;
 import java.io.IOException;
-import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
@@ -233,6 +232,7 @@ public final class DoubaoVoiceInput
   private void handleTranscript(SessionRun run,
       DoubaoProtocol.Response response)
   {
+    boolean stopping = run.stopRequested;
     mainHandler.post(() -> {
       if (!isCurrent(run) || run.cancelled || response.text.isEmpty())
         return;
@@ -242,32 +242,10 @@ public final class DoubaoVoiceInput
         return;
       }
 
-      CharSequence text;
-      if (response.wholeTranscript)
-      {
-        run.wholeTranscript = true;
-        run.utteranceTexts.clear();
-      }
-      if (run.wholeTranscript)
-      {
-        // Once the provider has sent full text, update it only with a full
-        // frame or an unindexed / index-zero snapshot.
-        if (!response.wholeTranscript && response.utteranceIndex > 0) return;
-        text = response.text;
-      }
-      else
-      {
-        // Single indexed replies can revise any sentence in the run.
-        int index = response.utteranceIndex >= 0 ? response.utteranceIndex : run.currentUtteranceIndex;
-        run.currentUtteranceIndex = Math.max(run.currentUtteranceIndex, index);
-        run.utteranceTexts.put(index, response.text);
-        StringBuilder composed = new StringBuilder();
-        for (String utterance : run.utteranceTexts.values()) composed.append(utterance);
-        text = composed;
-      }
+      String text = run.transcript.update(response, stopping);
+      if (text == null) return;
       final boolean accepted = run.connection.setComposingText(text, 1);
       run.hasComposingText = true;
-      run.latestInterim = response.text;
       if (!accepted)
         failInputConnection(run, "The target editor rejected voice text");
       else
@@ -298,8 +276,7 @@ public final class DoubaoVoiceInput
     if (!run.connection.finishComposingText())
       host.onVoiceFailure("The target editor rejected the final voice text");
     run.hasComposingText = false;
-    run.latestInterim = "";
-    run.utteranceTexts.clear();
+    run.transcript.clear();
   }
 
   private void complete(SessionRun run, Throwable problem)
@@ -361,10 +338,7 @@ public final class DoubaoVoiceInput
     volatile long audioFramesSent;
 
     boolean hasComposingText;
-    final TreeMap<Integer, String> utteranceTexts = new TreeMap<>();
-    int currentUtteranceIndex;
-    boolean wholeTranscript;
-    String latestInterim = "";
+    final DoubaoTranscript transcript = new DoubaoTranscript();
     long lastInterimUpdateNs;
 
     SessionRun(InputConnection connection)

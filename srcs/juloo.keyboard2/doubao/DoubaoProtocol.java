@@ -37,6 +37,14 @@ public final class DoubaoProtocol
     UNKNOWN
   }
 
+  static final class Fragment
+  {
+    final int index;
+    final String text;
+
+    Fragment(int index, String text) { this.index = index; this.text = text; }
+  }
+
   public static final class Response
   {
     public final ResponseType type;
@@ -50,10 +58,11 @@ public final class DoubaoProtocol
     public final int statusCode;
     public final String errorMessage;
     public final String rawJson;
+    final List<Fragment> fragments;
 
     private Response(ResponseType type, String text, boolean isFinal,
         boolean vadStart, boolean vadFinished, boolean wholeTranscript, int utteranceIndex, int packetNumber,
-        int statusCode, String errorMessage, String rawJson)
+        int statusCode, String errorMessage, String rawJson, List<Fragment> fragments)
     {
       this.type = type;
       this.text = text;
@@ -66,17 +75,19 @@ public final class DoubaoProtocol
       this.statusCode = statusCode;
       this.errorMessage = errorMessage;
       this.rawJson = rawJson;
+      this.fragments = fragments;
     }
 
     static Response simple(ResponseType type)
     {
-      return new Response(type, "", false, false, false, false, -1, -1, 0, "", null);
+      return new Response(type, "", false, false, false, false, -1, -1, 0, "", null,
+          java.util.Collections.emptyList());
     }
 
     static Response error(int statusCode, String message)
     {
       return new Response(ResponseType.ERROR, "", false, false, false, false, -1, -1,
-          statusCode, message, null);
+          statusCode, message, null, java.util.Collections.emptyList());
     }
   }
 
@@ -381,7 +392,7 @@ public final class DoubaoProtocol
       int packetNumber = optionalInt(extra, "packet_number", -1);
       return new Response(vadStart ? ResponseType.VAD_START : ResponseType.HEARTBEAT,
           "", false, vadStart, false, false,
-          -1, packetNumber, 0, "", resultJson);
+          -1, packetNumber, 0, "", resultJson, java.util.Collections.emptyList());
     }
 
     List<JsonObject> results = resultObjects(resultsElement);
@@ -393,22 +404,26 @@ public final class DoubaoProtocol
     int utteranceIndex = first == null ? -1 : optionalInt(first, "index", -1);
     boolean allStable = first != null;
     boolean vadFinished = false;
+    List<Fragment> fragments = new ArrayList<>();
 
-    for (JsonObject result : results)
+    for (int i = 0; i < results.size(); i++)
     {
+      JsonObject result = results.get(i);
       Boolean interim = firstBoolean(result, "is_interim", "interim");
       allStable &= Boolean.FALSE.equals(interim) || optionalBoolean(result, "is_final", false);
       vadFinished |= firstBooleanValue(result, false, "is_vad_finished", "vad_finished");
+      if (i > 0)
+        fragments.add(new Fragment(optionalInt(result, "index", i), extractResultText(result)));
     }
 
     JsonObject firstExtra = first == null ? null : optionalObject(first, "extra");
-    boolean isFinal = optionalBoolean(first, "nonstream_result", false)
-        || optionalBoolean(firstExtra, "nonstream_result", false)
-        || (allStable && (wholeTranscript || vadFinished));
+    boolean nonstream = optionalBoolean(first, "nonstream_result", false)
+        || optionalBoolean(firstExtra, "nonstream_result", false);
+    boolean isFinal = nonstream || (allStable && (wholeTranscript || vadFinished));
     ResponseType type = isFinal ? ResponseType.FINAL_RESULT
         : vadStart && text.isEmpty() ? ResponseType.VAD_START : ResponseType.INTERIM_RESULT;
-    return new Response(type, text, isFinal, vadStart, vadFinished, wholeTranscript,
-        utteranceIndex, -1, 0, "", resultJson);
+    return new Response(type, text, isFinal, vadStart, vadFinished, wholeTranscript || nonstream,
+        utteranceIndex, -1, 0, "", resultJson, fragments);
   }
 
   private static byte[] request(String requestId, String token,

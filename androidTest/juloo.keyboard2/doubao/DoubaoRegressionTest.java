@@ -121,11 +121,44 @@ public final class DoubaoRegressionTest
     passed(test, "sentence boundaries keep recording; final revisions and subsequent utterances preserve editor text");
     checkWholeTranscript(test);
     passed(test, "stream, second pass, and final pass replace complete text without appending result fragments");
+    checkIndexedUpdatesAfterSnapshot(test);
+    passed(test, "indexed updates after a full snapshot can revise or append a sentence without losing the rest");
     checkContextPrivacy(test);
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=9");
+    passed(test, "DOUBAO_REGRESSION_OK checks=10");
+  }
+
+  private static void checkIndexedUpdatesAfterSnapshot(Instrumentation test) throws Exception
+  {
+    String revised;
+    String appended;
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"第一句。第二句。\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"第一句。\",\"is_interim\":false,\"index\":1},"
+          + "{\"text\":\"第二句。\",\"is_interim\":false,\"index\":2}]}"));
+      if (!editor.text().equals("前缀第一句。第二句。"))
+        throw new AssertionError("Expected whole snapshot before the revision: " + editor.text());
+      editor.run.onResponse(response(finalJson("第一句修订。", 0)));
+      revised = editor.text();
+    }
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"今天散步吧。顺便\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"今天散步吧。\",\"is_interim\":false,\"index\":1}]}"));
+      if (!editor.text().equals("前缀今天散步吧。顺便"))
+        throw new AssertionError("Expected whole snapshot before the next sentence: " + editor.text());
+      editor.run.onResponse(response(finalJson("买水果。", 2)));
+      editor.run.onResponse(response(finalJson("买点水果。", 2)));
+      editor.complete();
+      appended = editor.text();
+    }
+    if (!revised.equals("前缀第一句修订。第二句。") || !appended.equals("前缀今天散步吧。顺便买点水果。"))
+      throw new AssertionError("Indexed updates produced revised=[" + revised + "], appended=[" + appended + "]");
   }
 
   private static void checkWholeTranscript(Instrumentation test) throws Exception
