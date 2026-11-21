@@ -386,10 +386,15 @@ public class Keyboard2 extends InputMethodService
   @Override
   public void setInputView(View v)
   {
+    // Android replaces the view's layout parameters when it attaches the pane.
+    ViewGroup.LayoutParams layout = v.getLayoutParams();
+    int requestedHeight = layout == null ? ViewGroup.LayoutParams.WRAP_CONTENT : layout.height;
     ViewParent parent = v.getParent();
     if (parent != null && parent instanceof ViewGroup)
       ((ViewGroup)parent).removeView(v);
     super.setInputView(v);
+    if (requestedHeight >= 0)
+      updateLayoutHeightOf(v, requestedHeight);
     updateSoftInputWindowLayoutParams();
     v.requestApplyInsets();
   }

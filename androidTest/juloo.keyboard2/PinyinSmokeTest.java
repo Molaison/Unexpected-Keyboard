@@ -741,8 +741,13 @@ public final class PinyinSmokeTest extends Instrumentation
     onMain(() -> { ClipboardHistoryService.set_history_enabled(false);
       cm.setPrimaryClip(android.content.ClipData.newPlainText("test","A plain current clip")); return null; });
     idle();
+    int clipboardHeight = onMain(() -> {
+      View keys = keyboard();
+      return Math.max(new KeyboardUi(keys.getContext()).dp(280), ((View)keys.getParent()).getHeight());
+    });
     tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
     await("clipboard panel", () -> clipboard()!=null && clipboard().isShown());
+    await("clipboard preserves its requested height", () -> clipboard().getHeight() == clipboardHeight);
     tap(onMain(() -> findText(clipboard(),"A plain current clip")));
     text(activity.plain,"A plain current clip");
     if(!onMain(() -> clipboard().isShown())) throw new AssertionError("Pasting unexpectedly closed the clipboard panel");
