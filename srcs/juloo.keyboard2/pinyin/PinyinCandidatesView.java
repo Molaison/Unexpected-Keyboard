@@ -1,6 +1,7 @@
 package juloo.keyboard2.pinyin;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.PorterDuff;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -26,7 +27,7 @@ import juloo.keyboard2.DirectBootAwarePreferences;
 import juloo.keyboard2.KeyboardUi;
 import juloo.keyboard2.R;
 
-/** Visible tools, readable preedit, and a separate candidate row. */
+/** Visible tools, readable preedit, and browsable candidates. */
 public final class PinyinCandidatesView extends LinearLayout
 {
   private static final int CANDIDATE_TEXT_SP = 20;
@@ -45,6 +46,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private final KeyboardUi ui;
   private Listener listener;
   private List<String> spellingOptions = new ArrayList<>();
+  private final LinearLayout header;
   private final LinearLayout row;
   private final TextView preedit;
   private final TextView readings;
@@ -78,7 +80,7 @@ public final class PinyinCandidatesView extends LinearLayout
     setBackgroundColor(ui.background);
     setLayoutDirection(LAYOUT_DIRECTION_LTR);
     setPadding(ui.dp(6), 0, ui.dp(6), 0);
-    LinearLayout header = new LinearLayout(context);
+    header = new LinearLayout(context);
     header.setGravity(Gravity.CENTER_VERTICAL);
     ImageButton clipboard = new ImageButton(context);
     clipboard.setImageResource(R.drawable.ic_clipboard_paste);
@@ -284,7 +286,7 @@ public final class PinyinCandidatesView extends LinearLayout
         .getBoolean("chinese_nine_key", false);
     boolean hasReadings = chinese && !spellingOptions.isEmpty();
     preedit.setLongClickable(hasReadings);
-    if (getWidth() > 0) measureToolbarControls(availableWidth(getWidth()));
+    if (header.getWidth() > 0) measureToolbarControls(header.getWidth());
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
     // The candidate strip is a reserved row. Only its contents change, so
     // every keystroke has the same keyboard origin and cannot move the editor.
@@ -383,15 +385,59 @@ public final class PinyinCandidatesView extends LinearLayout
     spellings.setVisibility(hasReadings && !sharedToolbarMenu ? VISIBLE : GONE);
   }
 
+  private int compactHeaderWidth(int width)
+  {
+    Configuration config = getResources().getConfiguration();
+    if (config.orientation != Configuration.ORIENTATION_LANDSCAPE || config.screenHeightDp > 480)
+      return 0;
+    int compactLayoutWidth = Math.max(
+        paddedTextWidth(readings, "26"),
+        Math.max(paddedTextWidth(readings, "9"), paddedTextWidth(readings, "⋯")));
+    int controlsWidth = ui.dp(CONTROL_DP)
+        + paddedTextWidth(preedit, "nihao") + compactLayoutWidth;
+    int headerWidth = Math.max(width / 3, controlsWidth);
+    // Keep space for a candidate as well as the paging and collapse actions.
+    return width - headerWidth >= 4 * ui.dp(CONTROL_DP) ? headerWidth : 0;
+  }
+
+  private void configureLayout(int compactWidth)
+  {
+    boolean useCompact = compactWidth > 0;
+    setOrientation(useCompact ? HORIZONTAL : VERTICAL);
+
+    LayoutParams headerParams = (LayoutParams)header.getLayoutParams();
+    int headerLayoutWidth = useCompact ? compactWidth : LayoutParams.MATCH_PARENT;
+    int headerHeight = useCompact ? candidateRowHeight : ui.dp(CONTROL_DP);
+    if (headerParams.width != headerLayoutWidth || headerParams.height != headerHeight)
+    {
+      headerParams.width = headerLayoutWidth;
+      headerParams.height = headerHeight;
+      header.setLayoutParams(headerParams);
+    }
+
+    LayoutParams rowParams = (LayoutParams)row.getLayoutParams();
+    int rowLayoutWidth = useCompact ? 0 : LayoutParams.MATCH_PARENT;
+    float rowWeight = useCompact ? 1 : 0;
+    if (rowParams.width != rowLayoutWidth || rowParams.weight != rowWeight)
+    {
+      rowParams.width = rowLayoutWidth;
+      rowParams.weight = rowWeight;
+      row.setLayoutParams(rowParams);
+    }
+  }
+
   @Override protected void onMeasure(int widthSpec, int heightSpec)
   {
     int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
         ? getResources().getDisplayMetrics().widthPixels : MeasureSpec.getSize(widthSpec);
-    measureToolbarControls(availableWidth(width));
+    int availableWidth = availableWidth(width);
+    int compactWidth = compactHeaderWidth(availableWidth);
+    configureLayout(compactWidth);
+    measureToolbarControls(compactWidth > 0 ? compactWidth : availableWidth);
     if (expanded)
     {
       int control = ui.dp(CONTROL_DP);
-      int available = availableWidth(width) - control;
+      int available = availableWidth - compactWidth - control;
       if (hasMore)
       {
         int labelWidth = paddedTextWidth(loadMore, loadMoreLabel);

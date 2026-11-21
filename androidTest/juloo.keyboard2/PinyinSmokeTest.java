@@ -5,6 +5,7 @@ import android.app.Instrumentation;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -20,7 +21,12 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.lang.reflect.Field;
@@ -39,6 +45,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean lowerPinyinEditor;
   private boolean pinyinPagingSelection;
   private boolean pinyinToolbar;
+  private int landscapeEditorHeight;
   private boolean voiceLive;
   private boolean voiceFresh;
   private boolean voiceContinuous;
@@ -54,6 +61,7 @@ public final class PinyinSmokeTest extends Instrumentation
     lowerPinyinEditor = arguments != null && "true".equals(arguments.getString("lower_pinyin_editor"));
     pinyinPagingSelection = arguments != null && "true".equals(arguments.getString("pinyin_paging_selection"));
     pinyinToolbar = arguments != null && "true".equals(arguments.getString("pinyin_toolbar"));
+    landscapeEditorHeight = Integer.parseInt(arguments == null ? "0" : arguments.getString("landscape_editor_height", "0"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
@@ -131,6 +139,13 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         checkLargePinyinWindow();
         result.putString("stream", "PINYIN_LARGE_FONT_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (landscapeEditorHeight > 0)
+      {
+        checkLandscapeEditor();
+        result.putString("stream", "PINYIN_LANDSCAPE_EDITOR_OK checks=" + checks + "\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -462,6 +477,88 @@ public final class PinyinSmokeTest extends Instrumentation
       return null;
     });
     passed("constrained keyboard and candidate widths, and emoji at 2x font scale");
+  }
+
+  private void checkLandscapeEditor() throws Exception
+  {
+    if (!Config.globalConfig().orientation_landscape)
+      throw new AssertionError("Set the emulator to landscape first");
+    SharedPreferences prefs = DirectBootAwarePreferences.get_shared_preferences(getTargetContext());
+    String pref = Config.globalConfig().foldable_unfolded
+        ? "keyboard_height_landscape_unfolded" : "keyboard_height_landscape";
+    boolean hasHeight = prefs.contains(pref);
+    int originalHeight = prefs.getInt(pref, 50);
+    try
+    {
+      ScrollView scroll = onMain(() -> {
+        prefs.edit().putInt(pref, landscapeEditorHeight).apply();
+        ViewGroup fields = (ViewGroup)activity.plain.getParent();
+        ((ViewGroup)fields.getParent()).removeView(fields);
+        ScrollView view = new ScrollView(activity);
+        view.addView(fields);
+        FrameLayout root = new FrameLayout(activity);
+        FrameLayout.LayoutParams scrollArea = new FrameLayout.LayoutParams(-1, -1);
+        root.addView(view, scrollArea);
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+          Insets visible = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.ime());
+          scrollArea.setMargins(visible.left, visible.top, visible.right, visible.bottom);
+          view.setLayoutParams(scrollArea);
+          return insets;
+        });
+        activity.setContentView(root);
+        activity.plain.requestFocus();
+        InputMethodManager manager = (InputMethodManager)activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
+        manager.restartInput(activity.plain);
+        manager.showSoftInput(activity.plain, InputMethodManager.SHOW_IMPLICIT);
+        return view;
+      });
+      await("IME window", () -> keyboard() != null && keyboard().isShown() && keyboard().getWidth() > 0);
+      idle();
+      View panel = onMain(this::candidatesView);
+      float keyY = onMain(() -> keyPoint("n", false)[1]);
+      type("nihao");
+      await("Chinese candidates in scroll editor", () -> findText(panel, "你好") != null);
+      onMain(() -> {
+        Rect field = new Rect();
+        activity.plain.getDrawingRect(field);
+        activity.plain.requestRectangleOnScreen(field, true);
+        return null;
+      });
+      idle();
+      screenshot("landscape-scroll-editor.png");
+      EditorVisibility state = onMain(() -> editorVisibility(panel));
+      String geometry = "height=" + landscapeEditorHeight + " font=" + activity.getResources().getConfiguration().fontScale
+          + " editorBottom=" + state.lineBottom + " panelTop=" + state.panelTop + " viewport=" + onMain(scroll::getHeight)
+          + " keyCenterY=" + keyY;
+      if (!state.lineVisible || !onMain(() -> activity.plain.hasFocus()))
+        throw new AssertionError("Focused line is clipped even after scrolling. " + geometry);
+      if (Math.abs(onMain(() -> keyPoint("n", false)[1]) - keyY) > 1f)
+        throw new AssertionError("Typing moved the landscape keyboard. " + geometry);
+      passed("composing line is visible above the keyboard. " + geometry);
+
+      tap(onMain(() -> (View)field(panel, "more")));
+      View expanded = onMain(() -> (View)field(panel, "expandedScroll"));
+      await("landscape expanded candidate", () -> expanded.isShown() && findText(expanded, "你好") != null);
+      if (Math.abs(onMain(() -> keyPoint("n", false)[1]) - keyY) > 1f)
+        throw new AssertionError("Candidate expansion moved the landscape keyboard. " + geometry);
+      passed("expanded landscape candidates leave editor and keys in place. "
+          + onMain(() -> checkEditorAboveCandidates(panel, state)));
+      tap(onMain(() -> findText(expanded, "你好")));
+      text(activity.plain, "你好");
+      if (!onMain(() -> activity.plain.hasFocus() && editorVisibility(panel).lineVisible))
+        throw new AssertionError("Landscape candidate tap did not keep the editor visible");
+      passed("real candidate tap commits 你好 in the visible editor");
+    }
+    finally
+    {
+      onMain(() -> {
+        SharedPreferences.Editor edit = prefs.edit();
+        if (hasHeight) edit.putInt(pref, originalHeight);
+        else edit.remove(pref);
+        edit.apply();
+        return null;
+      });
+    }
   }
 
   private void checkLargePinyinWindow() throws Exception
