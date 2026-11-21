@@ -16,6 +16,7 @@ final class DoubaoTranscript
   {
     int start;
     int end;
+    boolean coversUnassignedTail;
     Span(int start, int end) { this.start = start; this.end = end; }
   }
 
@@ -27,7 +28,7 @@ final class DoubaoTranscript
         || (snapshot != null && response.utteranceIndex < 0))
       return setSnapshot(response, stopping);
     if (snapshot != null)
-      return updateFragment(response.utteranceIndex, response.text);
+      return updateFragment(response.utteranceIndex, response.text, response.isFinal);
 
     int index = response.utteranceIndex >= 0 ? response.utteranceIndex : currentIndex;
     currentIndex = Math.max(currentIndex, index);
@@ -50,19 +51,64 @@ final class DoubaoTranscript
       lastFragment = Math.max(lastFragment, fragment.index);
       if (fragment.text.isEmpty() || spans.containsKey(fragment.index))
         continue;
-      // Fragments can differ from the aggregate after the punctuation pass.
-      // Only edit a span that can be located in the actual snapshot.
-      int start = snapshot.indexOf(fragment.text, cursor);
-      if (start >= 0)
+      Span span = locateFragment(fragment.text, cursor);
+      if (span != null)
       {
-        cursor = start + fragment.text.length();
-        spans.put(fragment.index, new Span(start, cursor));
+        cursor = span.end;
+        spans.put(fragment.index, span);
       }
     }
     return snapshot;
   }
 
-  private String updateFragment(int index, String text)
+  private Span locateFragment(String text, int cursor)
+  {
+    int exact = snapshot.indexOf(text, cursor);
+    if (exact == cursor) return new Span(exact, exact + text.length());
+
+    // The punctuation pass may reformat a fragment at the expected boundary.
+    int start = skipFormatting(snapshot, cursor);
+    int fragment = skipFormatting(text, 0);
+    if (fragment < text.length() && (exact < 0 || start < exact))
+    {
+      int end = start;
+      while (fragment < text.length())
+      {
+        end = skipFormatting(snapshot, end);
+        if (end == snapshot.length() || snapshot.charAt(end) != text.charAt(fragment)) break;
+        end++;
+        fragment = skipFormatting(text, fragment + 1);
+      }
+      if (fragment == text.length())
+      {
+        while (end < snapshot.length())
+        {
+          int kind = Character.getType(snapshot.charAt(end));
+          if (kind != Character.END_PUNCTUATION && kind != Character.FINAL_QUOTE_PUNCTUATION
+              && kind != Character.OTHER_PUNCTUATION) break;
+          end++;
+        }
+        return new Span(start, end);
+      }
+    }
+    return exact < 0 ? null : new Span(exact, exact + text.length());
+  }
+
+  private static int skipFormatting(String text, int position)
+  {
+    while (position < text.length())
+    {
+      char character = text.charAt(position);
+      int kind = Character.getType(character);
+      boolean punctuation = (kind >= Character.DASH_PUNCTUATION && kind <= Character.OTHER_PUNCTUATION)
+          || kind == Character.INITIAL_QUOTE_PUNCTUATION || kind == Character.FINAL_QUOTE_PUNCTUATION;
+      if (!punctuation && !Character.isSpaceChar(character) && !Character.isWhitespace(character)) break;
+      position++;
+    }
+    return position;
+  }
+
+  private String updateFragment(int index, String text, boolean stable)
   {
     Span span = spans.get(index);
     if (span == null && index == 0 && !spans.isEmpty() && spans.firstEntry().getValue().start == 0)
@@ -72,17 +118,22 @@ final class DoubaoTranscript
       if (index <= lastFragment || index <= 0) return null;
       int start = snapshot.length();
       Span previous = spans.get(lastFragment);
-      // A newly indexed fragment may complete the tail of the full snapshot.
-      // Keep characters already anchored to a preceding fragment.
-      if (previous != null && text.startsWith(snapshot.substring(previous.end)))
-        start = previous.end;
-      spans.put(index, new Span(start, start + text.length()));
+      if (previous != null)
+      {
+        String tail = snapshot.substring(previous.end);
+        if (text.startsWith(tail) || tail.startsWith(text)) start = previous.end;
+      }
+      span = new Span(start, snapshot.length());
+      span.coversUnassignedTail = span.start < span.end;
+      spans.put(index, span);
       lastFragment = index;
-      snapshot = snapshot.substring(0, start) + text;
-      return snapshot;
     }
 
     int previousEnd = span.end;
+    // Keep the fuller snapshot visible while the new indexed fragment catches up.
+    if (span.coversUnassignedTail && !stable && text.length() < previousEnd - span.start
+        && snapshot.regionMatches(span.start, text, 0, text.length())) return null;
+    span.coversUnassignedTail = false;
     int delta = text.length() - (previousEnd - span.start);
     snapshot = snapshot.substring(0, span.start) + text + snapshot.substring(previousEnd);
     span.end += delta;

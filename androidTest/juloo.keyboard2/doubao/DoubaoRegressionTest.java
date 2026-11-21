@@ -127,11 +127,45 @@ public final class DoubaoRegressionTest
     passed(test, "rapid frames preserve transcript state and pending text reaches the editor before completion");
     checkOverlappingAndStoppedResults(test);
     passed(test, "a new fragment replaces its pending overlap, and stopping still accepts revisions before the final snapshot");
+    checkFormattedAndPartialDetails(test);
+    passed(test, "punctuated snapshots and shorter interim fragments preserve revision boundaries");
     checkContextPrivacy(test);
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=12");
+    passed(test, "DOUBAO_REGRESSION_OK checks=13");
+  }
+
+  private static void checkFormattedAndPartialDetails(Instrumentation test) throws Exception
+  {
+    String formatted;
+    String extended;
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"先说一句。你好，世界。再说一句。\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"先说一句。\",\"is_interim\":false,\"index\":1},"
+          + "{\"text\":\"你好世界。\",\"is_interim\":false,\"index\":2},"
+          + "{\"text\":\"再说一句。\",\"is_interim\":false,\"index\":3}]}"));
+      editor.run.onResponse(response(finalJson("你好，世界又见。", 2)));
+      editor.complete();
+      formatted = editor.text();
+    }
+    try (Editor editor = new Editor(test, "前缀"))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"第一句。今天下雨\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"第一句。\",\"is_interim\":false,\"index\":1}]}"));
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"今\",\"is_interim\":true,\"index\":2}]}"));
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"今天\",\"is_interim\":true,\"index\":2}]}"));
+      editor.run.onResponse(response(finalJson("今天下雨了。", 2)));
+      editor.complete();
+      extended = editor.text();
+    }
+    if (!formatted.equals("前缀先说一句。你好，世界又见。再说一句。")
+        || !extended.equals("前缀第一句。今天下雨了。"))
+      throw new AssertionError("Fragment boundaries produced formatted=[" + formatted
+          + "], extended=[" + extended + "]");
   }
 
   private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception
