@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -1502,7 +1503,11 @@ size_t MatrixSearch::extend_dmi(DictExtPara *dep, DictMatchInfo *dmi_s) {
       printf("--- lpi_total_ = %d\n", lpi_total_);
     }
 
-    myqsort(lpi_items_, lpi_total_, sizeof(LmaPsbItem), cmp_lpi_with_psb);
+    // Equal-score paths are kept in arrival order by extend_mtrx_nd.
+    std::sort(lpi_items_, lpi_items_ + lpi_total_,
+              [](const LmaPsbItem &a, const LmaPsbItem &b) {
+                return a.psb != b.psb ? a.psb < b.psb : a.id < b.id;
+              });
     if (NULL == dmi_s && spl_trie_->is_half_id(splid))
       lpi_total_ = lpi_cache.put_cache(splid, lpi_items_, lpi_total_);
   } else {
