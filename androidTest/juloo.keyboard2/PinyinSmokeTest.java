@@ -33,6 +33,7 @@ import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
+import juloo.keyboard2.doubao.DoubaoVoiceInput;
 import juloo.keyboard2.pinyin.PinyinCandidatesView;
 
 /** Injects real window touch events into the installed IME and real EditTexts. */
@@ -55,6 +56,8 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean voiceContinuous;
   private boolean voiceQuality;
   private boolean voiceRegression;
+  private boolean voiceStatusLayout;
+  private String voiceStatusTheme;
   private boolean voiceMicrophone;
   private String voiceMicrophoneCase;
 
@@ -76,6 +79,8 @@ public final class PinyinSmokeTest extends Instrumentation
     voiceContinuous = arguments != null && "true".equals(arguments.getString("voice_continuous"));
     voiceQuality = arguments != null && "true".equals(arguments.getString("voice_quality"));
     voiceRegression = arguments != null && "true".equals(arguments.getString("voice_regression"));
+    voiceStatusLayout = arguments != null && "true".equals(arguments.getString("voice_status_layout"));
+    voiceStatusTheme = arguments == null ? null : arguments.getString("voice_status_theme");
     voiceMicrophone = arguments != null && "true".equals(arguments.getString("voice_microphone"));
     voiceMicrophoneCase = arguments == null ? "all" : arguments.getString("voice_microphone_case", "all");
     start();
@@ -137,6 +142,13 @@ public final class PinyinSmokeTest extends Instrumentation
       focus(activity.plain);
       chinese(true);
       nineKey(false);
+      if (voiceStatusLayout)
+      {
+        checkVoiceStatusLayout();
+        result.putString("stream", "VOICE_STATUS_LAYOUT_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
       if (nineKeySplitting)
       {
         checkNineKeySplitting();
@@ -1995,9 +2007,80 @@ public final class PinyinSmokeTest extends Instrumentation
   }
 
   /** Run with delayed ASR traffic so the recording prompt precedes transmission. */
+  private void checkVoiceStatusLayout() throws Exception
+  {
+    if (voiceStatusTheme == null) { measureVoiceStatusLayout(); return; }
+    SharedPreferences prefs = DirectBootAwarePreferences.get_shared_preferences(getTargetContext());
+    String previous = prefs.getString("theme", null);
+    try
+    {
+      onMain(() -> { prefs.edit().putString("theme", voiceStatusTheme).apply(); return null; });
+      focus(activity.plain);
+      measureVoiceStatusLayout();
+    }
+    finally
+    {
+      onMain(() -> {
+        SharedPreferences.Editor edit = prefs.edit();
+        if (previous == null) edit.remove("theme"); else edit.putString("theme", previous);
+        edit.apply();
+        return null;
+      });
+    }
+  }
+
+  private void measureVoiceStatusLayout() throws Exception
+  {
+    clear();
+    float[] idleKey = onMain(() -> keyPoint("voice_typing", false));
+    DoubaoVoiceInput.Host receiver = onMain(() -> (DoubaoVoiceInput.Host)field(voice(), "host"));
+    StringBuilder clipped = new StringBuilder();
+    try
+    {
+      for (DoubaoVoiceInput.State state : new DoubaoVoiceInput.State[] {
+          DoubaoVoiceInput.State.CONNECTING, DoubaoVoiceInput.State.LISTENING, DoubaoVoiceInput.State.FINISHING})
+      {
+        onMain(() -> { receiver.onVoiceStateChanged(state); return null; });
+        idle();
+        String geometry = onMain(() -> {
+          TextView status = (TextView)field(candidatesView(), "voiceStatus");
+          android.text.Layout layout = status.getLayout();
+          Rect visible = new Rect();
+          if (!status.isShown() || !status.getGlobalVisibleRect(visible) || layout == null)
+            throw new AssertionError("Voice label is not visible for " + state);
+          if (!java.util.Arrays.equals(idleKey, keyPoint("voice_typing", false)))
+            throw new AssertionError("Voice label moved the microphone key for " + state);
+          int lines = layout.getLineCount();
+          int ellipsis = 0;
+          for (int line = 0; line < lines; line++) ellipsis += layout.getEllipsisCount(line);
+          int height = Math.min(visible.height(), status.getHeight())
+              - status.getCompoundPaddingTop() - status.getCompoundPaddingBottom();
+          String info = state + " \"" + status.getText() + "\" width=" + status.getWidth()
+              + " available_height=" + height + " text_height=" + layout.getHeight()
+              + " lines=" + lines + " ellipsis=" + ellipsis;
+          if (layout.getHeight() > height || ellipsis > 0) clipped.append(" [").append(info).append(']');
+          return info;
+        });
+        screenshot("voice-status-" + state.name().toLowerCase(java.util.Locale.ROOT) + ".png");
+        Bundle measured = new Bundle();
+        measured.putString("stream", "VOICE_LABEL " + geometry + "\n");
+        sendStatus(0, measured);
+      }
+      if (clipped.length() != 0) throw new AssertionError("Voice status text clipped:" + clipped);
+      passed("all three voice states are fully visible with fixed microphone key coordinates");
+    }
+    finally { onMain(() -> { receiver.onVoiceStateChanged(DoubaoVoiceInput.State.IDLE); return null; }); }
+    type("ni");
+    tapCandidate("你");
+    text(activity.plain, "你");
+    passed("typing and candidate selection still commit after clearing the voice status");
+  }
+
   private void checkVoiceCaptureStatus(boolean tapToStop) throws Exception
   {
     clear();
+    String listening = getTargetContext().getString(R.string.voice_status_listening);
+    String recognizing = getTargetContext().getString(R.string.voice_status_recognizing);
     AccessibilityServiceInfo info = getUiAutomation().getServiceInfo();
     info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
     getUiAutomation().setServiceInfo(info);
@@ -2006,11 +2089,11 @@ public final class PinyinSmokeTest extends Instrumentation
     Object run = onMain(() -> field(voice(), "activeRun"));
     if (run == null) throw new AssertionError("Voice did not start");
     long deadline = SystemClock.elapsedRealtime() + 650;
-    Rect prompt = voiceStatusBounds("Listening…");
+    Rect prompt = voiceStatusBounds(listening);
     while (prompt == null && SystemClock.elapsedRealtime() < deadline)
     {
       SystemClock.sleep(25);
-      prompt = voiceStatusBounds("Listening…");
+      prompt = voiceStatusBounds(listening);
     }
     if (uxCapture) screenshot("voice-capture-status.png");
     android.media.AudioRecord recorder = (android.media.AudioRecord)field(run, "recorder");
@@ -2027,17 +2110,17 @@ public final class PinyinSmokeTest extends Instrumentation
     {
       key("voice_typing");
       await("recognition status after tapping the microphone again",
-          () -> voiceStatusBounds("Recognizing…") != null);
-      if (!(Boolean)field(run, "stopRequested") || voiceStatusBounds("Listening…") != null)
+          () -> voiceStatusBounds(recognizing) != null);
+      if (!(Boolean)field(run, "stopRequested") || voiceStatusBounds(listening) != null)
         throw new AssertionError("The listening status continued after stopping the microphone");
-      passed("the fixed microphone key stops recording and updates the status to Recognizing");
+      passed("the fixed microphone key stops recording and updates the finishing status");
     }
     type("a");
     await("release microphone after dismissing the prompt", () -> field(run, "recorder") == null);
     text(activity.plain, "a");
     if (!recording || sent != 0 || prompt == null || prompt.bottom > keyboardTop
         || !java.util.Arrays.equals(voiceKey, activeVoiceKey)
-        || voiceStatusBounds("Listening…") != null || voiceStatusBounds("Recognizing…") != null)
+        || voiceStatusBounds(listening) != null || voiceStatusBounds(recognizing) != null)
       throw new AssertionError("Recording=" + recording + ", frames sent=" + sent
           + ", listening bounds=" + prompt + ", keys start at y=" + keyboardTop);
     passed("the accessible listening prompt stays above the fixed keys and clears on manual input");

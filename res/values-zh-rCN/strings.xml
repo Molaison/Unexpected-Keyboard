@@ -121,7 +121,7 @@
     <string name="clipboard_pin_heading">已固定</string>
     <string name="clipboard_remove_confirm">确定移除此剪贴内容？</string>
     <string name="clipboard_remove_confirmed">确定</string>
-    <string name="voice_status_starting">正在启动麦克风…</string>
+    <string name="voice_status_starting">正在启动…</string>
     <string name="voice_status_listening">正在聆听…</string>
     <string name="voice_status_recognizing">正在识别…</string>
     <string name="toast_voice_permission_granted">已授予麦克风权限</string>

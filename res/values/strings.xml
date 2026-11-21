@@ -155,9 +155,9 @@
     <string name="clipboard_remove_confirm">Remove this clipboard item?</string>
     <string name="clipboard_remove_confirmed">Yes</string>
     <string name="toast_no_voice_input">No voice typing app installed</string>
-    <string name="voice_status_starting" tools:ignore="MissingTranslation">Starting microphone…</string>
+    <string name="voice_status_starting" tools:ignore="MissingTranslation">Starting…</string>
     <string name="voice_status_listening" tools:ignore="MissingTranslation">Listening…</string>
-    <string name="voice_status_recognizing" tools:ignore="MissingTranslation">Recognizing…</string>
+    <string name="voice_status_recognizing" tools:ignore="MissingTranslation">Finishing…</string>
     <string name="toast_voice_permission_granted" tools:ignore="MissingTranslation">Microphone permission granted</string>
     <string name="toast_voice_permission_denied" tools:ignore="MissingTranslation">Microphone permission is required for voice input</string>
     <string name="toast_voice_input_failed" tools:ignore="MissingTranslation">Voice input failed: %1$s</string>
