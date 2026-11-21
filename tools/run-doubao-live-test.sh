@@ -55,6 +55,7 @@ if [[ -n "$voice_fixture_dir" ]]; then
     fi
   done
 else
+  mkdir -p "$voice_root/build/validation"
   voice_pcm_prefix="$voice_root/build/validation/voice-"
   for voice_part in "${voice_fixtures[@]}"; do
     voice_text='This is a voice test.'
