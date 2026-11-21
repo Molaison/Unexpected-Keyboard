@@ -17,7 +17,6 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -1730,9 +1729,9 @@ public final class PinyinSmokeTest extends Instrumentation
       checkVoiceWhileConnecting("connecting_cancel".equals(voiceMicrophoneCase));
       return;
     }
-    if ("capture_status".equals(voiceMicrophoneCase))
+    if ("capture_status".equals(voiceMicrophoneCase) || "capture_status_stop".equals(voiceMicrophoneCase))
     {
-      checkVoiceCaptureStatus();
+      checkVoiceCaptureStatus("capture_status_stop".equals(voiceMicrophoneCase));
       return;
     }
     if (!"all".equals(voiceMicrophoneCase))
@@ -1836,52 +1835,70 @@ public final class PinyinSmokeTest extends Instrumentation
   }
 
   /** Run with delayed ASR traffic so the recording prompt precedes transmission. */
-  private void checkVoiceCaptureStatus() throws Exception
+  private void checkVoiceCaptureStatus(boolean tapToStop) throws Exception
   {
     clear();
-    String listening = getTargetContext().getString(R.string.toast_voice_listening);
-    String connecting = getTargetContext().getString(R.string.toast_voice_connecting);
-    AtomicReference<String> prompt = new AtomicReference<>();
-    getUiAutomation().setOnAccessibilityEventListener(event -> {
-      if (event.getEventType() != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) return;
-      for (CharSequence text : event.getText())
-      {
-        if (listening.contentEquals(text) || connecting.contentEquals(text))
-          prompt.set(text.toString());
-      }
+    AccessibilityServiceInfo info = getUiAutomation().getServiceInfo();
+    info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+    getUiAutomation().setServiceInfo(info);
+    float[] voiceKey = onMain(() -> keyPoint("voice_typing", false));
+    key("voice_typing");
+    Object run = onMain(() -> field(voice(), "activeRun"));
+    if (run == null) throw new AssertionError("Voice did not start");
+    long deadline = SystemClock.elapsedRealtime() + 650;
+    Rect prompt = voiceStatusBounds("Listening…");
+    while (prompt == null && SystemClock.elapsedRealtime() < deadline)
+    {
+      SystemClock.sleep(25);
+      prompt = voiceStatusBounds("Listening…");
+    }
+    if (uxCapture) screenshot("voice-capture-status.png");
+    android.media.AudioRecord recorder = (android.media.AudioRecord)field(run, "recorder");
+    boolean recording = recorder != null
+        && recorder.getRecordingState() == android.media.AudioRecord.RECORDSTATE_RECORDING;
+    long sent = (Long)field(run, "audioFramesSent");
+    float[] activeVoiceKey = onMain(() -> keyPoint("voice_typing", false));
+    int keyboardTop = onMain(() -> {
+      int[] position = new int[2];
+      keyboard().getLocationOnScreen(position);
+      return position[1];
     });
-    try
+    if (tapToStop && prompt != null)
     {
       key("voice_typing");
-      Object run = onMain(() -> field(voice(), "activeRun"));
-      if (run == null) throw new AssertionError("Voice did not start");
-      long deadline = SystemClock.elapsedRealtime() + 650;
-      while (!listening.equals(prompt.get()) && SystemClock.elapsedRealtime() < deadline)
-        SystemClock.sleep(20);
-      if (uxCapture) SystemClock.sleep(250); // Let the toast reach the physical display frame.
-      android.media.AudioRecord recorder = (android.media.AudioRecord)field(run, "recorder");
-      boolean recording = recorder != null
-          && recorder.getRecordingState() == android.media.AudioRecord.RECORDSTATE_RECORDING;
-      long sent = (Long)field(run, "audioFramesSent");
-      String visiblePrompt = prompt.get();
-      if (uxCapture)
-      {
-        Bitmap bitmap = getUiAutomation().takeScreenshot();
-        File screenshot = new File(getTargetContext().getCacheDir(), "voice-capture-status.png");
-        try (FileOutputStream output = new FileOutputStream(screenshot))
-        {
-          if (bitmap == null || !bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
-            throw new AssertionError("Unable to save the recording prompt screenshot");
-        }
-      }
-      type("a");
-      await("release microphone after dismissing the prompt", () -> field(run, "recorder") == null);
-      text(activity.plain, "a");
-      if (!recording || sent != 0 || !listening.equals(visiblePrompt))
-        throw new AssertionError("Recording=" + recording + ", frames sent=" + sent + ", prompt=" + visiblePrompt);
-      passed("the listening prompt appears while recording and before ASR transmission");
+      await("recognition status after tapping the microphone again",
+          () -> voiceStatusBounds("Recognizing…") != null);
+      if (!(Boolean)field(run, "stopRequested") || voiceStatusBounds("Listening…") != null)
+        throw new AssertionError("The listening status continued after stopping the microphone");
+      passed("the fixed microphone key stops recording and updates the status to Recognizing");
     }
-    finally { getUiAutomation().setOnAccessibilityEventListener(null); }
+    type("a");
+    await("release microphone after dismissing the prompt", () -> field(run, "recorder") == null);
+    text(activity.plain, "a");
+    if (!recording || sent != 0 || prompt == null || prompt.bottom > keyboardTop
+        || !java.util.Arrays.equals(voiceKey, activeVoiceKey)
+        || voiceStatusBounds("Listening…") != null || voiceStatusBounds("Recognizing…") != null)
+      throw new AssertionError("Recording=" + recording + ", frames sent=" + sent
+          + ", listening bounds=" + prompt + ", keys start at y=" + keyboardTop);
+    passed("the accessible listening prompt stays above the fixed keys and clears on manual input");
+  }
+
+  private Rect voiceStatusBounds(String text)
+  {
+    for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
+    {
+      if (window.getType() != AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
+      AccessibilityNodeInfo root = window.getRoot();
+      if (root == null) continue;
+      for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(text))
+        if (node.isVisibleToUser() && text.equals(String.valueOf(node.getText())))
+        {
+          Rect bounds = new Rect();
+          node.getBoundsInScreen(bounds);
+          if (!bounds.isEmpty()) return bounds;
+        }
+    }
+    return null;
   }
 
   private Object awaitRecording() throws Exception

@@ -64,7 +64,7 @@ public class Keyboard2 extends InputMethodService
   private DoubaoVoiceInput _doubaoVoiceInput;
   private boolean _startVoiceAfterPermission;
   private boolean _voicePushToTalkActive;
-  private Toast _voiceStateToast;
+  private DoubaoVoiceInput.State _voiceState = DoubaoVoiceInput.State.IDLE;
 
   private Config _config;
 
@@ -203,6 +203,25 @@ public class Keyboard2 extends InputMethodService
       public void onClipboard() { open_clipboard(); }
       public void onLayoutSwitch() { toggle_pinyin_layout(); }
     });
+    update_voice_view(false);
+  }
+
+  private void update_voice_view(boolean announce)
+  {
+    _keyboard_layout_view.set_voice_input_active(
+        _voiceState == DoubaoVoiceInput.State.CONNECTING
+        || _voiceState == DoubaoVoiceInput.State.LISTENING);
+    int message;
+    switch (_voiceState)
+    {
+      case CONNECTING: message = R.string.voice_status_starting; break;
+      case LISTENING: message = R.string.voice_status_listening; break;
+      case FINISHING: message = R.string.voice_status_recognizing; break;
+      default: message = 0;
+    }
+    _pinyin_candidates_view.setVoiceStatus(message);
+    if (announce && message != 0 && !_pinyin_candidates_view.isShown())
+      _keyboard_layout_view.announceForAccessibility(getString(message));
   }
 
   private void open_clipboard()
@@ -789,31 +808,8 @@ public class Keyboard2 extends InputMethodService
 
     public void onVoiceStateChanged(DoubaoVoiceInput.State state)
     {
-      _keyboard_layout_view.set_voice_input_active(
-          state == DoubaoVoiceInput.State.CONNECTING
-          || state == DoubaoVoiceInput.State.LISTENING);
-      if (_voiceStateToast != null)
-      {
-        _voiceStateToast.cancel();
-        _voiceStateToast = null;
-      }
-      int message;
-      switch (state)
-      {
-        case CONNECTING:
-          message = R.string.toast_voice_connecting;
-          break;
-        case LISTENING:
-          message = R.string.toast_voice_listening;
-          break;
-        case FINISHING:
-        case IDLE:
-        default:
-          return;
-      }
-      _voiceStateToast =
-        Toast.makeText(Keyboard2.this, message, Toast.LENGTH_SHORT);
-      _voiceStateToast.show();
+      _voiceState = state;
+      update_voice_view(true);
     }
 
     public void onVoiceFailure(String message)

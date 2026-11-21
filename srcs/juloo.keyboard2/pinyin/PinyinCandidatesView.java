@@ -11,6 +11,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
@@ -47,7 +48,9 @@ public final class PinyinCandidatesView extends LinearLayout
   private Listener listener;
   private List<String> spellingOptions = new ArrayList<>();
   private final LinearLayout header;
+  private final FrameLayout candidateRow;
   private final LinearLayout row;
+  private final TextView voiceStatus;
   private final TextView preedit;
   private final TextView readings;
   private final TextView spellings;
@@ -149,7 +152,16 @@ public final class PinyinCandidatesView extends LinearLayout
     row.addView(expandedScroll, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
     row.addView(loadMore, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
     row.addView(more, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
-    addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
+    candidateRow = new FrameLayout(context);
+    candidateRow.addView(row, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+    voiceStatus = ui.label("", 15, true);
+    voiceStatus.setPadding(ui.dp(10), 0, ui.dp(10), 0);
+    voiceStatus.setMaxLines(2);
+    voiceStatus.setEllipsize(TextUtils.TruncateAt.END);
+    voiceStatus.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
+    voiceStatus.setVisibility(GONE);
+    candidateRow.addView(voiceStatus, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+    addView(candidateRow, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
   }
 
   private void showStandaloneReadings() { showReadings(spellings, false); }
@@ -229,6 +241,13 @@ public final class PinyinCandidatesView extends LinearLayout
 
   public void setListener(Listener listener) { this.listener = listener; }
 
+  public void setVoiceStatus(int message)
+  {
+    row.setVisibility(message == 0 ? VISIBLE : INVISIBLE);
+    voiceStatus.setVisibility(message == 0 ? GONE : VISIBLE);
+    if (message != 0) voiceStatus.setText(message);
+  }
+
   public void setSpellingOptions(List<String> options)
   {
     if (spellingOptions.equals(options)) return;
@@ -248,9 +267,9 @@ public final class PinyinCandidatesView extends LinearLayout
     int height = measureCandidateRowHeight();
     if (height == candidateRowHeight) return;
     candidateRowHeight = height;
-    ViewGroup.LayoutParams params = row.getLayoutParams();
+    ViewGroup.LayoutParams params = candidateRow.getLayoutParams();
     params.height = height;
-    row.setLayoutParams(params);
+    candidateRow.setLayoutParams(params);
     expandedWidth = -1;
   }
 
@@ -293,7 +312,6 @@ public final class PinyinCandidatesView extends LinearLayout
     more.setVisibility(chinese ? VISIBLE : INVISIBLE);
     more.setEnabled(chinese && !candidates.isEmpty());
     more.setAlpha(chinese && !candidates.isEmpty() ? 1f : .35f);
-    row.setVisibility(VISIBLE);
     boolean appended = !changed && candidates.size() >= previousCandidates.size()
       && candidates.subList(0, previousCandidates.size()).equals(previousCandidates);
     int scroll = appended ? candidateScroll.getScrollX() : 0;
@@ -415,14 +433,14 @@ public final class PinyinCandidatesView extends LinearLayout
       header.setLayoutParams(headerParams);
     }
 
-    LayoutParams rowParams = (LayoutParams)row.getLayoutParams();
+    LayoutParams rowParams = (LayoutParams)candidateRow.getLayoutParams();
     int rowLayoutWidth = useCompact ? 0 : LayoutParams.MATCH_PARENT;
     float rowWeight = useCompact ? 1 : 0;
     if (rowParams.width != rowLayoutWidth || rowParams.weight != rowWeight)
     {
       rowParams.width = rowLayoutWidth;
       rowParams.weight = rowWeight;
-      row.setLayoutParams(rowParams);
+      candidateRow.setLayoutParams(rowParams);
     }
   }
 
