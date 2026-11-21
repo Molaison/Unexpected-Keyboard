@@ -5,6 +5,8 @@ import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -114,6 +116,11 @@ public final class PinyinSmokeTest extends Instrumentation
         finish(Activity.RESULT_OK, result);
         return;
       }
+      onMain(() -> {
+        checkCustomKeyLabels(keyboard().getContext());
+        return null;
+      });
+      passed("custom tap and swipe labels are drawn complete within narrow keys");
       if (onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
         throw new AssertionError("Idle mode label exposes a reading action without readings");
       englishSuggestionChecks();
@@ -435,6 +442,52 @@ public final class PinyinSmokeTest extends Instrumentation
       return null;
     });
     passed("constrained keyboard and candidate widths, and emoji at 2x font scale");
+  }
+
+  private void checkCustomKeyLabels(Context context) throws Exception
+  {
+    String tapLabel = "WWWWWWWWWWWW";
+    String swipeLabel = "SWIPELABEL";
+    KeyboardData layout = KeyboardData.load_string_exn("<keyboard width=\"10\" bottom_row=\"false\">"
+        + "<row><key c=\"" + tapLabel + "\" nw=\"" + swipeLabel + "\"/>"
+        + "<key c=\"a\" nw=\"b\"/></row></keyboard>");
+    Keyboard2View keys = new Keyboard2View(context, null);
+    keys.setKeyboard(layout);
+    int width = new KeyboardUi(context).dp(180);
+    keys.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+    keys.layout(0, 0, keys.getMeasuredWidth(), keys.getMeasuredHeight());
+    Theme.Computed theme = (Theme.Computed)field(keys, "_tc");
+    float keyWidth = (Float)field(keys, "_keyWidth") - theme.horizontal_margin;
+    java.util.Map<String, Float> widths = new java.util.HashMap<>();
+    java.util.Map<String, Float> scales = new java.util.HashMap<>();
+    Bitmap bitmap = Bitmap.createBitmap(keys.getWidth(), keys.getHeight(), Bitmap.Config.ARGB_8888);
+    try
+    {
+      keys.draw(new Canvas(bitmap)
+      {
+        @Override public void drawText(String text, float x, float y, Paint paint)
+        {
+          widths.put(text, paint.measureText(text));
+          scales.put(text, paint.getTextScaleX());
+          super.drawText(text, x, y, paint);
+        }
+
+        @Override public void drawText(String text, int start, int end, float x, float y, Paint paint)
+        {
+          drawText(text.substring(start, end), x, y, paint);
+        }
+      });
+    }
+    finally { bitmap.recycle(); }
+    if (!widths.containsKey(swipeLabel))
+      throw new AssertionError("Custom swipe label was shortened. Drawn labels: " + widths.keySet());
+    if (!widths.containsKey(tapLabel) || widths.get(tapLabel) > keyWidth + 0.01f
+        || widths.get(swipeLabel) > keyWidth / 2f + 0.01f
+        || widths.get(swipeLabel) <= 0f)
+      throw new AssertionError("Custom labels did not fit their key and corner: " + widths);
+    if (!Float.valueOf(1f).equals(scales.get("a")) || !Float.valueOf(1f).equals(scales.get("b")))
+      throw new AssertionError("Label scaling carried over to the next key: " + scales);
   }
 
   /** Render production download states deterministically; these are view-state

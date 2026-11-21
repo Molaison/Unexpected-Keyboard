@@ -391,7 +391,7 @@ public class Keyboard2View extends View
           }
         drawKeyFrame(canvas, x, y, keyW, keyH, tc_key);
         if (k.keys[0] != null)
-          drawLabel(canvas, k.keys[0], keyW / 2f + x, y, keyH, isKeyDown, tc_key);
+          drawLabel(canvas, k.keys[0], keyW / 2f + x, y, keyW, keyH, isKeyDown, tc_key);
         for (int i = 1; i < 9; i++)
         {
           if (k.keys[i] != null)
@@ -468,14 +468,15 @@ public class Keyboard2View extends View
   }
 
   private void drawLabel(Canvas canvas, KeyValue kv, float x, float y,
-      float keyH, boolean isKeyDown, Theme.Computed.Key tc)
+      float keyW, float keyH, boolean isKeyDown, Theme.Computed.Key tc)
   {
     kv = modifyKey(kv, _mods);
     if (kv == null)
       return;
     float textSize = scaleTextSize(kv, true);
     Paint p = tc.label_paint(kv.hasFlagsAny(KeyValue.FLAG_KEY_FONT), labelColor(kv, isKeyDown, false), textSize);
-    canvas.drawText(kv.getString(), x, (keyH - p.ascent() - p.descent()) / 2f + y, p);
+    drawFittedLabel(canvas, kv.getString(), x, (keyH - p.ascent() - p.descent()) / 2f + y,
+        p, keyW - 2f * _config.keyPadding);
   }
 
   private void drawSubLabel(Canvas canvas, KeyValue kv, float x, float y,
@@ -498,12 +499,23 @@ public class Keyboard2View extends View
       x += keyW / 2f;
     else
       x += (a == Paint.Align.LEFT) ? subPadding : keyW - subPadding;
-    String label = kv.getString();
-    int label_len = label.length();
-    // Limit the label of string keys to 3 characters
-    if (label_len > 3 && kv.getKind() == KeyValue.Kind.String)
-      label_len = 3;
-    canvas.drawText(label, 0, label_len, x, y, p);
+    drawFittedLabel(canvas, kv.getString(), x, y, p, keyW / 2f - subPadding);
+  }
+
+  private static void drawFittedLabel(Canvas canvas, String label, float x, float y,
+      Paint paint, float availableWidth)
+  {
+    if (availableWidth <= 0f)
+      return;
+    float textWidth = label.length() > 1 ? paint.measureText(label) : 0f;
+    if (textWidth > availableWidth)
+    {
+      paint.setTextScaleX(availableWidth / textWidth);
+      canvas.drawText(label, x, y, paint);
+      paint.setTextScaleX(1f);
+    }
+    else
+      canvas.drawText(label, x, y, paint);
   }
 
   private void drawIndication(Canvas canvas, KeyboardData.Key k, float x,
