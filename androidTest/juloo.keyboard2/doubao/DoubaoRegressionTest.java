@@ -5,6 +5,8 @@ import android.os.Bundle;
 import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputConnectionWrapper;
+import android.view.inputmethod.SurroundingText;
 import android.widget.EditText;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -155,7 +157,9 @@ public final class DoubaoRegressionTest
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=17");
+    checkVoiceSelectionOrdering(test);
+    passed(test, "delayed or coalesced selection updates preserve speech retractions and user cursor moves");
+    passed(test, "DOUBAO_REGRESSION_OK checks=18");
   }
 
   private static void checkPeerCloseAfterSession(Instrumentation test) throws Exception
@@ -318,6 +322,65 @@ public final class DoubaoRegressionTest
       if (!editor.text().equals("前缀今天天气！") || editor.voice.isActive())
         throw new AssertionError("Manual input handoff produced [" + editor.text() + "]");
     }
+  }
+
+  private static void checkVoiceSelectionOrdering(Instrumentation test) throws Exception
+  {
+    List<String> violations = new ArrayList<>();
+    for (int retractions : new int[] { 1, 2 })
+    {
+      try (Editor editor = new Editor(test, "draft "))
+      {
+        for (int i = 0; i < retractions; i++)
+        {
+          editor.run.onResponse(response(finalJson("初始")));
+          if (!editor.text().equals("draft 初始"))
+            throw new AssertionError("Selection replay did not establish the initial transcript");
+          editor.run.onResponse(response("{\"results\":[{\"text\":\"\",\"nonstream_result\":true}]}"));
+          if (!editor.text().equals("draft "))
+            throw new AssertionError("Selection replay did not retract the initial transcript");
+        }
+        if (retractions == 2)
+          editor.run.onResponse(response(finalJson("继续")));
+        test.runOnMainSync(() -> {
+          for (int i = 0; i < retractions; i++)
+          {
+            editor.voice.cancelForSelectionChange(8, 8, 6, 8);
+            editor.voice.cancelForSelectionChange(6, 6, -1, -1);
+          }
+          if (retractions == 2) editor.voice.cancelForSelectionChange(8, 8, 6, 8);
+        });
+        editor.run.onResponse(response(finalJson("恢复转写")));
+        String result = editor.text();
+        if (!editor.voice.isActive() || !result.equals("draft 恢复转写"))
+          violations.add("Retraction with delayed updates=" + retractions
+              + " ended dictation: [" + result + "]");
+      }
+    }
+
+    for (boolean clearsComposition : new boolean[] { false, true })
+    {
+      try (Editor editor = new Editor(test, "draft "))
+      {
+        editor.run.onResponse(response(finalJson("初始")));
+        if (!editor.text().equals("draft 初始"))
+          throw new AssertionError("Cursor replay did not establish the initial transcript");
+        test.runOnMainSync(() -> {
+          editor.voice.cancelForSelectionChange(8, 8, 6, 8);
+          if (clearsComposition) editor.currentConnection.finishComposingText();
+          // The editor moved the cursor. Its selection notification is still in transit.
+          editor.view.setSelection(0);
+        });
+        editor.run.onResponse(response(finalJson("晚到的定稿")));
+        String result = editor.text();
+        int[] cursor = new int[1];
+        test.runOnMainSync(() -> cursor[0] = editor.view.getSelectionStart());
+        if (editor.voice.isActive() || !result.equals("draft 初始") || cursor[0] != 0)
+          violations.add("Late write with clearsComposition=" + clearsComposition
+              + " yielded [" + result + "] at " + cursor[0]);
+      }
+    }
+    if (!violations.isEmpty()) throw new AssertionError(violations.toString());
   }
 
   private static void checkFormattedAndPartialDetails(Instrumentation test) throws Exception
@@ -657,6 +720,23 @@ public final class DoubaoRegressionTest
         }
         catch (Exception error) { throw new AssertionError(error); }
       });
+
+      info.imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
+      editor.voice.setEditorInfo(info);
+      editor.currentConnection = new InputConnectionWrapper(editor.currentConnection, false) {
+        @Override public SurroundingText getSurroundingText(int before, int after, int flags)
+        {
+          throw new AssertionError("Private editor selection was queried during dictation");
+        }
+      };
+      DoubaoVoiceInput.SessionRun privateRun = editor.voice.new SessionRun(editor.currentConnection);
+      set(editor.voice, "activeRun", privateRun);
+      privateRun.onResponse(response(finalJson("初始")));
+      if (!editor.text().equals("before初始AFTER"))
+        throw new AssertionError("Private editor did not display the initial voice text");
+      privateRun.onResponse(response(finalJson("继续")));
+      if (!editor.text().equals("before继续AFTER"))
+        throw new AssertionError("Private editor did not continue dictating via the callback path");
     }
   }
 
@@ -774,13 +854,15 @@ public final class DoubaoRegressionTest
         view = new EditText(test.getTargetContext());
         view.setText(prefix);
         view.setSelection(view.length());
-        InputConnection connection = view.onCreateInputConnection(new EditorInfo());
+        EditorInfo info = new EditorInfo();
+        InputConnection connection = view.onCreateInputConnection(info);
         currentConnection = connection;
         voice = new DoubaoVoiceInput(test.getTargetContext(), new DoubaoVoiceInput.Host() {
           @Override public InputConnection getCurrentInputConnection() { return currentConnection; }
           @Override public void onVoiceStateChanged(DoubaoVoiceInput.State state) { }
           @Override public void onVoiceFailure(String message) { failures.add(message); }
         });
+        voice.setEditorInfo(info);
         run = voice.new SessionRun(connection);
       });
       set(voice, "activeRun", run);

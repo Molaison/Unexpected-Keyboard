@@ -6,12 +6,14 @@ import android.content.pm.PackageManager;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.util.Log;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.SurroundingText;
 import androidx.core.content.ContextCompat;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
@@ -33,6 +35,8 @@ public final class DoubaoVoiceInput
   private static final int ASR_CONCURRENCY_LIMIT = 40200011;
   private static final long FINAL_DRAIN_TIMEOUT_MS = 10000;
   private static final long INTERIM_UPDATE_INTERVAL_NS = 150000000L;
+  private static final int CARET_UNAVAILABLE = -1;
+  private static final int SELECTION_RANGE = -2;
 
   public enum State
   {
@@ -133,25 +137,38 @@ public final class DoubaoVoiceInput
     cancel();
   }
 
-  public boolean cancelForSelectionChange(int start, int end, int composingEnd)
+  public void cancelForSelectionChange(int start, int end, int composingStart, int composingEnd)
   {
     requireMainThread();
     final SessionRun run;
     synchronized (lock) { run = activeRun; }
     if (run == null || !run.hasComposingText || start < 0 || end < 0
         || host.getCurrentInputConnection() != run.connection)
-      return false;
+      return;
+    if (composingEnd < 0 && start == end && run.pendingRetractionUpdates > 0
+        && (run.retractionCaret == CARET_UNAVAILABLE || start == run.retractionCaret))
+    {
+      run.pendingRetractionUpdates--;
+      // A retraction can be reported after a later write restored the span.
+      // If we can inspect the selection, don't mask a real move to that offset.
+      if (run.lastWriteEmpty || !editorSelectionMoved(run)) return;
+      cancel();
+      return;
+    }
     if (composingEnd >= 0 && start == composingEnd && end == composingEnd)
     {
-      run.composingAcknowledged = true;
-      return false;
+      run.composingStart = composingStart;
+      if (run.pendingRetractionUpdates > 0 && run.retractionCaret == CARET_UNAVAILABLE)
+        run.retractionCaret = composingStart;
+      if (!run.lastWriteEmpty) run.composingAcknowledged = true;
+      return;
     }
+    if (run.lastWriteEmpty) return;
     // Some editors omit composing bounds even for their normal write callbacks.
-    if (composingEnd < 0 && !run.composingAcknowledged) return false;
+    if (composingEnd < 0 && !run.composingAcknowledged) return;
     // The editor keeps the visible text at the old cursor. Drop pending results
     // before relinquishing the composing span so none can follow the new cursor.
     cancel();
-    return true;
   }
 
   public void cancel()
@@ -210,8 +227,7 @@ public final class DoubaoVoiceInput
   private String buildContextJson(InputConnection connection)
   {
     // Never read or transmit surrounding text from sensitive/private editors.
-    if (pendingEditor == null || !DoubaoTextContext.allowsEditorContext(
-        pendingEditor.inputType, pendingEditor.imeOptions))
+    if (!allowsEditorContext())
     {
       textContext.clear();
       return "";
@@ -219,6 +235,12 @@ public final class DoubaoVoiceInput
     textContext.setEditor(cursorText(connection, true), cursorText(connection, false),
         pendingAppPackage);
     return textContext.build();
+  }
+
+  private boolean allowsEditorContext()
+  {
+    return pendingEditor != null && DoubaoTextContext.allowsEditorContext(
+        pendingEditor.inputType, pendingEditor.imeOptions);
   }
 
   private static String cursorText(InputConnection connection, boolean before)
@@ -302,16 +324,61 @@ public final class DoubaoVoiceInput
       failInputConnection(run, "The target editor changed during voice input");
       return;
     }
+    if (editorSelectionMoved(run))
+    {
+      cancel();
+      return;
+    }
     String text = run.pendingTranscript;
     run.pendingTranscript = null;
-    if (text.isEmpty()) run.composingAcknowledged = false;
+    boolean retracts = text.isEmpty() && run.hasComposingText && !run.lastWriteEmpty;
+    run.lastWriteEmpty = text.isEmpty();
+    if (run.lastWriteEmpty) run.composingAcknowledged = false;
     boolean accepted = run.connection.setComposingText(text, 1);
     run.hasComposingText = true;
     run.lastAppliedTranscriptNs = System.nanoTime();
     if (!accepted)
       failInputConnection(run, "The target editor rejected voice text");
     else
+    {
+      // Use the actual caret so filters or maxLength limits can change the text.
+      run.lastRenderedCaret = readEditorCaret(run);
+      if (retracts)
+      {
+        run.pendingRetractionUpdates++;
+        run.retractionCaret = run.lastRenderedCaret >= 0
+            ? run.lastRenderedCaret : run.composingStart;
+      }
       Log.i(TAG, "transcript_applied chars=" + text.length());
+    }
+  }
+
+  private boolean editorSelectionMoved(SessionRun run)
+  {
+    if (run.lastRenderedCaret == CARET_UNAVAILABLE) return false;
+    int currentCaret = readEditorCaret(run);
+    return currentCaret != CARET_UNAVAILABLE && currentCaret != run.lastRenderedCaret;
+  }
+
+  private int readEditorCaret(SessionRun run)
+  {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !run.canReadEditorCaret)
+      return CARET_UNAVAILABLE;
+    SurroundingText selection = null;
+    try
+    {
+      // Request no characters before or after the selection. Use only offsets.
+      selection = run.connection.getSurroundingText(0, 0, 0);
+    }
+    catch (RuntimeException ignored) { }
+    if (selection == null || selection.getOffset() < 0 || selection.getSelectionStart() < 0)
+    {
+      // Some editors can't report an absolute cursor position. Use their callbacks.
+      run.canReadEditorCaret = false;
+      return CARET_UNAVAILABLE;
+    }
+    return selection.getSelectionStart() == selection.getSelectionEnd()
+        ? selection.getOffset() + selection.getSelectionStart() : SELECTION_RANGE;
   }
 
   private void clearPendingTranscript(SessionRun run)
@@ -415,6 +482,12 @@ public final class DoubaoVoiceInput
 
     boolean hasComposingText;
     boolean composingAcknowledged;
+    boolean lastWriteEmpty;
+    boolean canReadEditorCaret;
+    int pendingRetractionUpdates;
+    int composingStart = CARET_UNAVAILABLE;
+    int lastRenderedCaret = CARET_UNAVAILABLE;
+    int retractionCaret = CARET_UNAVAILABLE;
     final DoubaoTranscript transcript = new DoubaoTranscript();
     final Runnable renderTranscript = () -> applyPendingTranscript(this);
     long lastAppliedTranscriptNs;
@@ -423,6 +496,7 @@ public final class DoubaoVoiceInput
     SessionRun(InputConnection connection)
     {
       this.connection = connection;
+      canReadEditorCaret = allowsEditorContext();
     }
 
     @Override

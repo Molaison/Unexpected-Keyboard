@@ -496,8 +496,7 @@ public class Keyboard2 extends InputMethodService
   public void onUpdateSelection(int oldSelStart, int oldSelEnd, int newSelStart, int newSelEnd, int candidatesStart, int candidatesEnd)
   {
     super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd);
-    if (_doubaoVoiceInput.cancelForSelectionChange(newSelStart, newSelEnd, candidatesEnd))
-      _voicePushToTalkActive = false;
+    _doubaoVoiceInput.cancelForSelectionChange(newSelStart, newSelEnd, candidatesStart, candidatesEnd);
     _pinyin.selectionUpdated(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd);
     _keyeventhandler.selection_updated(oldSelStart, newSelStart, newSelEnd);
     if ((oldSelStart == oldSelEnd) != (newSelStart == newSelEnd))
@@ -811,6 +810,7 @@ public class Keyboard2 extends InputMethodService
     public void onVoiceStateChanged(DoubaoVoiceInput.State state)
     {
       _voiceState = state;
+      if (state == DoubaoVoiceInput.State.IDLE) _voicePushToTalkActive = false;
       update_voice_view(true);
     }
 
