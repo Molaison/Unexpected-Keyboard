@@ -143,6 +143,7 @@ public final class DoubaoRegressionTest
     String reformattedTail;
     String shortened;
     String expandedDetail;
+    String revisedPunctuation;
     try (Editor editor = new Editor(test, "前缀"))
     {
       editor.run.onResponse(response("{\"results\":["
@@ -186,20 +187,31 @@ public final class DoubaoRegressionTest
     try (Editor editor = new Editor(test, "Prefix: "))
     {
       editor.run.onResponse(response("{\"results\":["
-          + "{\"text\":\"First. Today it rains.\",\"is_interim\":true,\"index\":0},"
+          + "{\"text\":\"First. Today it rains. Tomorrow is sunny.\",\"is_interim\":true,\"index\":0},"
           + "{\"text\":\"First.\",\"is_interim\":false,\"index\":1},"
           + "{\"text\":\"Today\",\"is_interim\":true,\"index\":2}]}"));
       editor.run.onResponse(response(finalJson("Today it rains.", 2)));
       editor.complete();
       expandedDetail = editor.text();
     }
+    try (Editor editor = new Editor(test, "Prefix: "))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"Hello world.\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"Hello\",\"is_interim\":false,\"index\":1},"
+          + "{\"text\":\"world\",\"is_interim\":false,\"index\":2}]}"));
+      editor.run.onResponse(response("{\"results\":[{\"text\":\"earth!\",\"is_interim\":false,\"index\":2}]}"));
+      editor.complete();
+      revisedPunctuation = editor.text();
+    }
     if (!formatted.equals("前缀先说一句。你好，世界又见。再说一句。")
         || !extended.equals("前缀第一句。今天下雨了。")
         || !reformattedTail.equals("Prefix: One. Today, it rains.") || !shortened.equals("Prefix: One. Today")
-        || !expandedDetail.equals("Prefix: First. Today it rains."))
+        || !expandedDetail.equals("Prefix: First. Today it rains. Tomorrow is sunny.")
+        || !revisedPunctuation.equals("Prefix: Hello earth!"))
       throw new AssertionError("Fragment boundaries produced formatted=[" + formatted
           + "], extended=[" + extended + "], reformattedTail=[" + reformattedTail + "], shortened=[" + shortened
-          + "], expandedDetail=[" + expandedDetail + "]");
+          + "], expandedDetail=[" + expandedDetail + "], revisedPunctuation=[" + revisedPunctuation + "]");
   }
 
   private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception
