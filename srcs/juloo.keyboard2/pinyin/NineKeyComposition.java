@@ -415,7 +415,7 @@ public final class NineKeyComposition implements ChineseComposition
         unique.put(e.text, c);
       }
       candidates.addAll(unique.values());
-      candidates.sort(CANDIDATE_ORDER);
+      Collections.sort(candidates, CANDIDATE_ORDER);
       if (constraint.isEmpty() && remaining.length() >= 4)
         addCorrections(remaining, lexicon != null && direct.isEmpty());
       if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
@@ -540,7 +540,7 @@ public final class NineKeyComposition implements ChineseComposition
     List<Candidate> firstPage = new ArrayList<>(candidates.subList(0,
         Math.min(CANDIDATE_PAGE_SIZE, candidates.size())));
     List<Candidate> ranked = new ArrayList<>(recovered.values());
-    ranked.sort(CANDIDATE_ORDER);
+    Collections.sort(ranked, CANDIDATE_ORDER);
     int insertion = 0;
     for (Candidate addition : ranked)
     {
@@ -605,7 +605,10 @@ public final class NineKeyComposition implements ChineseComposition
           addCorrection(corrected, entry.text, entry.spelling, entry.display, entry.frequencyCost);
     if (!edits.isEmpty() && corrected.isEmpty()) addCorrectedSentences(corrected, edits);
     List<Candidate> ranked = new ArrayList<>(corrected.values());
-    ranked.sort(Comparator.comparingDouble((Candidate c) -> c.score).thenComparing(c -> c.text));
+    Collections.sort(ranked, (a, b) -> {
+      int order = Double.compare(a.score, b.score);
+      return order == 0 ? a.text.compareTo(b.text) : order;
+    });
 
     int slot = Math.min(1, candidates.size());
     int promoted = 0;

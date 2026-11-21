@@ -112,8 +112,14 @@ final class NineKeySyllableGraph
   {
     if (typed.length() < 2 || typed.length() > 6) return;
     String keys = NineKeyComposition.digits(typed);
-    if (!keys.equals(NineKeyComposition.digits(corrected)))
-      aliases.computeIfAbsent(keys, ignored -> new LinkedHashSet<>()).add(corrected);
+    if (keys.equals(NineKeyComposition.digits(corrected))) return;
+    Set<String> matches = aliases.get(keys);
+    if (matches == null)
+    {
+      matches = new LinkedHashSet<>();
+      aliases.put(keys, matches);
+    }
+    matches.add(corrected);
   }
 
   List<Edit> edits(String raw)

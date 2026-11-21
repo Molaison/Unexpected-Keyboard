@@ -6,7 +6,7 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -104,7 +104,10 @@ public final class NineKeyLexicon
       keys[i + 1] = right;
     }
     List<Entry> ranked = new ArrayList<>(matches.values());
-    ranked.sort(Comparator.comparingDouble((Entry entry) -> entry.score).thenComparing(entry -> entry.text));
+    Collections.sort(ranked, (a, b) -> {
+      int order = Double.compare(a.score, b.score);
+      return order == 0 ? a.text.compareTo(b.text) : order;
+    });
     if (ranked.size() > limit) ranked.subList(limit, ranked.size()).clear();
     return ranked;
   }
