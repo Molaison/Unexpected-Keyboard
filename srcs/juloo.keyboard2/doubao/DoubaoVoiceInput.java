@@ -155,23 +155,24 @@ public final class DoubaoVoiceInput
       if (currentCaret >= 0 && currentCaret == run.lastRenderedCaret) return;
       // A no-span callback can also be a real move. If the editor previously
       // reported a span, relinquish it even when its current caret is unavailable.
-      if (currentCaret != CARET_UNAVAILABLE || run.composingStart >= 0) cancel();
+      if (currentCaret != CARET_UNAVAILABLE || run.reportsComposingBounds) cancel();
       return;
     }
     if (composingEnd >= 0 && start == composingEnd && end == composingEnd)
     {
+      run.reportsComposingBounds = true;
       if (composingStart >= 0)
       {
         run.composingStart = composingStart;
         if (run.pendingRetractionUpdates > 0 && run.retractionCaret == CARET_UNAVAILABLE)
           run.retractionCaret = composingStart;
       }
-      if (!run.lastWriteEmpty) run.composingAcknowledged = true;
       return;
     }
     if (run.lastWriteEmpty) return;
-    // Some editors omit composing bounds even for their normal write callbacks.
-    if (composingEnd < 0 && !run.composingAcknowledged) return;
+    // Some editors never report composing bounds. Once they report a span,
+    // losing it outside a retraction is significant even before a later ack.
+    if (composingEnd < 0 && !run.reportsComposingBounds) return;
     // The editor keeps the visible text at the old cursor. Drop pending results
     // before relinquishing the composing span so none can follow the new cursor.
     cancel();
@@ -339,7 +340,6 @@ public final class DoubaoVoiceInput
     run.pendingTranscript = null;
     boolean retracts = text.isEmpty() && run.hasComposingText && !run.lastWriteEmpty;
     run.lastWriteEmpty = text.isEmpty();
-    if (run.lastWriteEmpty) run.composingAcknowledged = false;
     boolean accepted = run.connection.setComposingText(text, 1);
     run.hasComposingText = true;
     run.lastAppliedTranscriptNs = System.nanoTime();
@@ -487,7 +487,7 @@ public final class DoubaoVoiceInput
     volatile long audioFramesSent;
 
     boolean hasComposingText;
-    boolean composingAcknowledged;
+    boolean reportsComposingBounds;
     boolean lastWriteEmpty;
     boolean canReadEditorCaret;
     int pendingRetractionUpdates;

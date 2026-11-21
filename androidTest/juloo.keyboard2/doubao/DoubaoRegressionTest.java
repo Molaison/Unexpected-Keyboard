@@ -381,42 +381,46 @@ public final class DoubaoRegressionTest
       }
     }
 
-    // Without an absolute-offset read, the two editor states produce the
-    // same updateSelection arguments until the next transcript is ready.
-    for (int scenario = 0; scenario < 3; scenario++)
+    // Without an absolute-offset read, a retraction and a move back to its
+    // offset can report the same arguments. Moves elsewhere must also stop.
+    for (boolean resumedAcknowledged : new boolean[] { false, true })
     {
-      boolean userMoved = scenario != 0;
-      boolean resumedAcknowledged = scenario == 2;
-      try (Editor editor = new Editor(test, "draft "))
+      for (int cursor = -1; cursor <= 8; cursor++)
       {
-        editor.usePrivateConnection();
-        editor.run.onResponse(response(finalJson("初始")));
-        if (!editor.text().equals("draft 初始"))
-          throw new AssertionError("Private replay did not establish the initial transcript");
-        test.runOnMainSync(() -> editor.voice.cancelForSelectionChange(8, 8, 6, 8));
-        editor.run.onResponse(response("{\"results\":[{\"text\":\"\",\"nonstream_result\":true}]}"));
-        if (!editor.text().equals("draft "))
-          throw new AssertionError("Private replay did not retract the initial transcript");
-        editor.run.onResponse(response(finalJson("继续")));
-        if (!editor.text().equals("draft 继续"))
-          throw new AssertionError("Private replay did not resume the transcript");
-        test.runOnMainSync(() -> {
-          if (resumedAcknowledged) editor.voice.cancelForSelectionChange(8, 8, 6, 8);
-          if (userMoved)
-          {
-            editor.currentConnection.finishComposingText();
-            editor.view.setSelection(6);
-          }
-          editor.voice.cancelForSelectionChange(6, 6, -1, -1);
-        });
-        editor.run.onResponse(response(finalJson("晚到的定稿")));
-        String result = editor.text();
-        int[] cursor = new int[1];
-        test.runOnMainSync(() -> cursor[0] = editor.view.getSelectionStart());
-        int expectedCursor = userMoved ? 6 : 8;
-        if (editor.voice.isActive() || !result.equals("draft 继续") || cursor[0] != expectedCursor)
-          violations.add("Private ambiguous update with userMoved=" + userMoved
-              + ", resumedAcknowledged=" + resumedAcknowledged + " yielded [" + result + "] at " + cursor[0]);
+        int reportedCursor = cursor < 0 ? 6 : cursor;
+        int expectedCursor = cursor < 0 ? 8 : cursor;
+        boolean userMoved = cursor >= 0;
+        try (Editor editor = new Editor(test, "draft "))
+        {
+          editor.usePrivateConnection();
+          editor.run.onResponse(response(finalJson("初始")));
+          if (!editor.text().equals("draft 初始"))
+            throw new AssertionError("Private replay did not establish the initial transcript");
+          test.runOnMainSync(() -> editor.voice.cancelForSelectionChange(8, 8, 6, 8));
+          editor.run.onResponse(response("{\"results\":[{\"text\":\"\",\"nonstream_result\":true}]}"));
+          if (!editor.text().equals("draft "))
+            throw new AssertionError("Private replay did not retract the initial transcript");
+          editor.run.onResponse(response(finalJson("继续")));
+          if (!editor.text().equals("draft 继续"))
+            throw new AssertionError("Private replay did not resume the transcript");
+          test.runOnMainSync(() -> {
+            if (resumedAcknowledged) editor.voice.cancelForSelectionChange(8, 8, 6, 8);
+            if (userMoved)
+            {
+              editor.currentConnection.finishComposingText();
+              editor.view.setSelection(reportedCursor);
+            }
+            editor.voice.cancelForSelectionChange(reportedCursor, reportedCursor, -1, -1);
+          });
+          editor.run.onResponse(response(finalJson("晚到的定稿")));
+          String result = editor.text();
+          int[] actualCursor = new int[1];
+          test.runOnMainSync(() -> actualCursor[0] = editor.view.getSelectionStart());
+          if (editor.voice.isActive() || !result.equals("draft 继续") || actualCursor[0] != expectedCursor)
+            violations.add("Private no-span update with reportedCursor=" + reportedCursor
+                + ", userMoved=" + userMoved + ", resumedAcknowledged=" + resumedAcknowledged
+                + " yielded [" + result + "] at " + actualCursor[0]);
+        }
       }
     }
     if (!violations.isEmpty()) throw new AssertionError(violations.toString());
