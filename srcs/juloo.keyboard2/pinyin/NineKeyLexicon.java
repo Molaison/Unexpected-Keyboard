@@ -6,7 +6,10 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Sorted, read-only word index. No hundreds-of-thousands-of-Strings heap graph. */
 public final class NineKeyLexicon
@@ -14,6 +17,7 @@ public final class NineKeyLexicon
   private static final String KEYS = "22233344455566677778889999";
   private final ByteBuffer data;
   private final int count;
+  private enum Order { INDEX, WORDS, FREQUENCY }
 
   public NineKeyLexicon(FileChannel channel, long offset, long length) throws IOException
   {
@@ -62,15 +66,45 @@ public final class NineKeyLexicon
   /** Exact numeric spelling lookup, then respect explicit letters/separators. */
   public List<Entry> lookup(String raw, String constraint, int limit)
   {
-    return lookup(raw, constraint, limit, false);
+    return lookup(raw, constraint, limit, Order.INDEX);
   }
 
   List<Entry> lookupCorrections(String raw, int limit)
   {
-    return lookup(raw, "", limit, true);
+    return lookup(raw, "", limit, Order.FREQUENCY);
   }
 
-  private List<Entry> lookup(String raw, String constraint, int limit, boolean byFrequency)
+  Entry firstWord(String digits)
+  {
+    List<Entry> matches = lookup(digits, "", 1, Order.WORDS);
+    return matches.isEmpty() ? null : matches.get(0);
+  }
+
+  List<Entry> lookupTranspositions(String digits, int limit)
+  {
+    Map<String, Entry> matches = new LinkedHashMap<>();
+    char[] keys = digits.toCharArray();
+    for (int i = 0; i + 1 < keys.length; i++)
+    {
+      char left = keys[i], right = keys[i + 1];
+      if (left == right) continue;
+      keys[i] = right;
+      keys[i + 1] = left;
+      for (Entry entry : lookup(new String(keys), "", limit, Order.WORDS))
+      {
+        Entry previous = matches.get(entry.text);
+        if (previous == null || entry.score < previous.score) matches.put(entry.text, entry);
+      }
+      keys[i] = left;
+      keys[i + 1] = right;
+    }
+    List<Entry> ranked = new ArrayList<>(matches.values());
+    ranked.sort(Comparator.comparingDouble((Entry entry) -> entry.score).thenComparing(entry -> entry.text));
+    if (ranked.size() > limit) ranked.subList(limit, ranked.size()).clear();
+    return ranked;
+  }
+
+  private List<Entry> lookup(String raw, String constraint, int limit, Order order)
   {
     List<Entry> result = new ArrayList<>();
     if (raw.isEmpty() || limit <= 0) return result;
@@ -91,15 +125,16 @@ public final class NineKeyLexicon
       if (compareKey(mid, digits) < 0) lo = mid + 1;
       else hi = mid;
     }
-    // Only the normal lookup can stop at the compiler's frequency/length order.
+    boolean byFrequency = order == Order.FREQUENCY;
+    // The compiler's word score includes length, unlike the phonetic correction order.
     for (int i = lo; i < count && (byFrequency || result.size() < limit) && compareKey(i, digits) == 0; i++)
     {
       int p = position(i), plen = data.get(p) & 255, tlen = data.get(p + 1) & 255;
+      if (order != Order.INDEX && tlen < 2) continue;
       float frequencyCost = (data.getShort(p + 2) & 65535) / (float)Math.max(1, tlen);
       int insertion = result.size();
       if (byFrequency)
       {
-        if (tlen < 2) continue;
         while (insertion > 0 && frequencyCost < result.get(insertion - 1).frequencyCost) insertion--;
         if (insertion >= limit) continue;
       }

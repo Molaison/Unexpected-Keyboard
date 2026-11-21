@@ -47,6 +47,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean pinyinToolbar;
   private boolean nineKeySplitting;
   private boolean nineKeyFuzzy;
+  private boolean nineKeyTypo;
   private int landscapeEditorHeight;
   private boolean voiceLive;
   private boolean voiceFresh;
@@ -65,6 +66,7 @@ public final class PinyinSmokeTest extends Instrumentation
     pinyinToolbar = arguments != null && "true".equals(arguments.getString("pinyin_toolbar"));
     nineKeySplitting = arguments != null && "true".equals(arguments.getString("nine_key_splitting"));
     nineKeyFuzzy = arguments != null && "true".equals(arguments.getString("nine_key_fuzzy"));
+    nineKeyTypo = arguments != null && "true".equals(arguments.getString("nine_key_typo"));
     landscapeEditorHeight = Integer.parseInt(arguments == null ? "0" : arguments.getString("landscape_editor_height", "0"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
@@ -136,6 +138,13 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         checkNineKeyFuzzyPinyin();
         result.putString("stream", "NINE_KEY_FUZZY_OK\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (nineKeyTypo)
+      {
+        checkNineKeyTypo();
+        result.putString("stream", "NINE_KEY_TYPO_OK\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -1314,6 +1323,27 @@ public final class PinyinSmokeTest extends Instrumentation
     passed("nine-key candidates accept common approximate pronunciations through actual taps");
   }
 
+  private void checkNineKeyTypo() throws Exception
+  {
+    clear();
+    nineKey(true);
+    for (String[] example : new String[][] {{"94646486", "中国"}, {"64246", "你好"},
+        {"962494646486", "我爱中国"}})
+    {
+      clear();
+      nineKeys(example[0]);
+      int rank = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
+          .getCandidates().indexOf(example[1]) + 1);
+      if (rank == 0 || rank > 5)
+        throw new AssertionError("Nine-key transposed candidate " + example[1] + " ranked " + rank);
+      key("backspace");
+      key("pinyin_" + example[0].charAt(example[0].length() - 1));
+      tapCandidate(example[1]);
+      text(activity.plain, example[1]);
+    }
+    passed("nine-key correction for transposed digits survives backspace and commits through a tap");
+  }
+
   private void nineKeyChecks() throws Exception
   {
     clear();
@@ -1326,6 +1356,7 @@ public final class PinyinSmokeTest extends Instrumentation
 
     checkNineKeySplitting();
     checkNineKeyFuzzyPinyin();
+    checkNineKeyTypo();
 
     onMain(() -> {
       Object index = field(((KeyEventHandler)Config.globalConfig().handler)._pinyin, "lexicon");

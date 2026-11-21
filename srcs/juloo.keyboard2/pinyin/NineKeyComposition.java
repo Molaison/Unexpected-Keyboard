@@ -23,6 +23,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int ALTERNATE_PATHS = 4;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
+  private static final int TRANSPOSED_WORDS = 3;
   private static final int PER_PATH = 32;
   private static final int MAX_CANDIDATES = 256;
   private static final int IMPOSSIBLE = 1000000;
@@ -383,7 +384,7 @@ public final class NineKeyComposition implements ChineseComposition
         return c == 0 ? a.text.compareTo(b.text) : c;
       });
       if (constraint.isEmpty() && remaining.length() >= 4)
-        addFuzzyCandidates(remaining);
+        addCorrections(remaining, lexicon != null && direct.isEmpty());
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
@@ -416,18 +417,19 @@ public final class NineKeyComposition implements ChineseComposition
     return starts;
   }
 
-  private void addFuzzyCandidates(String remaining)
+  private void addCorrections(String remaining, boolean allowTransposition)
   {
     for (int i = 0; i < remaining.length(); i++)
       if (remaining.charAt(i) < '2' || remaining.charAt(i) > '9') return;
+    boolean tryTransposition = allowTransposition && remaining.length() >= 5;
     List<Edit> edits = syllableGraph.edits(remaining);
-    if (edits.isEmpty()) return;
+    if (edits.isEmpty() && !tryTransposition) return;
     Map<String, Candidate> corrected = new LinkedHashMap<>();
     if (lexicon != null)
       for (Edit edit : edits)
         for (NineKeyLexicon.Entry entry : lexicon.lookupCorrections(edit.replace(remaining), 6))
           addCorrection(corrected, entry.text, entry.spelling, entry.display, entry.frequencyCost);
-    if (corrected.isEmpty()) addCorrectedSentences(corrected, edits);
+    if (!edits.isEmpty() && corrected.isEmpty()) addCorrectedSentences(corrected, edits);
     List<Candidate> ranked = new ArrayList<>(corrected.values());
     ranked.sort(Comparator.comparingDouble((Candidate c) -> c.score).thenComparing(c -> c.text));
 
@@ -436,17 +438,80 @@ public final class NineKeyComposition implements ChineseComposition
     for (Candidate correction : ranked)
     {
       if (promoted == PROMOTED_CORRECTIONS) break;
-      int index = 0;
-      while (index < candidates.size() && !candidates.get(index).text.equals(correction.text)) index++;
-      if (index < slot) continue;
-      if (index < candidates.size()) candidates.remove(index);
-      candidates.add(slot++, correction);
-      promoted++;
+      if (promoteCorrection(correction, slot))
+      {
+        slot++;
+        promoted++;
+      }
     }
+    if (tryTransposition)
+    {
+      List<Candidate> transposed = transposedCandidates(remaining);
+      if (!transposed.isEmpty() && candidateIndex(transposed.get(0).text) == candidates.size())
+        candidates.add(slot, transposed.get(0));
+      ranked.addAll(transposed);
+    }
+    if (ranked.isEmpty()) return;
     Set<String> offered = new HashSet<>();
     for (Candidate candidate : candidates) offered.add(candidate.text);
     for (Candidate correction : ranked)
       if (candidates.size() < MAX_CANDIDATES && offered.add(correction.text)) candidates.add(correction);
+  }
+
+  private boolean promoteCorrection(Candidate correction, int slot)
+  {
+    int index = candidateIndex(correction.text);
+    if (index < slot) return false;
+    if (index < candidates.size()) candidates.remove(index);
+    candidates.add(slot, correction);
+    return true;
+  }
+
+  private int candidateIndex(String text)
+  {
+    int index = 0;
+    while (index < candidates.size() && !candidates.get(index).text.equals(text)) index++;
+    return index;
+  }
+
+  private List<Candidate> transposedCandidates(String remaining)
+  {
+    List<Candidate> result = new ArrayList<>();
+    for (NineKeyLexicon.Entry entry : lexicon.lookupTranspositions(remaining, TRANSPOSED_WORDS))
+      result.add(completeCorrection(entry.text, entry.spelling, entry.display, entry.score));
+    if (result.isEmpty() && !candidates.isEmpty() && !candidates.get(0).corrected)
+    {
+      Candidate sentence = transposedSuffix(remaining, candidates.get(0));
+      if (sentence != null) result.add(sentence);
+    }
+    return result;
+  }
+
+  private Candidate transposedSuffix(String remaining, Candidate primary)
+  {
+    String[] syllables = primary.display.split(" ");
+    // Preserve up to two complete leading syllables and recover the rest as a word.
+    for (int count = Math.min(2, syllables.length - 1); count >= 1; count--)
+    {
+      String prefix = count == 1 ? syllables[0] : syllables[0] + "'" + syllables[1];
+      String letters = prefix.replace("'", "");
+      if (letters.isEmpty() || letters.length() + 5 > remaining.length()
+          || !remaining.startsWith(digits(letters)) || syllableGraph.splits(prefix).isEmpty()) continue;
+      String suffix = remaining.substring(letters.length());
+      if (lexicon.firstWord(suffix) != null) continue;
+      List<NineKeyLexicon.Entry> corrections = lexicon.lookupTranspositions(suffix, 1);
+      if (corrections.isEmpty()) continue;
+      String query = prefix + "'" + corrections.get(0).display.replace(' ', '\'');
+      if (query.length() > PinyinDecoder.MAX_PINYIN_LENGTH) continue;
+      decoder.reset();
+      if (decoder.search(query) == 0) continue;
+      String text = decoder.getCandidate(0);
+      int[] starts = decoder.getSpellingStarts();
+      if (text.length() >= 2 && text.length() < starts.length && starts[text.length()] == query.length())
+        return completeCorrection(text, primary.reading.spelling, formatSpelling(query, starts),
+            decoder.getCandidateScore(0) / text.length());
+    }
+    return null;
   }
 
   private void addCorrectedSentences(Map<String, Candidate> corrected, List<Edit> edits)
@@ -481,9 +546,14 @@ public final class NineKeyComposition implements ChineseComposition
     if (text.length() < 2) return;
     Candidate previous = corrected.get(text);
     if (previous != null && previous.score <= score) return;
+    corrected.put(text, completeCorrection(text, spelling, display, score));
+  }
+
+  private static Candidate completeCorrection(String text, String spelling, String display, float score)
+  {
     Candidate candidate = new Candidate(text, new Reading(spelling), -1, score);
     candidate.display = display;
     candidate.corrected = true;
-    corrected.put(text, candidate);
+    return candidate;
   }
 }

@@ -62,6 +62,13 @@ public final class NineKeyLexiconTest
       int correctedName = rank(c, "莉莉安");
       check(correctedName >= 0, "The complete corrected name is selectable");
       check(c.select(correctedName).equals("莉莉安") && c.isEmpty(), "A corrected name consumes the whole input");
+      List<NineKeyLexicon.Entry> swapped = lex.lookupTranspositions("949343", 3);
+      check(swapped.size() == 3 && swapped.stream().anyMatch(e -> e.text.equals("谢谢")),
+          "Alternate words on the swapped keys remain selectable");
+      for (char key : "949343".toCharArray()) c.append(key);
+      int swappedThanks = rank(c, "谢谢");
+      check(swappedThanks >= 0, "The transposed candidate list contains 谢谢");
+      check(c.select(swappedThanks).equals("谢谢") && c.isEmpty(), "A transposition consumes the original digits");
       int total=0, oldHits=0, newHits=0;
       for (String row : Files.readAllLines(Paths.get(args[3])))
       {
