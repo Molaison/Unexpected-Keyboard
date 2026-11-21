@@ -135,6 +135,7 @@ public final class DoubaoAsrClient
   public static final class Session
   {
     private static final int MAX_RECOVERY_BYTES = 4 * 1024 * 1024;
+    private static final long REPLAY_FRAME_PERIOD_NS = TimeUnit.MILLISECONDS.toNanos(20);
     private final OkHttpClient httpClient;
     private final CredentialStore credentialStore;
     private final Credentials originalCredentials;
@@ -153,6 +154,7 @@ public final class DoubaoAsrClient
     private long timestampOffset;
     private long replayStartedNs;
     private long firstReplayTimestamp;
+    private long nextReplayFrameNs;
     private Credentials replacement;
 
     Session(OkHttpClient httpClient, CredentialStore credentialStore,
@@ -214,9 +216,7 @@ public final class DoubaoAsrClient
       else if (recognizedText) clearBufferedAudio();
       try
       {
-        paceReplay(timestampMs);
-        connection.sendAudio(frame, state, timestampMs + timestampOffset,
-            forceTwopass, finishAudio);
+        sendFrame(frame, state, timestampMs, forceTwopass, finishAudio);
       }
       catch (IOException error) { recover(error); }
     }
@@ -287,10 +287,16 @@ public final class DoubaoAsrClient
       connection = null;
       previous.cancel();
       replacement = credentialStore.acquireFreshCredentials(credentialRequests);
-      if (cancelled) throw new IOException("Voice input was cancelled during credential refresh");
-      connection = newConnection(replacement);
-      connection.connectAndStartTask();
-      if (started) connection.startSession(sessionContext);
+      Connection reconnecting = newConnection(replacement);
+      connection = reconnecting;
+      // Publish before checking cancellation so cancel() cannot miss this socket.
+      if (cancelled)
+      {
+        reconnecting.cancel();
+        throw new IOException("Voice input was cancelled during credential refresh");
+      }
+      reconnecting.connectAndStartTask();
+      if (started) reconnecting.startSession(sessionContext);
       if (!bufferedAudio.isEmpty())
       {
         firstReplayTimestamp = bufferedAudio.get(0).timestamp;
@@ -298,21 +304,30 @@ public final class DoubaoAsrClient
         replayStartedNs = System.nanoTime();
       }
       for (AudioFrame audio : bufferedAudio)
-      {
-        if (cancelled) throw new IOException("Voice input was cancelled during audio replay");
-        paceReplay(audio.timestamp);
-        connection.sendAudio(audio.bytes, audio.state, audio.timestamp + timestampOffset,
-            audio.forceTwopass, audio.finishAudio);
-      }
+        sendFrame(audio.bytes, audio.state, audio.timestamp, audio.forceTwopass, audio.finishAudio);
       clearBufferedAudio();
       if (finishing) connection.finish();
+    }
+
+    private void sendFrame(byte[] bytes, int state, long timestampMs, boolean forceTwopass,
+        boolean finishAudio) throws IOException
+    {
+      paceReplay(timestampMs);
+      if (cancelled) throw new IOException("Voice input was cancelled");
+      long nextFrame = replayStartedNs == 0 ? 0 : System.nanoTime() + REPLAY_FRAME_PERIOD_NS;
+      connection.sendAudio(bytes, state, timestampMs + timestampOffset, forceTwopass, finishAudio);
+      if (nextFrame != 0)
+      {
+        long sentAt = System.nanoTime();
+        nextReplayFrameNs = sentAt >= nextFrame ? sentAt + REPLAY_FRAME_PERIOD_NS : nextFrame;
+      }
     }
 
     private void paceReplay(long timestampMs) throws IOException
     {
       if (replayStartedNs == 0) return;
-      long remaining = replayStartedNs + TimeUnit.MILLISECONDS.toNanos(timestampMs - firstReplayTimestamp)
-        - System.nanoTime();
+      long scheduled = replayStartedNs + TimeUnit.MILLISECONDS.toNanos(timestampMs - firstReplayTimestamp);
+      long remaining = Math.max(scheduled, nextReplayFrameNs) - System.nanoTime();
       if (remaining <= 0) return;
       try { TimeUnit.NANOSECONDS.sleep(remaining); }
       catch (InterruptedException error)
