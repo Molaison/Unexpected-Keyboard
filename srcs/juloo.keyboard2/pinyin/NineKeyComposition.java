@@ -278,10 +278,9 @@ public final class NineKeyComposition implements ChineseComposition
     dirty = true;
   }
 
-  /** Minimum phonetic cost: complete syllables, optional initials, and an
-   * unfinished final syllable. Keeping that final prefix prevents pruning
-   * 'zhon' before the user can finish 'zhong'. */
-  private int phoneticCost(String input, boolean incomplete)
+  /** Minimum phonetic cost to each prefix end. The search beam can also
+   * accept an unfinished final syllable, such as 'zhon' before 'zhong'. */
+  private int[] phoneticCosts(String input, boolean incomplete)
   {
     int n = input.length();
     int[] costs = new int[n + 1];
@@ -303,7 +302,7 @@ public final class NineKeyComposition implements ChineseComposition
         if (penalty < IMPOSSIBLE) costs[j] = Math.min(costs[j], costs[i] + penalty);
       }
     }
-    return costs[n];
+    return costs;
   }
 
   private List<Path> searchPaths(String keys)
@@ -321,7 +320,7 @@ public final class NineKeyComposition implements ChineseComposition
         String s = p.spelling + letters.charAt(i);
         if (s.length() <= constraint.length() && !constraint.startsWith(s)) continue;
         if (s.length() > constraint.length() && !s.startsWith(constraint)) continue;
-        int cost = phoneticCost(s, true);
+        int cost = phoneticCosts(s, true)[s.length()];
         if (cost == IMPOSSIBLE) continue;
         decoder.reset();
         int count = decoder.search(s);
@@ -484,6 +483,7 @@ public final class NineKeyComposition implements ChineseComposition
     decoder.reset();
     int count = decoder.search(reading.query);
     int[] starts = decoder.getSpellingStarts();
+    int[] spellingCosts = null;
     for (int i = 0; i < Math.min(count, onlyBestComplete ? 1 : PER_PATH); i++)
     {
       String text = decoder.getCandidate(i);
@@ -491,7 +491,8 @@ public final class NineKeyComposition implements ChineseComposition
       int queryEnd = starts[text.length()];
       int consumed = reading.rawEnd(queryEnd);
       if (consumed <= 0 || consumed > rawLength || (onlyBestComplete && consumed != rawLength)) continue;
-      int spellingCost = phoneticCost(reading.spelling.substring(0, consumed), false);
+      if (spellingCosts == null) spellingCosts = phoneticCosts(reading.spelling, false);
+      int spellingCost = spellingCosts[consumed];
       if (spellingCost == IMPOSSIBLE) continue;
       float score = decoder.getCandidateScore(i) / Math.max(1, text.length()) + spellingCost;
       // Fully decoded words/sentences lead; partial choices remain available.
