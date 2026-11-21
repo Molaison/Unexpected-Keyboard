@@ -24,6 +24,8 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int ENDING_PREFIXES = 12;
   private static final int ENDING_READINGS = 2;
   private static final int ENDING_WORDS = 8;
+  private static final int EARLIER_ENDING_PREFIXES = 4;
+  private static final int EARLIER_ENDING_WORDS = 3;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
   private static final int TRANSPOSED_WORDS = 3;
@@ -80,6 +82,19 @@ public final class NineKeyComposition implements ChineseComposition
       this.index = index;
       this.score = score;
       this.display = reading.spelling;
+    }
+  }
+
+  private static final class EndingCut
+  {
+    final int rawEnd;
+    final int characters;
+    final List<NineKeyLexicon.Entry> words;
+    EndingCut(int rawEnd, int characters, List<NineKeyLexicon.Entry> words)
+    {
+      this.rawEnd = rawEnd;
+      this.characters = characters;
+      this.words = words;
     }
   }
 
@@ -416,9 +431,9 @@ public final class NineKeyComposition implements ChineseComposition
   {
     // Pick a dictionary word ending at a boundary the native decoder already found.
     Candidate best = Collections.min(unique.values(), CANDIDATE_ORDER);
-    int prefixEnd = 0;
-    int prefixCharacters = 0;
-    List<NineKeyLexicon.Entry> bestEndings = Collections.emptyList();
+    int separator = raw.lastIndexOf('\'');
+    EndingCut preferred = null;
+    List<EndingCut> explicitCuts = separator < 0 ? Collections.emptyList() : new ArrayList<>();
     for (int i = best.spellingStarts.length - 1; i > 0; i--)
     {
       int cut = best.reading.rawEnd(best.spellingStarts[i]);
@@ -426,18 +441,19 @@ public final class NineKeyComposition implements ChineseComposition
       int tailLength = raw.length() - cut;
       if (cut < 3 || tailLength < 4 || tailLength > 12) continue;
       List<NineKeyLexicon.Entry> endings = lexicon.lookupWords(raw.substring(cut), ENDING_WORDS);
-      if (endings.isEmpty() || (!bestEndings.isEmpty() && endings.get(0).score >= bestEndings.get(0).score))
-        continue;
-      prefixEnd = cut;
-      prefixCharacters = i;
-      bestEndings = endings;
+      if (endings.isEmpty()) continue;
+      EndingCut choice = new EndingCut(cut, i, endings);
+      if (preferred == null || endings.get(0).score < preferred.words.get(0).score) preferred = choice;
+      // Recover the prefix after an explicit separator without guessing a different tail reading.
+      if (separator >= 0 && cut > separator && !best.partial
+          && best.display.endsWith(" " + endings.get(0).display)) explicitCuts.add(choice);
     }
-    if (bestEndings.isEmpty()) return;
+    if (preferred == null) return;
     // Reuse the cached beam before the ending to recover spellings that were pruned later.
-    List<Path> prefixes = searchPaths(raw.substring(0, prefixEnd));
+    List<Path> prefixes = searchPaths(raw.substring(0, preferred.rawEnd));
     Set<String> distinct = new HashSet<>();
     Map<String, Candidate> recovered = new LinkedHashMap<>();
-    for (NineKeyLexicon.Entry ending : bestEndings)
+    for (NineKeyLexicon.Entry ending : preferred.words)
     {
       if (!distinct.add(ending.display)) continue;
       for (int j = 0; j < Math.min(ENDING_PREFIXES, prefixes.size()); j++)
@@ -449,10 +465,45 @@ public final class NineKeyComposition implements ChineseComposition
       }
       if (distinct.size() >= ENDING_READINGS) break;
     }
-    Candidate homophone = homophoneEnding(best, prefixEnd, prefixCharacters, bestEndings);
+    Candidate homophone = homophoneEnding(best, preferred.rawEnd, preferred.characters, preferred.words);
     if (homophone != null && !unique.containsKey(homophone.text) && !recovered.containsKey(homophone.text))
       recovered.put(homophone.text, homophone);
+    EndingCut earlier = null;
+    for (EndingCut cut : explicitCuts)
+      if (cut.rawEnd < preferred.rawEnd
+          && (earlier == null || cut.words.get(0).score < earlier.words.get(0).score)) earlier = cut;
+    if (earlier != null) recoverEarlierEnding(raw, earlier, recovered, seenReadings);
     mergeWordEndings(recovered);
+  }
+
+  private void recoverEarlierEnding(String raw, EndingCut cut, Map<String, Candidate> recovered,
+      Set<String> seenReadings)
+  {
+    NineKeyLexicon.Entry ending = cut.words.get(0);
+    List<Path> prefixes = searchPaths(raw.substring(0, cut.rawEnd));
+    for (int j = 0; j < Math.min(EARLIER_ENDING_PREFIXES, prefixes.size()); j++)
+    {
+      Reading reading = Reading.withWordEnding(prefixes.get(j).spelling, ending);
+      if (reading.query.length() > PinyinDecoder.MAX_PINYIN_LENGTH || !seenReadings.add(reading.query)) continue;
+      addNativeCandidates(recovered, reading, raw.length(), true);
+      if (decoder.getCandidateCount() == 0) continue;
+      Candidate decoded = recovered.get(decoder.getCandidate(0));
+      if (decoded == null || decoded.reading != reading || !decoded.text.endsWith(ending.text)
+          || !decoded.display.endsWith(" " + ending.display)) continue;
+      int alternatives = 0;
+      for (NineKeyLexicon.Entry word : cut.words)
+      {
+        if (!word.display.equals(ending.display) || word.text.length() != ending.text.length()
+            || word.text.equals(ending.text)) continue;
+        String text = decoded.text.substring(0, decoded.text.length() - ending.text.length()) + word.text;
+        float difference = (word.frequencyCost - ending.frequencyCost) * word.text.length() / decoded.text.length();
+        Candidate replacement = new Candidate(text, reading, -1, Math.max(Math.nextUp(decoded.score),
+            decoded.score + difference));
+        replacement.display = decoded.display;
+        if (!recovered.containsKey(text)) recovered.put(text, replacement);
+        if (++alternatives >= EARLIER_ENDING_WORDS) break;
+      }
+    }
   }
 
   private Candidate homophoneEnding(Candidate best, int prefixEnd, int prefixCharacters,
