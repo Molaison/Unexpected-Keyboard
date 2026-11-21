@@ -246,7 +246,7 @@ public final class DoubaoVoiceInput
     boolean stopping = run.stopRequested;
     mainHandler.post(() -> {
       if (!isCurrent(run) || run.cancelled
-          || (response.text.isEmpty() && response.layout != DoubaoProtocol.TranscriptLayout.FINAL_WHOLE))
+          || (response.text.isEmpty() && response.layout == DoubaoProtocol.TranscriptLayout.INDEXED))
         return;
       if (host.getCurrentInputConnection() != run.connection)
       {

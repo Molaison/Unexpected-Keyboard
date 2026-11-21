@@ -435,10 +435,12 @@ public final class DoubaoProtocol
     boolean nonstream = optionalBoolean(first, "nonstream_result", false)
         || optionalBoolean(firstExtra, "nonstream_result", false);
     boolean isFinal = nonstream || (allStable && (wholeTranscript || vadFinished));
+    TranscriptLayout layout = TranscriptLayout.INDEXED;
+    if (extractedText != null && (nonstream || wholeTranscript))
+      layout = nonstream ? TranscriptLayout.FINAL_WHOLE : TranscriptLayout.WHOLE;
     ResponseType type = isFinal ? ResponseType.FINAL_RESULT
-        : vadStart && text.isEmpty() ? ResponseType.VAD_START : ResponseType.INTERIM_RESULT;
-    TranscriptLayout layout = nonstream && extractedText != null ? TranscriptLayout.FINAL_WHOLE
-        : wholeTranscript ? TranscriptLayout.WHOLE : TranscriptLayout.INDEXED;
+        : vadStart && text.isEmpty() && layout == TranscriptLayout.INDEXED
+            ? ResponseType.VAD_START : ResponseType.INTERIM_RESULT;
     return new Response(type, text, isFinal, allStable, vadStart, vadFinished, layout,
         utteranceIndex, -1, 0, "", resultJson, fragments);
   }

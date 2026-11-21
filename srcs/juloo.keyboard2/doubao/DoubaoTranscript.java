@@ -48,6 +48,13 @@ final class DoubaoTranscript
     utterances.clear();
     spans.clear();
     lastFragment = -1;
+    if (snapshot.isEmpty())
+    {
+      // Clear the previous indices so a later recognition can start again.
+      snapshot = null;
+      currentIndex = 0;
+      return "";
+    }
     int cursor = 0;
     for (DoubaoProtocol.Fragment fragment : response.fragments)
     {

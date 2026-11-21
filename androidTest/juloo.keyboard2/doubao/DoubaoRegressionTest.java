@@ -172,6 +172,8 @@ public final class DoubaoRegressionTest
     String expandedDetail;
     String revisedPunctuation;
     String emptyFinal;
+    String emptyWhole;
+    String resumed;
     try (Editor editor = new Editor(test, "前缀"))
     {
       editor.run.onResponse(response("{\"results\":["
@@ -244,15 +246,37 @@ public final class DoubaoRegressionTest
       editor.complete();
       emptyFinal = editor.text();
     }
+    String whole = "{\"results\":["
+        + "{\"text\":\"Hello.\",\"is_interim\":false},"
+        + "{\"text\":\"Hello.\",\"is_interim\":false,\"index\":1}]}";
+    String revoked = "{\"results\":["
+        + "{\"text\":\"\",\"is_interim\":true},"
+        + "{\"text\":\"\",\"is_interim\":true,\"index\":1}]}";
+    try (Editor editor = new Editor(test, "Prefix: "))
+    {
+      editor.run.onResponse(response(whole));
+      editor.run.onResponse(response(revoked));
+      editor.complete();
+      emptyWhole = editor.text();
+    }
+    try (Editor editor = new Editor(test, "Prefix: "))
+    {
+      editor.run.onResponse(response(whole));
+      editor.run.onResponse(response(revoked));
+      editor.run.onResponse(response(finalJson("Again.", 1)));
+      editor.complete();
+      resumed = editor.text();
+    }
     if (!formatted.equals("前缀先说一句。你好，世界又见。再说一句。")
         || !extended.equals("前缀第一句。今天下雨了。")
         || !reformattedTail.equals("Prefix: One. Today, it rains.") || !shortened.equals("Prefix: One. Today")
         || !expandedDetail.equals("Prefix: First. Today it snowed. Tomorrow is sunny.")
-        || !revisedPunctuation.equals("Prefix: Hello earth!") || !emptyFinal.equals("前缀"))
+        || !revisedPunctuation.equals("Prefix: Hello earth!") || !emptyFinal.equals("前缀")
+        || !emptyWhole.equals("Prefix: ") || !resumed.equals("Prefix: Again."))
       throw new AssertionError("Fragment boundaries produced formatted=[" + formatted
           + "], extended=[" + extended + "], reformattedTail=[" + reformattedTail + "], shortened=[" + shortened
           + "], expandedDetail=[" + expandedDetail + "], revisedPunctuation=[" + revisedPunctuation
-          + "], emptyFinal=[" + emptyFinal + "]");
+          + "], emptyFinal=[" + emptyFinal + "], emptyWhole=[" + emptyWhole + "], resumed=[" + resumed + "]");
   }
 
   private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception
