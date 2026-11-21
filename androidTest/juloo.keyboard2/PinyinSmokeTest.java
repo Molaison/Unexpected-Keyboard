@@ -1275,7 +1275,15 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void nineKeys(String keys) throws Exception
   {
-    for (char key : keys.toCharArray()) key("pinyin_" + key);
+    for (char key : keys.toCharArray())
+    {
+      if (key == '\'')
+      {
+        float[] point = onMain(() -> keyPoint("pinyin_2", false));
+        swipe(point[0], point[1], point[2], 2 * point[1] - point[3]);
+      }
+      else key("pinyin_" + key);
+    }
   }
 
   private void checkNineKeySplitting() throws Exception
@@ -1320,6 +1328,35 @@ public final class PinyinSmokeTest extends Instrumentation
       throw new AssertionError("Nine-key alternate split 今天从西安出发 ranked " + sentenceRank);
     tapCandidate("今天从西安出发");
     text(activity.plain, "今天从西安出发");
+
+    StringBuilder missingEndings = new StringBuilder();
+    for (String[] example : new String[][] {
+        {"5464'2646649826", "静安公园", "5"},
+        {"94267823454649244849426", "先去北京再回西安", "64"}})
+    {
+      clear();
+      nineKeys(example[0]);
+      int limit = Integer.parseInt(example[2]);
+      int endingRank = onMain(() -> {
+        juloo.keyboard2.pinyin.PinyinInput input = ((KeyEventHandler)Config.globalConfig().handler)._pinyin;
+        while (input.getCandidates().size() < limit && !input.getCandidates().contains(example[1]))
+        {
+          int previous = input.getCandidates().size();
+          input.showMoreCandidates();
+          if (input.getCandidates().size() == previous) break;
+        }
+        return input.getCandidates().indexOf(example[1]) + 1;
+      });
+      if (endingRank == 0 || endingRank > limit)
+        missingEndings.append(" ").append(example[1]).append(" ranked ").append(endingRank);
+      else
+      {
+        tapCandidate(example[1]);
+        text(activity.plain, example[1]);
+      }
+    }
+    if (missingEndings.length() != 0)
+      throw new AssertionError("Nine-key word endings:" + missingEndings);
     passed("nine-key alternate split commits and backspace preserves the original key boundaries");
   }
 

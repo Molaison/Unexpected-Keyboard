@@ -21,6 +21,9 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int BEAM = 48;
   private static final int CANDIDATE_PATHS = 24;
   private static final int ALTERNATE_PATHS = 4;
+  private static final int ENDING_PREFIXES = 12;
+  private static final int ENDING_READINGS = 2;
+  private static final int ENDING_WORDS = 8;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
   private static final int TRANSPOSED_WORDS = 3;
@@ -67,6 +70,7 @@ public final class NineKeyComposition implements ChineseComposition
     final int index;
     final float score;
     String display;
+    int[] spellingStarts;
     boolean corrected;
     Candidate(String text, Reading reading, int index, float score)
     {
@@ -77,6 +81,11 @@ public final class NineKeyComposition implements ChineseComposition
       this.display = reading.spelling;
     }
   }
+
+  private static final Comparator<Candidate> CANDIDATE_ORDER = (a, b) -> {
+    int c = Float.compare(a.score, b.score);
+    return c == 0 ? a.text.compareTo(b.text) : c;
+  };
 
   public NineKeyComposition(PinyinDecoder decoder) { this(decoder, null); }
 
@@ -383,6 +392,9 @@ public final class NineKeyComposition implements ChineseComposition
       int spare = ALTERNATE_PATHS - alternatives.size();
       alternatives.addAll(moreSplits.subList(0, Math.min(spare, moreSplits.size())));
       for (Reading reading : alternatives) addNativeCandidates(unique, reading, remaining.length());
+      if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
+          && constraint.isEmpty() && !unique.isEmpty())
+        addWordEndings(remaining, unique, seenReadings);
       for (NineKeyLexicon.Entry e : direct)
       {
         if (unique.containsKey(e.text)) continue; // Prefer native choice/learning when present.
@@ -391,16 +403,49 @@ public final class NineKeyComposition implements ChineseComposition
         unique.put(e.text, c);
       }
       candidates.addAll(unique.values());
-      Collections.sort(candidates, (a, b) -> {
-        int c = Float.compare(a.score, b.score);
-        return c == 0 ? a.text.compareTo(b.text) : c;
-      });
+      candidates.sort(CANDIDATE_ORDER);
       if (constraint.isEmpty() && remaining.length() >= 4)
         addCorrections(remaining, lexicon != null && direct.isEmpty());
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
     dirty = false;
+  }
+
+  private void addWordEndings(String raw, Map<String, Candidate> unique, Set<String> seenReadings)
+  {
+    // Pick a dictionary word ending at a boundary the native decoder already found.
+    Candidate best = Collections.min(unique.values(), CANDIDATE_ORDER);
+    int prefixEnd = 0;
+    List<NineKeyLexicon.Entry> bestEndings = Collections.emptyList();
+    for (int i = best.spellingStarts.length - 1; i > 0; i--)
+    {
+      int cut = best.reading.rawEnd(best.spellingStarts[i]);
+      while (cut < raw.length() && raw.charAt(cut) == '\'') cut++;
+      int tailLength = raw.length() - cut;
+      if (cut < 3 || tailLength < 4 || tailLength > 12) continue;
+      List<NineKeyLexicon.Entry> endings = lexicon.lookupWords(raw.substring(cut), ENDING_WORDS);
+      if (endings.isEmpty() || (!bestEndings.isEmpty() && endings.get(0).score >= bestEndings.get(0).score))
+        continue;
+      prefixEnd = cut;
+      bestEndings = endings;
+    }
+    if (bestEndings.isEmpty()) return;
+    // Reuse the cached beam before the ending to recover spellings that were pruned later.
+    List<Path> prefixes = searchPaths(raw.substring(0, prefixEnd));
+    Set<String> distinct = new HashSet<>();
+    for (NineKeyLexicon.Entry ending : bestEndings)
+    {
+      if (!distinct.add(ending.display)) continue;
+      for (int j = 0; j < Math.min(ENDING_PREFIXES, prefixes.size()); j++)
+      {
+        Reading reading = Reading.withWordEnding(prefixes.get(j).spelling, ending);
+        if (reading.query.length() <= PinyinDecoder.MAX_PINYIN_LENGTH
+            && !seenReadings.contains(reading.spelling) && seenReadings.add(reading.query))
+          addNativeCandidates(unique, reading, raw.length());
+      }
+      if (distinct.size() >= ENDING_READINGS) break;
+    }
   }
 
   private int[] addNativeCandidates(Map<String, Candidate> unique, Reading reading, int rawLength)
@@ -424,6 +469,7 @@ public final class NineKeyComposition implements ChineseComposition
       if (old != null && old.score <= score) continue;
       Candidate candidate = new Candidate(text, reading, i, score);
       candidate.display = formatSpelling(reading.query, starts);
+      candidate.spellingStarts = starts;
       unique.put(text, candidate);
     }
     return starts;

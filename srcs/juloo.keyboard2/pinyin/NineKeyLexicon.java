@@ -76,8 +76,13 @@ public final class NineKeyLexicon
 
   Entry firstWord(String digits)
   {
-    List<Entry> matches = lookup(digits, "", 1, Order.WORDS);
+    List<Entry> matches = lookupWords(digits, 1);
     return matches.isEmpty() ? null : matches.get(0);
+  }
+
+  List<Entry> lookupWords(String raw, int limit)
+  {
+    return lookup(raw, "", limit, Order.WORDS);
   }
 
   List<Entry> lookupTranspositions(String digits, int limit)

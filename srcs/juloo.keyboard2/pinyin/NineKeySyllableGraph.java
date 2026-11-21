@@ -57,6 +57,42 @@ final class NineKeySyllableGraph
     {
       return rawEnds == null ? decoderEnd : rawEnds[decoderEnd];
     }
+
+    static Reading withWordEnding(String prefix, NineKeyLexicon.Entry ending)
+    {
+      String spelling = prefix + ending.spelling;
+      boolean[] cuts = new boolean[spelling.length()];
+      int raw = prefix.length();
+      cuts[raw] = true;
+      for (int i = 0; i < ending.display.length(); i++)
+      {
+        if (ending.display.charAt(i) == ' ') cuts[raw] = true;
+        else
+        {
+          while (spelling.charAt(raw) == '\'') raw++;
+          raw++;
+        }
+      }
+      return withCuts(spelling, cuts);
+    }
+
+    static Reading withCuts(String spelling, boolean[] cuts)
+    {
+      int[] rawEnds = new int[spelling.length() * 2 + 1];
+      StringBuilder query = new StringBuilder();
+      for (int i = 0; i < spelling.length(); i++)
+      {
+        char character = spelling.charAt(i);
+        if (cuts[i] && i > 0 && spelling.charAt(i - 1) != '\'' && character != '\'')
+        {
+          query.append('\'');
+          rawEnds[query.length()] = i;
+        }
+        query.append(character);
+        rawEnds[query.length()] = i + 1;
+      }
+      return new Reading(spelling, query.toString(), rawEnds);
+    }
   }
 
   NineKeySyllableGraph(Set<String> syllables)
@@ -133,20 +169,7 @@ final class NineKeySyllableGraph
   {
     if (start == spelling.length())
     {
-      int[] rawEnds = new int[spelling.length() * 2 + 1];
-      StringBuilder query = new StringBuilder();
-      for (int i = 0; i < spelling.length(); i++)
-      {
-        char character = spelling.charAt(i);
-        if (cuts[i] && i > 0 && spelling.charAt(i - 1) != '\'' && character != '\'')
-        {
-          query.append('\'');
-          rawEnds[query.length()] = i;
-        }
-        query.append(character);
-        rawEnds[query.length()] = i + 1;
-      }
-      result.add(new Reading(spelling, query.toString(), rawEnds));
+      result.add(Reading.withCuts(spelling, cuts));
       return;
     }
     cuts[start] = true;
