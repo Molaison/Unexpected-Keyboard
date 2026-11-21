@@ -2,7 +2,11 @@ package juloo.keyboard2;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.text.TextPaint;
 import android.util.AttributeSet;
+import android.util.DisplayMetrics;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,10 +28,12 @@ public class EmojiGridView extends GridView
   public static final int GROUP_LAST_USE = -1;
 
   private static final String LAST_USE_PREF = "emoji_last_use";
+  private static final int GLYPH_SIZE_SP = 28;
 
   private List<Emoji> _emojiArray;
   private HashMap<Emoji, Integer> _lastUsed;
   private int _group;
+  private int _cell_size;
   private Runnable _onGroupChanged;
 
   public EmojiGridView(Context context, AttributeSet attrs)
@@ -36,6 +42,7 @@ public class EmojiGridView extends GridView
     Emoji.init(context.getResources());
     setOnItemClickListener(this);
     loadLastUsed();
+    updateCellSize();
     setEmojiGroup((_lastUsed.size() == 0) ? 0 : GROUP_LAST_USE);
   }
 
@@ -43,7 +50,7 @@ public class EmojiGridView extends GridView
   {
     _group = group;
     _emojiArray = (group == GROUP_LAST_USE) ? getLastEmojis() : Emoji.getEmojisByGroup(group);
-    setAdapter(new EmojiViewAdpater(getContext(), _emojiArray));
+    setAdapter(new EmojiAdapter());
     if (_onGroupChanged != null)
       _onGroupChanged.run();
   }
@@ -51,6 +58,24 @@ public class EmojiGridView extends GridView
   public int getEmojiGroup() { return _group; }
 
   public void setOnGroupChangedListener(Runnable listener) { _onGroupChanged = listener; }
+
+  private void updateCellSize()
+  {
+    DisplayMetrics metrics = getResources().getDisplayMetrics();
+    TextPaint paint = new TextPaint();
+    paint.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, GLYPH_SIZE_SP, metrics));
+    float glyph = Math.max(paint.measureText("\uD83D\uDE00"), paint.getFontMetricsInt(null));
+    _cell_size = Math.max(Math.round(48 * metrics.density),
+        (int)Math.ceil(glyph + 12 * metrics.density));
+    setColumnWidth(_cell_size);
+  }
+
+  @Override protected void onConfigurationChanged(Configuration config)
+  {
+    super.onConfigurationChanged(config);
+    updateCellSize();
+    ((EmojiAdapter)getAdapter()).notifyDataSetChanged();
+  }
 
   @Override
   protected void onAttachedToWindow()
@@ -139,12 +164,9 @@ public class EmojiGridView extends GridView
       super(context);
       KeyboardUi ui = new KeyboardUi(context);
       setGravity(Gravity.CENTER);
-      setTextSize(28); // Emoji glyphs; keep a 48dp touch cell independent of font scale.
       setTextColor(ui.text);
       setIncludeFontPadding(false);
       setFocusable(false);
-      setLayoutParams(new android.widget.AbsListView.LayoutParams(
-          ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)));
       ui.touchBackground(this, ui.background);
     }
 
@@ -154,18 +176,8 @@ public class EmojiGridView extends GridView
     }
   }
 
-  static class EmojiViewAdpater extends BaseAdapter
+  final class EmojiAdapter extends BaseAdapter
   {
-    Context _button_context;
-
-    List<Emoji> _emojiArray;
-
-    public EmojiViewAdpater(Context context, List<Emoji> emojiArray)
-    {
-      _button_context = context;
-      _emojiArray = emojiArray;
-    }
-
     public int getCount()
     {
       if (_emojiArray == null)
@@ -188,7 +200,12 @@ public class EmojiGridView extends GridView
       EmojiView view = (EmojiView)convertView;
 
       if (view == null)
-        view = new EmojiView(_button_context);
+        view = new EmojiView(getContext());
+      ViewGroup.LayoutParams params = view.getLayoutParams();
+      if (params == null || params.height != _cell_size)
+        view.setLayoutParams(new android.widget.AbsListView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, _cell_size));
+      view.setTextSize(GLYPH_SIZE_SP);
       view.setEmoji(_emojiArray.get(pos));
       return view;
     }

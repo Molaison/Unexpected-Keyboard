@@ -2,6 +2,7 @@ package juloo.keyboard2;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
@@ -20,6 +21,7 @@ import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
+import juloo.keyboard2.pinyin.PinyinCandidatesView;
 
 /** Injects real window touch events into the installed IME and real EditTexts. */
 public final class PinyinSmokeTest extends Instrumentation
@@ -278,6 +280,8 @@ public final class PinyinSmokeTest extends Instrumentation
       passed("candidate UI screenshot and final commit");
       nineKeyChecks();
       clipboardChecks();
+      emojiChecks(false);
+      narrowLayoutChecks();
       result.putString("stream", "\nPINYIN_SMOKE_OK checks=" + checks + "\n");
       finish(Activity.RESULT_OK, result);
     }
@@ -326,35 +330,99 @@ public final class PinyinSmokeTest extends Instrumentation
     await("dark clipboard capture", () -> clipboard() != null && clipboard().isShown());
     screenshot("clipboard-dark.png");
     tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
-    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply();
-      getTargetContext().getSharedPreferences("emoji_last_use", 0).edit().clear().commit(); return null; });
+    onMain(() -> { prefs.edit().putString("theme", "soft_light").apply(); return null; });
+    emojiChecks(true);
+    captureDictionaryStates();
+  }
+
+  private void emojiChecks(boolean capture) throws Exception
+  {
     focus(activity.plain);
-    onMain(() -> { Config.globalConfig().handler.key_up(KeyValue.getKeyByName("switch_emoji"), Pointers.Modifiers.EMPTY); return null; });
-    screenshot("emoji.png");
-    onMain(() -> { Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
-      ViewGroup pane = (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
-      ((EmojiGridView)pane.findViewById(R.id.emoji_grid)).setEmojiGroup(EmojiGridView.GROUP_LAST_USE); return null; });
-    screenshot("emoji-empty.png");
+    clear();
+    chinese(true);
+    nineKey(false);
+    onMain(() -> {
+      getTargetContext().getSharedPreferences("emoji_last_use", 0).edit().clear().commit();
+      return null;
+    });
+    int keyboardHeight = onMain(() -> ((View)keyboard().getParent()).getHeight());
+    // The alphabetic layout opens emoji from Fn's southwest corner.
+    float[] entry = onMain(() -> keyPoint("fn", false));
+    swipe(entry[0], entry[1], entry[2], 2 * entry[1] - entry[3]);
+    await("emoji pane preserves keyboard height", () -> {
+      ViewGroup pane = emojiPane();
+      return pane != null && pane.isShown() && pane.getHeight() == keyboardHeight;
+    });
     ViewGroup emojiPane = onMain(() -> emojiPane());
+    if (capture) screenshot("emoji.png");
+    tap(onMain(() -> findDescription(emojiPane, getTargetContext().getString(R.string.emoji_recent_category))));
     await("recent emoji empty state", () -> emojiPane.findViewById(R.id.emoji_empty_state).isShown());
+    if (capture) screenshot("emoji-empty.png");
     tap(onMain(() -> emojiPane.findViewById(R.id.emoji_browse)));
     await("browse smileys", () -> ((EmojiGridView)emojiPane.findViewById(R.id.emoji_grid)).getCount() > 0);
     EmojiGridView grid = (EmojiGridView)emojiPane.findViewById(R.id.emoji_grid);
+    String emoji = onMain(() -> ((TextView)grid.getChildAt(0)).getText().toString());
     tap(onMain(() -> grid.getChildAt(0)));
+    text(activity.plain, emoji);
     tap(onMain(() -> findDescription(emojiPane, getTargetContext().getString(R.string.emoji_recent_category))));
     await("recently inserted emoji", () -> grid.getCount() == 1);
-    screenshot("emoji-recent.png");
+    if (capture) screenshot("emoji-recent.png");
     float[] back = onMain(() -> keyPoint((Keyboard2View)emojiPane.getChildAt(2), "switch_back_emoji", false));
     touch(back[0], back[1]);
     await("emoji returns to typing", () -> keyboard().isShown());
-    passed("emoji empty recovery, insertion, recent category and ABC return");
-    captureDictionaryStates();
+    passed("emoji preserves keyboard height, uses real touches and returns to the editor");
   }
 
   private ViewGroup emojiPane() throws Exception
   {
     Object receiver = ((KeyEventHandler)Config.globalConfig().handler)._recv;
     return (ViewGroup)field(field(receiver, "this$0"), "_emojiPane");
+  }
+
+  private void narrowLayoutChecks() throws Exception
+  {
+    onMain(() -> {
+      Keyboard2View keys = keyboard();
+      Context context = keys.getContext();
+      KeyboardUi ui = new KeyboardUi(context);
+      int width = ui.dp(180);
+      int narrow = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY);
+      int natural = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+      Keyboard2View constrained = new Keyboard2View(context, null);
+      constrained.setKeyboard((KeyboardData)field(keys, "_keyboard"));
+      constrained.measure(narrow, natural);
+      if (constrained.getMeasuredWidth() != width)
+        throw new AssertionError("The keyboard ignored its parent width");
+
+      PinyinCandidatesView panel = new PinyinCandidatesView(context, null);
+      panel.setState(true, "ni", java.util.Arrays.asList("足够长的候选词组用来验证换行", "你好", "你知道"), false);
+      panel.measure(View.MeasureSpec.makeMeasureSpec(ui.dp(320), View.MeasureSpec.EXACTLY), natural);
+      panel.layout(0, 0, panel.getMeasuredWidth(), panel.getMeasuredHeight());
+      ((View)field(panel, "more")).performClick();
+      panel.measure(narrow, natural);
+      panel.layout(0, 0, width, panel.getMeasuredHeight());
+      ViewGroup lines = (ViewGroup)field(panel, "expandedItems");
+      if (lines.getChildCount() == 0) throw new AssertionError("No expanded candidates were laid out");
+      for (int i = 0; i < lines.getChildCount(); i++)
+      {
+        ViewGroup row = (ViewGroup)lines.getChildAt(i);
+        for (int j = 0; j < row.getChildCount(); j++)
+          if (row.getChildAt(j).getRight() > width)
+            throw new AssertionError("An expanded candidate extends beyond its viewport");
+      }
+
+      android.content.res.Configuration large = new android.content.res.Configuration(
+          context.getResources().getConfiguration());
+      large.fontScale = 2f;
+      EmojiGridView grid = new EmojiGridView(context.createConfigurationContext(large), null);
+      grid.setEmojiGroup(0);
+      TextView emoji = (TextView)grid.getAdapter().getView(0, null, grid);
+      if (emoji.getLayoutParams().height < emoji.getLineHeight()
+          || grid.getRequestedColumnWidth() < emoji.getPaint().measureText(emoji.getText().toString()))
+        throw new AssertionError("Large-font emoji is wider or taller than its cell");
+      return null;
+    });
+    passed("constrained keyboard and candidate widths, and emoji at 2x font scale");
   }
 
   /** Render production download states deterministically; these are view-state

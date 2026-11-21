@@ -48,6 +48,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private final LinearLayout expandedItems;
   private View latinCandidates;
   private boolean expanded;
+  private int expandedWidth;
   private boolean hasMore;
   private String previousComposition = "";
   private List<String> previousCandidates = new ArrayList<>();
@@ -214,12 +215,30 @@ public final class PinyinCandidatesView extends LinearLayout
     more.setEnabled(!previousCandidates.isEmpty());
     more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
     expandedScroll.setVisibility(expanded ? VISIBLE : GONE);
-    if (!expanded) return;
+    if (expanded) renderExpandedItems(availableWidth(getWidth()));
+  }
+
+  private int availableWidth(int width)
+  {
+    return Math.max(1, width - getPaddingLeft() - getPaddingRight());
+  }
+
+  @Override protected void onMeasure(int widthSpec, int heightSpec)
+  {
+    int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
+        ? getResources().getDisplayMetrics().widthPixels : MeasureSpec.getSize(widthSpec);
+    int available = availableWidth(width);
+    if (expanded && expandedWidth != available) renderExpandedItems(available);
+    super.onMeasure(widthSpec, heightSpec);
+  }
+
+  private void renderExpandedItems(int available)
+  {
+    expandedWidth = available;
     expandedItems.removeAllViews();
     // Whole phrases get a whole row; short words share a row without tiny targets.
     LinearLayout line = null;
     int width = 0;
-    int available = Math.max(ui.dp(240), getWidth() - getPaddingLeft() - getPaddingRight());
     for (int i = 0; i < previousCandidates.size(); i++)
     {
       TextView v = candidate(previousCandidates.get(i), i);

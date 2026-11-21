@@ -673,8 +673,13 @@ public class Keyboard2 extends InputMethodService
           break;
 
         case SWITCH_EMOJI:
+          _pinyin.finish();
           if (_emojiPane == null)
             _emojiPane = (ViewGroup)inflate_view(R.layout.emoji_pane);
+          // Keep the editor viewport steady when replacing the keyboard.
+          int height = _keyboard_container_view.getHeight();
+          _emojiPane.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+              height > 0 ? height : ViewGroup.LayoutParams.WRAP_CONTENT));
           setInputView(_emojiPane);
           break;
 
