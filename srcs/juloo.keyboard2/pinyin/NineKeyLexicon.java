@@ -74,6 +74,12 @@ public final class NineKeyLexicon
     return lookup(raw, "", limit, Order.FREQUENCY);
   }
 
+  String firstReading(String display)
+  {
+    List<Entry> matches = lookup(display.replace(" ", ""), "", 1, Order.INDEX, display);
+    return matches.isEmpty() ? "" : matches.get(0).text;
+  }
+
   Entry firstWord(String digits)
   {
     List<Entry> matches = lookupWords(digits, 1);
@@ -114,6 +120,11 @@ public final class NineKeyLexicon
 
   private List<Entry> lookup(String raw, String constraint, int limit, Order order)
   {
+    return lookup(raw, constraint, limit, order, null);
+  }
+
+  private List<Entry> lookup(String raw, String constraint, int limit, Order order, String reading)
+  {
     List<Entry> result = new ArrayList<>();
     if (raw.isEmpty() || limit <= 0) return result;
     StringBuilder key = new StringBuilder();
@@ -149,6 +160,7 @@ public final class NineKeyLexicon
       byte[] bytes = new byte[plen];
       for (int j = 0; j < plen; j++) bytes[j] = data.get(p + 4 + j);
       String display = new String(bytes, StandardCharsets.US_ASCII);
+      if (reading != null && !reading.equals(display)) continue;
       String flat = display.replace(" ", "");
       StringBuilder spelling = new StringBuilder();
       int letter = 0;

@@ -1341,17 +1341,20 @@ public final class PinyinSmokeTest extends Instrumentation
     tapCandidate("今天从西安出发");
     text(activity.plain, "今天从西安出发");
 
-    StringBuilder missingEndings = new StringBuilder();
+    StringBuilder missingPhrases = new StringBuilder();
     for (String[] example : new String[][] {
         {"5464'2646649826", "静安公园", "5"},
         {"94267823454649244849426", "先去北京再回西安", "64"},
         {"64648426966367874264424", "明天我们去上海", "5"},
-        {"967894'262349426", "我去西安北站", "64"}})
+        {"967894'262349426", "我去西安北站", "64"},
+        {"94262262869242466474", "先保存再重启", "32"},
+        {"7874264424924524484", "去上海再开会", "32"},
+        {"784664982692472628", "去公园再散步", "32"}})
     {
       clear();
       nineKeys(example[0]);
       int limit = Integer.parseInt(example[2]);
-      int endingRank = onMain(() -> {
+      int phraseRank = onMain(() -> {
         juloo.keyboard2.pinyin.PinyinInput input = ((KeyEventHandler)Config.globalConfig().handler)._pinyin;
         while (input.getCandidates().size() < limit && !input.getCandidates().contains(example[1]))
         {
@@ -1361,16 +1364,16 @@ public final class PinyinSmokeTest extends Instrumentation
         }
         return input.getCandidates().indexOf(example[1]) + 1;
       });
-      if (endingRank == 0 || endingRank > limit)
-        missingEndings.append(" ").append(example[1]).append(" ranked ").append(endingRank);
+      if (phraseRank == 0 || phraseRank > limit)
+        missingPhrases.append(" ").append(example[1]).append(" ranked ").append(phraseRank);
       else
       {
         tapCandidate(example[1]);
         text(activity.plain, example[1]);
       }
     }
-    if (missingEndings.length() != 0)
-      throw new AssertionError("Nine-key word endings:" + missingEndings);
+    if (missingPhrases.length() != 0)
+      throw new AssertionError("Nine-key long phrases:" + missingPhrases);
     passed("nine-key alternate split commits and backspace preserves the original key boundaries");
   }
 

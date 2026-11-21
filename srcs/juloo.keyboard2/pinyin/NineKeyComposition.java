@@ -26,6 +26,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int ENDING_WORDS = 8;
   private static final int EARLIER_ENDING_PREFIXES = 4;
   private static final int EARLIER_ENDING_WORDS = 3;
+  private static final int SENTENCE_READINGS = 12;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
   private static final int TRANSPOSED_WORDS = 3;
@@ -421,10 +422,68 @@ public final class NineKeyComposition implements ChineseComposition
       if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
           && constraint.isEmpty() && !unique.isEmpty())
         addWordEndings(remaining, unique, seenReadings);
+      if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
+          && candidates.size() < MAX_CANDIDATES
+          && fixedEnd == 0 && constraint.isEmpty() && remaining.indexOf('\'') < 0)
+        addSequentialSentence(unique);
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
     dirty = false;
+  }
+
+  private void addSequentialSentence(Map<String, Candidate> unique)
+  {
+    Candidate alternative = null;
+    int readings = 0;
+    for (Candidate anchor : unique.values())
+    {
+      if (anchor.index != 0 || anchor.partial || anchor.text.length() < 6) continue;
+      if (readings++ == SENTENCE_READINGS) break;
+      // The first clause can cue a second action, for which zai is 再.
+      if ((anchor.text.charAt(0) != '先' && anchor.text.charAt(0) != '去')
+          || anchor.text.indexOf('在', 3) < 0) continue;
+      String[] syllables = anchor.display.split(" ");
+      if (syllables.length != anchor.text.length()) continue;
+      for (int pivot = 3; pivot < syllables.length - 2; pivot++)
+      {
+        if (anchor.text.charAt(pivot) != '在' || !"zai".equals(syllables[pivot])) continue;
+        String tail = anchor.text.substring(pivot + 1);
+        if (!tail.equals(sentenceWord(syllables, pivot + 1, syllables.length))) continue;
+        String middle = sentenceWord(syllables, 1, pivot);
+        if (middle.length() != pivot - 1) continue;
+        int changes = 0;
+        for (int i = 0; i < middle.length(); i++) if (middle.charAt(i) != anchor.text.charAt(i + 1)) changes++;
+        if (changes > 1) continue;
+        String clause = anchor.text.charAt(0) + middle + '再';
+        float score = Math.nextUp(anchor.score);
+        if ((alternative != null && alternative.score <= score)
+            || hasSentencePrefix(clause, score, anchor.text.length())) continue;
+        alternative = new Candidate(clause + tail, anchor.reading, -1, score);
+        alternative.display = anchor.display;
+      }
+    }
+    if (alternative != null)
+    {
+      Map<String, Candidate> alternatives = new LinkedHashMap<>();
+      alternatives.put(alternative.text, alternative);
+      mergeWordEndings(alternatives);
+    }
+  }
+
+  private boolean hasSentencePrefix(String prefix, float score, int length)
+  {
+    for (Candidate candidate : candidates)
+      if (!candidate.partial && candidate.text.startsWith(prefix)
+          && (candidate.score <= score || candidate.text.length() > length)) return true;
+    return false;
+  }
+
+  private String sentenceWord(String[] syllables, int start, int end)
+  {
+    StringBuilder reading = new StringBuilder(syllables[start]);
+    for (int i = start + 1; i < end; i++) reading.append(' ').append(syllables[i]);
+    return lexicon.firstReading(reading.toString());
   }
 
   private void addWordEndings(String raw, Map<String, Candidate> unique, Set<String> seenReadings)
