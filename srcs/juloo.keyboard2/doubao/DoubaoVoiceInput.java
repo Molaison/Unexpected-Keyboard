@@ -32,6 +32,8 @@ public final class DoubaoVoiceInput
   private static final int SAMPLES_PER_FRAME = 320;
   private static final int PCM_BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2;
   private static final int FRAME_DURATION_MS = 20;
+  private static final int MAX_CAPTURE_FRAMES = 3000;
+  private static final short[] CAPTURE_FINISHED = new short[0];
   private static final int ASR_CONCURRENCY_LIMIT = 40200011;
   private static final long FINAL_DRAIN_TIMEOUT_MS = 10000;
   private static final long INTERIM_UPDATE_INTERVAL_NS = 150000000L;
@@ -569,7 +571,8 @@ public final class DoubaoVoiceInput
 
     private final class Capture
     {
-      final ArrayBlockingQueue<short[]> frames = new ArrayBlockingQueue<>(3000);
+      // Reserve a slot to signal that the last PCM frame has been queued.
+      final ArrayBlockingQueue<short[]> frames = new ArrayBlockingQueue<>(MAX_CAPTURE_FRAMES + 1);
       final AtomicReference<IOException> failure = new AtomicReference<>();
       final Thread thread;
 
@@ -623,7 +626,7 @@ public final class DoubaoVoiceInput
         {
           short[] samples = new short[SAMPLES_PER_FRAME];
           int count = readFrame(audioRecord, samples);
-          if (count > 0 && !capture.frames.offer(samples))
+          if (count > 0 && (capture.frames.remainingCapacity() <= 1 || !capture.frames.offer(samples)))
             throw new IOException("Voice processing fell more than 60 seconds behind microphone capture");
           if (count < SAMPLES_PER_FRAME) break;
         }
@@ -638,6 +641,7 @@ public final class DoubaoVoiceInput
         if (problem != null)
           capture.failure.set(problem instanceof IOException ? (IOException)problem
               : new IOException("Could not release microphone capture", problem));
+        capture.frames.add(CAPTURE_FINISHED);
       }
     }
 
@@ -654,22 +658,26 @@ public final class DoubaoVoiceInput
           throwIfCancelledOrFailed();
           capture.throwIfFailed();
           short[] pcmFrame = capture.frames.poll(100, TimeUnit.MILLISECONDS);
-          if (pcmFrame == null)
-          {
-            if (!capture.thread.isAlive() && capture.frames.isEmpty()) break;
-            continue;
-          }
+          if (pcmFrame == null) continue;
+          boolean last = pcmFrame == CAPTURE_FINISHED;
+          if (last) capture.throwIfFailed();
 
           // Frames recorded during the handshake must use the normal audio cadence.
-          byte[] opus = encoder.encode(pcmFrame);
+          byte[] opus = encoder.encode(last ? new short[SAMPLES_PER_FRAME] : pcmFrame);
           long waitNs = nextFrameAtNs - System.nanoTime();
           if (waitNs > 0) TimeUnit.NANOSECONDS.sleep(waitNs);
           throwIfCancelledOrFailed();
           if (session.isFinished()) break;
-          int frameState = frameIndex == 0
+          int frameState = last ? DoubaoProtocol.FRAME_LAST : frameIndex == 0
               ? DoubaoProtocol.FRAME_FIRST : DoubaoProtocol.FRAME_MIDDLE;
           nextFrameAtNs = System.nanoTime() + framePeriodNs;
-          session.sendAudio(opus, frameState, startedAtMs + frameIndex * FRAME_DURATION_MS);
+          // The terminal silence requests two-pass refinement on key release.
+          session.sendAudio(opus, frameState, startedAtMs + frameIndex * FRAME_DURATION_MS, last, last);
+          if (last)
+          {
+            Log.i(TAG, "audio_last_sent frames=" + frameIndex);
+            break;
+          }
           long sentAtNs = System.nanoTime();
           if (sentAtNs >= nextFrameAtNs)
             nextFrameAtNs = sentAtNs + framePeriodNs;
@@ -679,15 +687,6 @@ public final class DoubaoVoiceInput
             Log.i(TAG, "audio_frames_sent=" + frameIndex);
         }
         capture.throwIfFailed();
-        if (!cancelled && !session.isFinished())
-        {
-          byte[] finalOpus = encoder.encode(new short[SAMPLES_PER_FRAME]);
-          // Ask for the two-pass refinement on the release frame, exactly like
-          // SAMICoreBlock.extra in the reference client.
-          session.sendAudio(finalOpus, DoubaoProtocol.FRAME_LAST,
-              startedAtMs + frameIndex * FRAME_DURATION_MS, true, true);
-          Log.i(TAG, "audio_last_sent frames=" + frameIndex);
-        }
       }
     }
 
