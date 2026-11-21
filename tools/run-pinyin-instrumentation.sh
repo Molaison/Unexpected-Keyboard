@@ -8,25 +8,37 @@ mkdir -p "$pinyin_root/build/validation"
 pinyin_adb="$ANDROID_HOME/platform-tools/adb"
 pinyin_package=com.molaison.unexpectedkeyboard.doubao
 pinyin_ime="$pinyin_package/juloo.keyboard2.Keyboard2"
+pinyin_screenshots=(pinyin-keyboard.png pinyin-nine-key.png clipboard-light.png
+  clipboard-dark.png nine-key-light.png nine-key-dark.png clipboard-undo.png failure-ux.png)
+for screenshot in "${pinyin_screenshots[@]}" final-screen.png; do
+  rm -f "$pinyin_root/build/validation/$screenshot" "$pinyin_root/build/validation/$screenshot.tmp"
+done
 "$pinyin_adb" -s "$pinyin_serial" shell input keyevent KEYCODE_WAKEUP
 "$pinyin_adb" -s "$pinyin_serial" shell wm dismiss-keyguard
 "$pinyin_adb" -s "$pinyin_serial" install -r "$pinyin_root/build/outputs/apk/debug/Unexpected-Keyboard-debug.apk"
 "$pinyin_adb" -s "$pinyin_serial" install -r "$pinyin_root/build/outputs/apk/androidTest/debug/Unexpected-Keyboard-debug-androidTest.apk"
+"$pinyin_adb" -s "$pinyin_serial" shell run-as "$pinyin_package" rm -f "${pinyin_screenshots[@]/#/cache/}"
 pinyin_previous_ime="$("$pinyin_adb" -s "$pinyin_serial" shell settings get secure default_input_method | tr -d '\r')"
+capture_png() {
+  local output="$pinyin_root/build/validation/$1"
+  shift
+  # exec-out can exit successfully even when run-as prints an error.
+  if "$@" > "$output.tmp" 2>/dev/null \
+      && [[ "$(od -An -tx1 -N8 "$output.tmp" | tr -d ' \n')" == 89504e470d0a1a0a ]]; then
+    mv "$output.tmp" "$output"
+  else
+    rm -f "$output.tmp"
+  fi
+}
 restore_ime() {
   pinyin_status=$?
-  for screenshot in pinyin-keyboard pinyin-nine-key clipboard-light clipboard-dark nine-key-light nine-key-dark clipboard-undo failure-ux; do
-    if "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot.png" \
-        > "$pinyin_root/build/validation/$screenshot.png.tmp" 2>/dev/null; then
-      mv "$pinyin_root/build/validation/$screenshot.png.tmp" "$pinyin_root/build/validation/$screenshot.png"
-    else
-      rm -f "$pinyin_root/build/validation/$screenshot.png.tmp"
-    fi
+  for screenshot in "${pinyin_screenshots[@]}"; do
+    capture_png "$screenshot" "$pinyin_adb" -s "$pinyin_serial" exec-out run-as "$pinyin_package" cat "cache/$screenshot"
   done
   "$pinyin_adb" -s "$pinyin_serial" logcat -d -v threadtime > "$pinyin_root/build/validation/logcat.txt" || true
   "$pinyin_adb" -s "$pinyin_serial" shell dumpsys input_method > "$pinyin_root/build/validation/input-method.txt" || true
   "$pinyin_adb" -s "$pinyin_serial" shell dumpsys window > "$pinyin_root/build/validation/window.txt" || true
-  "$pinyin_adb" -s "$pinyin_serial" exec-out screencap -p > "$pinyin_root/build/validation/final-screen.png" || true
+  capture_png final-screen.png "$pinyin_adb" -s "$pinyin_serial" exec-out screencap -p
   if [[ -n "$pinyin_previous_ime" && "$pinyin_previous_ime" != null ]]; then
     "$pinyin_adb" -s "$pinyin_serial" shell ime set "$pinyin_previous_ime" || true
   fi
