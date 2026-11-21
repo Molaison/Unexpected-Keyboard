@@ -499,14 +499,20 @@ public final class DoubaoAsrClient
 
     public void close() throws IOException
     {
-      closeRequested.set(true);
       WebSocket socket = webSocket;
       if (socket != null)
       {
-        if (!socket.close(1000, "ASR session complete") && closeLatch.getCount() != 0)
+        if (!requestSocketClose(socket, 1000, "ASR session complete") && closeLatch.getCount() != 0)
           throw new IOException("WebSocket refused the close request");
         await(closeLatch, HANDSHAKE_TIMEOUT_MS, "ASR WebSocket close");
       }
+      else closeRequested.set(true);
+    }
+
+    private boolean requestSocketClose(WebSocket socket, int code, String reason)
+    {
+      // The reader may already have queued the close reply on the same socket.
+      return !closeRequested.compareAndSet(false, true) || socket.close(code, reason);
     }
 
     public void cancel()
@@ -641,7 +647,7 @@ public final class DoubaoAsrClient
             && terminalLatch.getCount() != 0)
           fail(new IOException("ASR WebSocket is closing: " + code + " "
               + reason));
-        socket.close(code, reason);
+        requestSocketClose(socket, code, reason);
       }
 
       @Override

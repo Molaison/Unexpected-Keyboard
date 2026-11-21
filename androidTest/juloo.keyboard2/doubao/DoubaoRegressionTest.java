@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import juloo.keyboard2.Keyboard2;
 import okhttp3.OkHttpClient;
@@ -122,7 +123,17 @@ public final class DoubaoRegressionTest
       if (fixture.failure.get() == null)
         throw new AssertionError("An unexpected socket close after a sentence final was hidden");
     }
+    try (Transport fixture = new Transport())
+    {
+      fixture.listener.onClosing(fixture.socket, 1000, "unexpected close");
+      fixture.listener.onClosed(fixture.socket, 1000, "unexpected close");
+      if (fixture.failure.get() == null)
+        throw new AssertionError("A peer close without SessionFinished was hidden");
+    }
     passed(test, "unexpected transport closure after a sentence is still reported");
+
+    checkPeerCloseAfterSession(test);
+    passed(test, "peer-initiated close after SessionFinished preserves the final text and completes normally");
 
     checkEditor(test);
     passed(test, "sentence boundaries keep recording; final revisions and subsequent utterances preserve editor text");
@@ -144,7 +155,42 @@ public final class DoubaoRegressionTest
     passed(test, "context snapshots follow the cursor; private editors are never read");
     checkLateCallbacks(test);
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
-    passed(test, "DOUBAO_REGRESSION_OK checks=16");
+    passed(test, "DOUBAO_REGRESSION_OK checks=17");
+  }
+
+  private static void checkPeerCloseAfterSession(Instrumentation test) throws Exception
+  {
+    try (Editor editor = new Editor(test, ""); Transport fixture = new Transport(editor.run))
+    {
+      String finalText = "最后一句。";
+      fixture.receive("", 20000000, "OK", finalJson(finalText));
+      fixture.receive("SessionFinished", 20000000, "OK", "");
+      if (!fixture.session.awaitSessionFinished(100))
+        throw new AssertionError("Expected a completed ASR session before closing");
+      fixture.listener.onClosing(fixture.socket, 1000, "peer close");
+      ExecutorService worker = Executors.newSingleThreadExecutor();
+      try
+      {
+        Future<?> close = worker.submit(() -> { fixture.session.close(); return null; });
+        try
+        {
+          close.get(300, TimeUnit.MILLISECONDS);
+          throw new AssertionError("Close returned before the peer handshake was acknowledged");
+        }
+        catch (TimeoutException expected) { }
+        catch (ExecutionException error)
+        {
+          editor.complete(error.getCause());
+          throw new AssertionError("Final text=" + editor.view.getText() + ", failures=" + editor.failures, error.getCause());
+        }
+        fixture.listener.onClosed(fixture.socket, 1000, "peer close");
+        close.get(2, TimeUnit.SECONDS);
+      }
+      finally { worker.shutdownNow(); }
+      editor.complete();
+      if (fixture.socket.closeRequests != 1 || !finalText.equals(editor.text()))
+        throw new AssertionError("Expected one close request and the final text in the editor");
+    }
   }
 
   private static void checkCredentialCancellation(Instrumentation test) throws Exception
@@ -812,11 +858,12 @@ public final class DoubaoRegressionTest
     final CountDownLatch firstSend = new CountDownLatch(1);
     volatile boolean cancelled;
     volatile int sent;
+    volatile int closeRequests;
     @Override public Request request() { return new Request.Builder().url("https://localhost/").build(); }
     @Override public long queueSize() { return 0; }
     @Override public boolean send(String text) { sent++; firstSend.countDown(); return !cancelled; }
     @Override public boolean send(ByteString bytes) { sent++; firstSend.countDown(); return !cancelled; }
-    @Override public boolean close(int code, String reason) { return true; }
+    @Override public synchronized boolean close(int code, String reason) { return ++closeRequests == 1; }
     @Override public void cancel() { cancelled = true; }
   }
 
