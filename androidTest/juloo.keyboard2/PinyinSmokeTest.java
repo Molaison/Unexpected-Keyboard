@@ -33,6 +33,8 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean benchmark;
   private boolean uxCapture;
   private boolean largePinyinFont;
+  private boolean lowerPinyinEditor;
+  private boolean pinyinPagingSelection;
   private boolean voiceLive;
   private boolean voiceFresh;
   private boolean voiceContinuous;
@@ -45,6 +47,8 @@ public final class PinyinSmokeTest extends Instrumentation
     super.onCreate(arguments);
     uxCapture = arguments != null && "true".equals(arguments.getString("ux_capture"));
     largePinyinFont = arguments != null && "true".equals(arguments.getString("large_pinyin_font"));
+    lowerPinyinEditor = arguments != null && "true".equals(arguments.getString("lower_pinyin_editor"));
+    pinyinPagingSelection = arguments != null && "true".equals(arguments.getString("pinyin_paging_selection"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
@@ -122,6 +126,17 @@ public final class PinyinSmokeTest extends Instrumentation
       {
         checkLargePinyinWindow();
         result.putString("stream", "PINYIN_LARGE_FONT_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
+      if (pinyinPagingSelection)
+      {
+        clear();
+        type("shi");
+        String selected = selectScrolledCandidate(openExpandedPinyinCandidates(), 8);
+        passed("scrolling to candidate 9 and tapping it commits " + selected);
+        checkFixedCandidatePaging(true);
+        result.putString("stream", "PINYIN_PAGING_SELECTION_OK checks=" + checks + "\n");
         finish(Activity.RESULT_OK, result);
         return;
       }
@@ -255,7 +270,7 @@ public final class PinyinSmokeTest extends Instrumentation
       text(activity.plain, " nihao");
       passed("moving the cursor preserves text and ends conversion");
 
-      checkFixedCandidatePaging();
+      checkFixedCandidatePaging(false);
 
       clear();
       type("nihao");
@@ -442,6 +457,16 @@ public final class PinyinSmokeTest extends Instrumentation
     View panel = onMain(this::candidatesView);
     if (panel.getResources().getConfiguration().fontScale != 2f)
       throw new AssertionError("Set the emulator's system font_scale to 2.0 first");
+    if (lowerPinyinEditor)
+    {
+      onMain(() -> {
+        ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams)activity.plain.getLayoutParams();
+        params.topMargin = new KeyboardUi(activity).dp(100);
+        activity.plain.setLayoutParams(params);
+        return null;
+      });
+      idle();
+    }
     float idleKeyY = onMain(() -> keyPoint("n", false)[1]);
     type("nihao");
     await("large-font candidate", () -> findText(panel, "你好") != null);
@@ -451,23 +476,128 @@ public final class PinyinSmokeTest extends Instrumentation
       assertCandidateLineFits((TextView)findText(panel, "你好"));
       return null;
     });
+    EditorVisibility collapsed = onMain(() -> editorVisibility(panel));
     screenshot("large-pinyin-inline.png");
 
     tap(onMain(() -> (View)field(panel, "more")));
     View expanded = onMain(() -> (View)field(panel, "expandedScroll"));
     await("large-font expanded candidate", () -> expanded.isShown() && findText(expanded, "你好") != null);
-    onMain(() -> { assertCandidateLineFits((TextView)findText(expanded, "你好")); return null; });
     screenshot("large-pinyin-expanded.png");
+    String editorBounds = onMain(() -> {
+      assertCandidateLineFits((TextView)findText(expanded, "你好"));
+      return checkEditorAboveCandidates(panel, collapsed);
+    });
+    Rect list = onMain(() -> {
+      Rect bounds = new Rect();
+      if (!expanded.getGlobalVisibleRect(bounds)) throw new AssertionError("Expanded list is not visible");
+      return bounds;
+    });
+    int bottom = list.bottom - list.height() / 8;
+    int top = list.top + list.height() / 8;
+    swipe(list.centerX(), bottom, list.centerX(), top);
+    await("expanded list scrolls", () -> expanded.getScrollY() > 0);
+    swipe(list.centerX(), top, list.centerX(), bottom);
+    await("expanded list returns to its first row", () -> expanded.getScrollY() == 0);
     tap(onMain(() -> findText(expanded, "你好")));
     text(activity.plain, "你好");
-    passed("real inline and expanded pinyin candidates fit at 2x system font scale");
+    if (Math.abs(onMain(() -> keyPoint("n", false)[1]) - idleKeyY) > 1f)
+      throw new AssertionError("Expanded candidate selection changed the typing position");
+    passed("real expanded pinyin candidates fit, scroll and commit at 2x system font scale; " + editorBounds);
 
     focus(activity.password);
     if (onMain(() -> candidatesView().isShown()))
       throw new AssertionError("Chinese candidates visible in a password editor at large font scale");
     focus(activity.plain);
     await("large-font candidate panel returns", () -> candidatesView().isShown());
-    checkFixedCandidatePaging();
+    checkFixedCandidatePaging(false);
+
+    clear();
+    type("nihao");
+    View current = onMain(this::candidatesView);
+    tap(onMain(() -> (View)field(current, "more")));
+    View oldResults = onMain(() -> (View)field(current, "expandedScroll"));
+    await("expanded list before editing composition", () -> oldResults.isShown());
+    onMain(() -> {
+      Config.globalConfig().handler.key_up(KeyValue.getKeyByName("backspace"), Pointers.Modifiers.EMPTY);
+      if (oldResults.isShown())
+        throw new AssertionError("Previous candidate cells remain exposed after editing the composition");
+      return null;
+    });
+    passed("editing a composition immediately hides its old expanded candidates");
+
+    checkLongExpandedCandidate();
+  }
+
+  private void checkLongExpandedCandidate() throws Exception
+  {
+    String phrase = "中华人民共和国";
+    clear();
+    type("zhonghuarenmingongheguo");
+    View panel = onMain(this::candidatesView);
+    tap(onMain(() -> (View)field(panel, "more")));
+    View results = onMain(() -> (View)field(panel, "expandedScroll"));
+    await("long expanded candidate", () -> results.isShown() && findText(results, phrase) != null);
+    TextView candidate = onMain(() -> (TextView)findText(results, phrase));
+    View parent = onMain(() -> (View)candidate.getParent());
+    Rect bounds = onMain(() -> {
+      if (candidate.getLayout().getEllipsisCount(0) > 0)
+        throw new AssertionError("Expanded candidates truncate " + phrase);
+      Rect visible = new Rect();
+      if (!candidate.getGlobalVisibleRect(visible)) throw new AssertionError("Long candidate is hidden");
+      return visible;
+    });
+    int overflow = onMain(() -> candidate.getWidth() - bounds.width());
+    if (overflow > 0)
+    {
+      for (int attempt = 0; attempt < 6 && onMain(() -> parent.getScrollX()) < overflow; attempt++)
+        swipe(bounds.right - 10, bounds.left + 10, bounds.centerY());
+      await("the whole phrase is reachable in the expanded list", () -> parent.getScrollX() >= overflow);
+    }
+    tap(candidate);
+    text(activity.plain, phrase);
+    passed("a long expanded candidate can be read in full and tapped (horizontal overflow " + overflow + "px)");
+  }
+
+  private static final class EditorVisibility
+  {
+    final int lineBottom;
+    final int panelTop;
+    final boolean lineVisible;
+
+    EditorVisibility(int lineBottom, int panelTop, boolean lineVisible)
+    {
+      this.lineBottom = lineBottom;
+      this.panelTop = panelTop;
+      this.lineVisible = lineVisible;
+    }
+  }
+
+  private EditorVisibility editorVisibility(View panel)
+  {
+    EditText editor = activity.plain;
+    int[] origin = new int[2];
+    editor.getLocationOnScreen(origin);
+    int offset = editor.getTotalPaddingTop() - editor.getScrollY();
+    int line = editor.getLayout().getLineForOffset(editor.getSelectionEnd());
+    int top = offset + editor.getLayout().getLineTop(line);
+    int bottom = offset + editor.getLayout().getLineBottom(line);
+    int screenBottom = origin[1] + bottom;
+    panel.getLocationOnScreen(origin);
+    Rect visible = new Rect();
+    boolean lineVisible = screenBottom <= origin[1] && editor.getLocalVisibleRect(visible)
+        && visible.top <= top && visible.bottom >= bottom;
+    return new EditorVisibility(screenBottom, origin[1], lineVisible);
+  }
+
+  private String checkEditorAboveCandidates(View panel, EditorVisibility collapsed)
+  {
+    EditorVisibility expanded = editorVisibility(panel);
+    String bounds = "editor line ends at " + expanded.lineBottom + "px, candidate panel starts at "
+        + expanded.panelTop + "px (collapsed: " + collapsed.panelTop + "px)";
+    if (!activity.plain.hasFocus() || expanded.panelTop != collapsed.panelTop
+        || (collapsed.lineVisible && !expanded.lineVisible))
+      throw new AssertionError("Expanded candidates obscure the editor line: " + bounds);
+    return bounds;
   }
 
   private void assertCandidateLineFits(TextView candidate)
@@ -480,35 +610,140 @@ public final class PinyinSmokeTest extends Instrumentation
           + "' has " + candidate.getHeight() + "px for a " + line + "px line");
   }
 
-  private void checkFixedCandidatePaging() throws Exception
+  private ViewGroup openExpandedPinyinCandidates() throws Exception
+  {
+    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
+    return onMain(() -> (ViewGroup)field(candidatesView(), "expandedItems"));
+  }
+
+  private String selectScrolledCandidate(ViewGroup list, int index) throws Exception
+  {
+    TextView entry = onMain(() -> {
+      int remaining = index;
+      for (int i = 0; i < list.getChildCount(); i++)
+      {
+        ViewGroup line = (ViewGroup)list.getChildAt(i);
+        if (remaining < line.getChildCount())
+        {
+          View cell = line.getChildAt(remaining);
+          if (cell instanceof ViewGroup) cell = ((ViewGroup)cell).getChildAt(0);
+          return (TextView)cell;
+        }
+        remaining -= line.getChildCount();
+      }
+      throw new AssertionError("Expanded candidate " + index + " is missing");
+    });
+    if (onMain(() -> candidateCenterVisible(entry)))
+      throw new AssertionError("Candidate " + index + " should require scrolling");
+    View scroll = onMain(() -> (View)field(candidatesView(), "expandedScroll"));
+    Rect bounds = onMain(() -> {
+      Rect visible = new Rect();
+      if (!scroll.getGlobalVisibleRect(visible)) throw new AssertionError("Expanded list is hidden");
+      return visible;
+    });
+    int margin = bounds.height() / 8;
+    for (int i = 0; i < 2 * index + 8 && !onMain(() -> candidateCenterVisible(entry)); i++)
+    {
+      swipe(bounds.centerX(), bounds.bottom - margin, bounds.centerX(), bounds.top + margin);
+      awaitCandidateScrollSettled(scroll);
+    }
+    await("the center of scrolled candidate " + index + " is visible", () -> candidateCenterVisible(entry));
+    String shown = onMain(() -> entry.getText().toString());
+    float[] point = onMain(() -> {
+      Rect visible = new Rect();
+      if (!entry.getGlobalVisibleRect(visible)) throw new AssertionError("Scrolled candidate is hidden");
+      int[] origin = new int[2];
+      entry.getLocationOnScreen(origin);
+      return new float[] {visible.exactCenterX(), origin[1] + entry.getHeight() / 2f};
+    });
+    touch(point[0], point[1]);
+    text(activity.plain, shown);
+    if (!onMain(() -> activity.plain.hasFocus() && !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing()))
+      throw new AssertionError("Tapping candidate " + index + " did not commit in the original editor");
+    return shown;
+  }
+
+  private void awaitCandidateScrollSettled(View scroll) throws Exception
+  {
+    int[] lastPosition = {onMain(scroll::getScrollY)};
+    long[] stableSince = {SystemClock.uptimeMillis()};
+    await("candidate scroll settles", () -> {
+      int position = scroll.getScrollY();
+      long now = SystemClock.uptimeMillis();
+      if (position != lastPosition[0])
+      {
+        lastPosition[0] = position;
+        stableSince[0] = now;
+      }
+      return now - stableSince[0] >= 150;
+    });
+  }
+
+  private boolean candidateCenterVisible(View candidate)
+  {
+    Rect bounds = new Rect();
+    if (!candidate.getGlobalVisibleRect(bounds)) return false;
+    int[] origin = new int[2];
+    candidate.getLocationOnScreen(origin);
+    int center = origin[1] + candidate.getHeight() / 2;
+    int margin = Math.round(4 * candidate.getResources().getDisplayMetrics().density);
+    return center >= bounds.top + margin && center < bounds.bottom - margin;
+  }
+
+  private void checkFixedCandidatePaging(boolean selectNewCandidate) throws Exception
   {
     clear();
     type("shi");
-    int beforeMore = onMain(() -> ((ViewGroup)field(candidatesView(), "items")).getChildCount());
-    tap(onMain(() -> (View)field(candidatesView(), "more")));
-    await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
-    View loadMore = onMain(() -> findText(candidatesView(),
-        getTargetContext().getString(R.string.pinyin_more_candidates)));
+    EditorVisibility collapsed = largePinyinFont || selectNewCandidate
+      ? onMain(() -> editorVisibility(candidatesView())) : null;
+    ViewGroup expanded = openExpandedPinyinCandidates();
+    int beforeMore = onMain(() -> expandedCandidateCount(expanded));
+    View loadMore = onMain(() -> {
+      View panel = candidatesView();
+      String title = panel.getContext().getString(R.string.pinyin_more_candidates);
+      View described = findDescription(panel, title);
+      return described == null ? findText(panel, title) : described;
+    });
     Rect pagingBounds = onMain(() -> {
       Rect bounds = new Rect();
       if (loadMore == null || !loadMore.getGlobalVisibleRect(bounds)
-          || bounds.height() != loadMore.getHeight())
+          || bounds.height() != loadMore.getHeight() || bounds.width() != loadMore.getWidth())
         throw new AssertionError("More candidates must be fully visible without scrolling");
+      if (((TextView)loadMore).getLayout().getEllipsisCount(0) > 0)
+        throw new AssertionError("The paging action label is truncated");
       return bounds;
     });
+    String pagingLabel = onMain(() -> ((TextView)loadMore).getText().toString());
     tap(loadMore);
-    await("additional candidate cells", () ->
-        ((ViewGroup)field(candidatesView(), "items")).getChildCount() > beforeMore);
+    await("additional expanded candidate cells", () -> expandedCandidateCount(expanded) > beforeMore);
     onMain(() -> {
       Rect bounds = new Rect();
       if (loadMore.isShown() && (!loadMore.getGlobalVisibleRect(bounds) || !pagingBounds.equals(bounds)))
         throw new AssertionError("Loading a page moved the paging control");
       if (!activity.plain.hasFocus()) throw new AssertionError("Paging stole the editor focus");
+      if (collapsed != null) checkEditorAboveCandidates(candidatesView(), collapsed);
       return null;
     });
-    key("enter");
-    text(activity.plain, "shi");
-    passed("fixed paging control loads additional candidates and preserves editor focus");
+    if (selectNewCandidate)
+    {
+      String selected = selectScrolledCandidate(expanded, beforeMore);
+      passed("paging (" + pagingLabel + ") and tapping candidate " + (beforeMore + 1) + " commits " + selected);
+    }
+    else
+    {
+      key("enter");
+      text(activity.plain, "shi");
+      passed("fixed paging control (" + pagingLabel + ") loads additional candidates and preserves editor focus");
+    }
+  }
+
+  private int expandedCandidateCount(ViewGroup list)
+  {
+    int count = 0;
+    for (int i = 0; i < list.getChildCount(); i++)
+      count += ((ViewGroup)list.getChildAt(i)).getChildCount();
+    return count;
   }
 
   private void checkCustomKeyLabels(Context context) throws Exception

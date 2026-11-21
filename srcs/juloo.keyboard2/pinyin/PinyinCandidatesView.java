@@ -25,6 +25,7 @@ import juloo.keyboard2.R;
 public final class PinyinCandidatesView extends LinearLayout
 {
   private static final int CANDIDATE_TEXT_SP = 20;
+  private static final int CONTROL_DP = 48;
 
   public interface Listener
   {
@@ -46,12 +47,13 @@ public final class PinyinCandidatesView extends LinearLayout
   private final TextView more;
   private final HorizontalScrollView candidateScroll;
   private final LinearLayout items;
-  private final LinearLayout expandedPanel;
   private final ScrollView expandedScroll;
   private final LinearLayout expandedItems;
   private final TextView loadMore;
+  private final String loadMoreLabel;
   private int candidateRowHeight;
   private View latinCandidates;
+  private boolean chinese;
   private boolean expanded;
   private int expandedWidth;
   private boolean hasMore;
@@ -101,7 +103,7 @@ public final class PinyinCandidatesView extends LinearLayout
     });
     readings.setTextSize(14);
     header.addView(readings);
-    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(CONTROL_DP)));
 
     row = new LinearLayout(context);
     row.setGravity(Gravity.CENTER_VERTICAL);
@@ -116,21 +118,22 @@ public final class PinyinCandidatesView extends LinearLayout
       renderExpanded();
     });
     more.setContentDescription(context.getString(R.string.ux_more_candidates));
-    row.addView(more, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
-    addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
-    expandedPanel = new LinearLayout(context);
-    expandedPanel.setOrientation(VERTICAL);
     expandedScroll = new ScrollView(context);
     expandedItems = new LinearLayout(context);
     expandedItems.setOrientation(VERTICAL);
     expandedScroll.addView(expandedItems);
-    expandedPanel.addView(expandedScroll, new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1));
-    loadMore = ui.button(context.getString(R.string.pinyin_more_candidates), () -> {
+    loadMoreLabel = context.getString(R.string.pinyin_more_candidates);
+    loadMore = ui.button(loadMoreLabel, () -> {
       if (listener != null) listener.onMoreCandidates();
     });
-    expandedPanel.addView(loadMore, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
-    expandedPanel.setVisibility(GONE);
-    addView(expandedPanel, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(144)));
+    loadMore.setContentDescription(loadMoreLabel);
+    loadMore.setSingleLine(true);
+    expandedScroll.setVisibility(GONE);
+    loadMore.setVisibility(GONE);
+    row.addView(expandedScroll, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
+    row.addView(loadMore, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
+    row.addView(more, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
+    addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
   }
 
   private void showReadings()
@@ -175,11 +178,12 @@ public final class PinyinCandidatesView extends LinearLayout
     sample.setSingleLine(true);
     int natural = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
     sample.measure(natural, natural);
-    return Math.max(ui.dp(48), sample.getMeasuredHeight() + ui.dp(8));
+    return Math.max(ui.dp(CONTROL_DP), sample.getMeasuredHeight() + ui.dp(8));
   }
 
   public void setState(boolean chinese, String composition, List<String> candidates, boolean hasMore)
   {
+    this.chinese = chinese;
     this.hasMore = hasMore;
     boolean changed = !composition.equals(previousComposition);
     if (changed) expanded = false;
@@ -205,7 +209,6 @@ public final class PinyinCandidatesView extends LinearLayout
     // INVISIBLE reserves the same width while the user switches languages.
     readings.setVisibility(chinese ? VISIBLE : INVISIBLE);
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
-    candidateScroll.setVisibility(chinese ? VISIBLE : GONE);
     // The candidate strip is a reserved row. Only its contents change, so
     // every keystroke has the same keyboard origin and cannot move the editor.
     more.setVisibility(chinese ? VISIBLE : INVISIBLE);
@@ -221,6 +224,11 @@ public final class PinyinCandidatesView extends LinearLayout
       final int index = i;
       TextView item = candidate(candidates.get(i), index);
       items.addView(item, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT));
+    }
+    if (changed || (!expanded && !candidates.equals(previousCandidates)))
+    {
+      expandedItems.removeAllViews();
+      expandedScroll.scrollTo(0, 0);
     }
     previousComposition = composition;
     previousCandidates = new ArrayList<>(candidates);
@@ -250,9 +258,13 @@ public final class PinyinCandidatesView extends LinearLayout
         ? R.string.ux_candidate_collapse : R.string.ux_more_candidates));
     more.setEnabled(!previousCandidates.isEmpty());
     more.setAlpha(previousCandidates.isEmpty() ? .35f : 1f);
-    expandedPanel.setVisibility(expanded ? VISIBLE : GONE);
-    loadMore.setVisibility(hasMore ? VISIBLE : GONE);
-    if (expanded) renderExpandedItems(availableWidth(getWidth()));
+    // Both presentations occupy the same row, so expansion leaves the editor
+    // and typing keys in place. Hide invalid candidates in the input callback.
+    candidateScroll.setVisibility(chinese && !expanded ? VISIBLE : GONE);
+    expandedScroll.setVisibility(expanded ? VISIBLE : GONE);
+    loadMore.setVisibility(expanded && hasMore ? VISIBLE : GONE);
+    expandedWidth = -1;
+    requestLayout();
   }
 
   private int availableWidth(int width)
@@ -264,8 +276,26 @@ public final class PinyinCandidatesView extends LinearLayout
   {
     int width = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
         ? getResources().getDisplayMetrics().widthPixels : MeasureSpec.getSize(widthSpec);
-    int available = availableWidth(width);
-    if (expanded && expandedWidth != available) renderExpandedItems(available);
+    if (expanded)
+    {
+      int control = ui.dp(CONTROL_DP);
+      int available = availableWidth(width) - control;
+      if (hasMore)
+      {
+        int labelWidth = Math.max(control, (int)Math.ceil(loadMore.getPaint().measureText(loadMoreLabel))
+            + loadMore.getPaddingLeft() + loadMore.getPaddingRight());
+        // Keep space for the list. The accessible label stays the same when
+        // the visual action switches from its full text to a plus sign.
+        boolean showLabel = labelWidth <= available / 2;
+        String label = showLabel ? loadMoreLabel : "+";
+        if (!TextUtils.equals(label, loadMore.getText())) loadMore.setText(label);
+        int pageWidth = showLabel ? labelWidth : control;
+        loadMore.getLayoutParams().width = pageWidth;
+        available -= pageWidth;
+      }
+      available = Math.max(1, available);
+      if (expandedWidth != available) renderExpandedItems(available);
+    }
     super.onMeasure(widthSpec, heightSpec);
   }
 
@@ -279,16 +309,26 @@ public final class PinyinCandidatesView extends LinearLayout
     for (int i = 0; i < previousCandidates.size(); i++)
     {
       TextView v = candidate(previousCandidates.get(i), i);
-      int need = Math.min(available, Math.max(ui.dp(64), (int)v.getPaint().measureText(previousCandidates.get(i)) + ui.dp(28)));
-      if (line == null || width + need > available)
+      int need = Math.max(ui.dp(64), (int)Math.ceil(v.getPaint().measureText(previousCandidates.get(i)))
+          + v.getPaddingLeft() + v.getPaddingRight());
+      int cellWidth = Math.min(available, need);
+      if (line == null || width + cellWidth > available)
       {
         line = new LinearLayout(getContext());
         expandedItems.addView(line, new LayoutParams(-1, candidateRowHeight));
         width = 0;
       }
-      v.setEllipsize(TextUtils.TruncateAt.END);
-      line.addView(v, new LayoutParams(need, -1));
-      width += need;
+      if (need > available)
+      {
+        // Give a long phrase its own row and let it scroll sideways without
+        // taking the paging or collapse controls out of view.
+        HorizontalScrollView overflow = new HorizontalScrollView(getContext());
+        overflow.setScrollbarFadingEnabled(false);
+        overflow.addView(v, new ViewGroup.LayoutParams(need, LayoutParams.MATCH_PARENT));
+        line.addView(overflow, new LayoutParams(cellWidth, LayoutParams.MATCH_PARENT));
+      }
+      else line.addView(v, new LayoutParams(cellWidth, LayoutParams.MATCH_PARENT));
+      width += cellWidth;
     }
   }
 }
