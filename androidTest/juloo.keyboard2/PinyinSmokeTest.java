@@ -114,6 +114,8 @@ public final class PinyinSmokeTest extends Instrumentation
         finish(Activity.RESULT_OK, result);
         return;
       }
+      if (onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
+        throw new AssertionError("Idle mode label exposes a reading action without readings");
       englishSuggestionChecks();
       if (!onMain(() -> candidatesView().isShown()
           && findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
@@ -694,6 +696,8 @@ public final class PinyinSmokeTest extends Instrumentation
 
     clear();
     nineKeys("6464");
+    if (!onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
+      throw new AssertionError("Preedit has readings but cannot open the picker by long press");
     tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_candidate_spellings_description))));
     idle();
     long down;
@@ -713,6 +717,8 @@ public final class PinyinSmokeTest extends Instrumentation
     idle();
     key("space");
     text(activity.plain, "明");
+    if (onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
+      throw new AssertionError("Preedit still exposes the reading action after committing");
     passed("visible Pinyin button chooses an ambiguous reading");
 
     onMain(() -> { activity.password.setText(""); return null; });

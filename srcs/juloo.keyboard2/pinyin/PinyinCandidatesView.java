@@ -84,6 +84,7 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setFocusable(false);
     preedit.setOnClickListener(v -> { if (listener != null && !previousComposition.isEmpty()) listener.onCommitRaw(); });
     preedit.setOnLongClickListener(v -> { showReadings(); return !spellingOptions.isEmpty(); });
+    preedit.setLongClickable(false);
     header.addView(preedit, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
     spellings = ui.button(context.getString(R.string.ux_candidate_spellings), this::showReadings);
     spellings.setTextSize(13);
@@ -165,7 +166,9 @@ public final class PinyinCandidatesView extends LinearLayout
         ? R.string.ux_candidate_layout_nine : R.string.ux_candidate_layout_full));
     readings.setContentDescription(getContext().getString(nineKey
         ? R.string.ux_candidate_switch_full : R.string.ux_candidate_switch_nine));
-    spellings.setVisibility(chinese && !spellingOptions.isEmpty() ? VISIBLE : GONE);
+    boolean hasReadings = chinese && !spellingOptions.isEmpty();
+    preedit.setLongClickable(hasReadings);
+    spellings.setVisibility(hasReadings ? VISIBLE : GONE);
     // INVISIBLE reserves the same width while the user switches languages.
     readings.setVisibility(chinese ? VISIBLE : INVISIBLE);
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
