@@ -68,30 +68,35 @@ final class DoubaoTranscript
 
     // The punctuation pass may reformat a fragment at the expected boundary.
     int start = skipFormatting(snapshot, cursor);
-    int fragment = skipFormatting(text, 0);
-    if (fragment < text.length() && (exact < 0 || start < exact))
+    int end = matchFormattedPrefix(snapshot, start, text);
+    if (end >= 0 && (exact < 0 || start < exact))
     {
-      int end = start;
-      while (fragment < text.length())
+      while (end < snapshot.length())
       {
-        end = skipFormatting(snapshot, end);
-        if (end == snapshot.length() || snapshot.charAt(end) != text.charAt(fragment)) break;
+        int kind = Character.getType(snapshot.charAt(end));
+        if (kind != Character.END_PUNCTUATION && kind != Character.FINAL_QUOTE_PUNCTUATION
+            && kind != Character.OTHER_PUNCTUATION) break;
         end++;
-        fragment = skipFormatting(text, fragment + 1);
       }
-      if (fragment == text.length())
-      {
-        while (end < snapshot.length())
-        {
-          int kind = Character.getType(snapshot.charAt(end));
-          if (kind != Character.END_PUNCTUATION && kind != Character.FINAL_QUOTE_PUNCTUATION
-              && kind != Character.OTHER_PUNCTUATION) break;
-          end++;
-        }
-        return new Span(start, end);
-      }
+      return new Span(start, end);
     }
     return exact < 0 ? null : new Span(exact, exact + text.length());
+  }
+
+  /** Finds the end of a matching prefix after ignoring punctuation and spacing. */
+  private static int matchFormattedPrefix(String text, int start, String prefix)
+  {
+    int part = skipFormatting(prefix, 0);
+    if (part == prefix.length()) return -1;
+    int end = start;
+    while (part < prefix.length())
+    {
+      end = skipFormatting(text, end);
+      if (end == text.length() || text.charAt(end) != prefix.charAt(part)) return -1;
+      end++;
+      part = skipFormatting(prefix, part + 1);
+    }
+    return end;
   }
 
   private static int skipFormatting(String text, int position)
@@ -102,10 +107,15 @@ final class DoubaoTranscript
       int kind = Character.getType(character);
       boolean punctuation = (kind >= Character.DASH_PUNCTUATION && kind <= Character.OTHER_PUNCTUATION)
           || kind == Character.INITIAL_QUOTE_PUNCTUATION || kind == Character.FINAL_QUOTE_PUNCTUATION;
-      if (!punctuation && !Character.isSpaceChar(character) && !Character.isWhitespace(character)) break;
+      if (!punctuation && !isSpacing(character)) break;
       position++;
     }
     return position;
+  }
+
+  private static boolean isSpacing(char character)
+  {
+    return Character.isSpaceChar(character) || Character.isWhitespace(character);
   }
 
   private String updateFragment(int index, String text, boolean stable)
@@ -121,7 +131,14 @@ final class DoubaoTranscript
       if (previous != null)
       {
         String tail = snapshot.substring(previous.end);
-        if (text.startsWith(tail) || tail.startsWith(text)) start = previous.end;
+        if (text.startsWith(tail) || tail.startsWith(text)
+            || matchFormattedPrefix(tail, 0, text) >= 0 || matchFormattedPrefix(text, 0, tail) >= 0)
+        {
+          start = previous.end;
+          // Retain the separator if the revised fragment doesn't provide one.
+          if (!isSpacing(text.charAt(0)))
+            while (start < snapshot.length() && isSpacing(snapshot.charAt(start))) start++;
+        }
       }
       span = new Span(start, snapshot.length());
       span.coversUnassignedTail = span.start < span.end;
@@ -131,8 +148,12 @@ final class DoubaoTranscript
 
     int previousEnd = span.end;
     // Keep the fuller snapshot visible while the new indexed fragment catches up.
-    if (span.coversUnassignedTail && !stable && text.length() < previousEnd - span.start
-        && snapshot.regionMatches(span.start, text, 0, text.length())) return null;
+    if (span.coversUnassignedTail && !stable)
+    {
+      String current = snapshot.substring(span.start, previousEnd);
+      int prefixEnd = matchFormattedPrefix(current, 0, text);
+      if (prefixEnd >= 0 && skipFormatting(current, prefixEnd) < current.length()) return null;
+    }
     span.coversUnassignedTail = false;
     int delta = text.length() - (previousEnd - span.start);
     snapshot = snapshot.substring(0, span.start) + text + snapshot.substring(previousEnd);

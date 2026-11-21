@@ -140,6 +140,7 @@ public final class DoubaoRegressionTest
   {
     String formatted;
     String extended;
+    String reformattedTail;
     try (Editor editor = new Editor(test, "前缀"))
     {
       editor.run.onResponse(response("{\"results\":["
@@ -162,10 +163,20 @@ public final class DoubaoRegressionTest
       editor.complete();
       extended = editor.text();
     }
+    try (Editor editor = new Editor(test, "Prefix: "))
+    {
+      editor.run.onResponse(response("{\"results\":["
+          + "{\"text\":\"One. Today.\",\"is_interim\":false,\"index\":0},"
+          + "{\"text\":\"One.\",\"is_interim\":false,\"index\":1}]}"));
+      editor.run.onResponse(response(finalJson("Today, it rains.", 2)));
+      editor.complete();
+      reformattedTail = editor.text();
+    }
     if (!formatted.equals("前缀先说一句。你好，世界又见。再说一句。")
-        || !extended.equals("前缀第一句。今天下雨了。"))
+        || !extended.equals("前缀第一句。今天下雨了。")
+        || !reformattedTail.equals("Prefix: One. Today, it rains."))
       throw new AssertionError("Fragment boundaries produced formatted=[" + formatted
-          + "], extended=[" + extended + "]");
+          + "], extended=[" + extended + "], reformattedTail=[" + reformattedTail + "]");
   }
 
   private static void checkOverlappingAndStoppedResults(Instrumentation test) throws Exception
