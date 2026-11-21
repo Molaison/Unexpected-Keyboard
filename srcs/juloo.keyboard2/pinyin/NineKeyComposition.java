@@ -425,50 +425,94 @@ public final class NineKeyComposition implements ChineseComposition
       if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
           && candidates.size() < MAX_CANDIDATES
           && fixedEnd == 0 && constraint.isEmpty() && remaining.indexOf('\'') < 0)
-        addSequentialSentence(unique);
+        addSequentialSentence(remaining, unique);
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
     dirty = false;
   }
 
-  private void addSequentialSentence(Map<String, Candidate> unique)
+  private void addSequentialSentence(String raw, Map<String, Candidate> unique)
   {
-    Candidate alternative = null;
+    Candidate fallback = null, indexed = null;
+    String indexedClause = null;
     int readings = 0;
     for (Candidate anchor : unique.values())
     {
       if (anchor.index != 0 || anchor.partial || anchor.text.length() < 6) continue;
       if (readings++ == SENTENCE_READINGS) break;
-      // The first clause can cue a second action, for which zai is 再.
-      if ((anchor.text.charAt(0) != '先' && anchor.text.charAt(0) != '去')
-          || anchor.text.indexOf('在', 3) < 0) continue;
+      char first = anchor.text.charAt(0);
+      boolean nativeCue = first == '先' || first == '去';
+      if ((!nativeCue && !anchor.display.startsWith("xian ")) || anchor.text.indexOf('在', 3) < 0) continue;
       String[] syllables = anchor.display.split(" ");
       if (syllables.length != anchor.text.length()) continue;
       for (int pivot = 3; pivot < syllables.length - 2; pivot++)
       {
         if (anchor.text.charAt(pivot) != '在' || !"zai".equals(syllables[pivot])) continue;
-        String tail = anchor.text.substring(pivot + 1);
-        if (!tail.equals(sentenceWord(syllables, pivot + 1, syllables.length))) continue;
-        String middle = sentenceWord(syllables, 1, pivot);
+        String middleReading = syllableReading(syllables, 1, pivot);
+        String middle = lexicon.firstReading(middleReading);
         if (middle.length() != pivot - 1) continue;
+        String clause = (nativeCue ? first : '先') + middle + '再';
+        float score = Math.nextUp(anchor.score);
+        if (hasSentencePrefix(clause, score, anchor.text.length())) continue;
         int changes = 0;
         for (int i = 0; i < middle.length(); i++) if (middle.charAt(i) != anchor.text.charAt(i + 1)) changes++;
-        if (changes > 1) continue;
-        String clause = anchor.text.charAt(0) + middle + '再';
-        float score = Math.nextUp(anchor.score);
-        if ((alternative != null && alternative.score <= score)
-            || hasSentencePrefix(clause, score, anchor.text.length())) continue;
-        alternative = new Candidate(clause + tail, anchor.reading, -1, score);
-        alternative.display = anchor.display;
+        String tailReading = syllableReading(syllables, pivot + 1, syllables.length);
+        if (indexed == null || score < indexed.score)
+        {
+          Candidate candidate = changes <= 1 ? indexedEnding(raw, anchor, syllables, pivot, clause, score) : null;
+          if (candidate == null && nativeCue)
+          {
+            // A dictionary compound can support both words on either side of 再.
+            String compound = lexicon.firstReading(middleReading + " " + tailReading);
+            if (compound.length() == anchor.text.length() - 2 && compound.startsWith(middle))
+            {
+              candidate = new Candidate(clause + compound.substring(middle.length()), anchor.reading, -1, score);
+              candidate.display = anchor.display;
+            }
+          }
+          if (candidate != null)
+          {
+            indexed = candidate;
+            indexedClause = clause;
+          }
+        }
+        String tail = anchor.text.substring(pivot + 1);
+        if (!nativeCue || changes > 1 || (fallback != null && fallback.score <= score)
+            || !tail.equals(lexicon.firstReading(tailReading))) continue;
+        fallback = new Candidate(clause + tail, anchor.reading, -1, score);
+        fallback.display = anchor.display;
       }
     }
+    // Prefer an indexed continuation for the same first clause.
+    Candidate alternative = indexed != null && (fallback == null || indexed.score <= fallback.score
+        || fallback.text.startsWith(indexedClause)) ? indexed : fallback;
     if (alternative != null)
     {
       Map<String, Candidate> alternatives = new LinkedHashMap<>();
       alternatives.put(alternative.text, alternative);
+      // Keep a different, previously offered ending for the same first clause.
+      if (alternative == indexed && fallback != null && fallback.text.startsWith(indexedClause)
+          && !fallback.text.equals(indexed.text) && candidates.size() + 1 < MAX_CANDIDATES)
+        alternatives.put(fallback.text, fallback);
       mergeWordEndings(alternatives);
     }
+  }
+
+  private Candidate indexedEnding(String raw, Candidate anchor, String[] syllables, int pivot,
+      String clause, float score)
+  {
+    int cut = anchor.reading.rawEnd(anchor.spellingStarts[pivot]);
+    for (NineKeyLexicon.Entry ending : lexicon.lookupWords(raw.substring(cut), ENDING_WORDS))
+    {
+      if (!ending.text.startsWith("再") || !ending.display.startsWith("zai ")
+          || ending.text.length() != anchor.text.length() - pivot) continue;
+      Reading reading = Reading.withWordEnding(anchor.reading.spelling.substring(0, cut), ending);
+      Candidate candidate = new Candidate(clause + ending.text.substring(1), reading, -1, score);
+      candidate.display = syllableReading(syllables, 0, pivot) + " " + ending.display;
+      return candidate;
+    }
+    return null;
   }
 
   private boolean hasSentencePrefix(String prefix, float score, int length)
@@ -479,11 +523,11 @@ public final class NineKeyComposition implements ChineseComposition
     return false;
   }
 
-  private String sentenceWord(String[] syllables, int start, int end)
+  private String syllableReading(String[] syllables, int start, int end)
   {
     StringBuilder reading = new StringBuilder(syllables[start]);
     for (int i = start + 1; i < end; i++) reading.append(' ').append(syllables[i]);
-    return lexicon.firstReading(reading.toString());
+    return reading.toString();
   }
 
   private void addWordEndings(String raw, Map<String, Candidate> unique, Set<String> seenReadings)
