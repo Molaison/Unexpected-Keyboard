@@ -1,8 +1,9 @@
 package juloo.keyboard2.pinyin;
 
 import android.content.Context;
-import android.graphics.Typeface;
 import android.graphics.PorterDuff;
+import android.graphics.Typeface;
+import android.os.Build;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.Gravity;
@@ -16,6 +17,8 @@ import android.widget.ListPopupWindow;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import java.util.ArrayList;
 import java.util.List;
 import juloo.keyboard2.Config;
@@ -173,7 +176,12 @@ public final class PinyinCandidatesView extends LinearLayout
     menu.setModal(false);
     menu.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
     menu.setAdapter(new ArrayAdapter<>(getContext(), android.R.layout.simple_list_item_1, labels));
-    menu.setOnDismissListener(() -> { if (readingMenu == menu) readingMenu = null; });
+    Runnable unregisterBack = Build.VERSION.SDK_INT >= 33
+        ? MenuBackCallback.register(anchor, menu) : () -> {};
+    menu.setOnDismissListener(() -> {
+      unregisterBack.run();
+      if (readingMenu == menu) readingMenu = null;
+    });
     menu.setOnItemClickListener((parent, view, choice, id) -> {
       menu.dismiss();
       if (listener == null || !composition.equals(previousComposition) || wasNineKey != nineKey) return;
@@ -189,11 +197,26 @@ public final class PinyinCandidatesView extends LinearLayout
     menu.show();
   }
 
-  private void dismissReadingMenu()
+  public boolean dismissReadingMenu()
   {
     ListPopupWindow menu = readingMenu;
+    if (menu == null) return false;
     readingMenu = null;
-    if (menu != null) menu.dismiss();
+    menu.dismiss();
+    return true;
+  }
+
+  @android.annotation.TargetApi(33)
+  private static final class MenuBackCallback
+  {
+    static Runnable register(View anchor, ListPopupWindow menu)
+    {
+      OnBackInvokedDispatcher dispatcher = anchor.findOnBackInvokedDispatcher();
+      if (dispatcher == null) return () -> {};
+      OnBackInvokedCallback back = menu::dismiss;
+      dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, back);
+      return () -> dispatcher.unregisterOnBackInvokedCallback(back);
+    }
   }
 
   @Override protected void onDetachedFromWindow()

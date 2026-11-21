@@ -580,6 +580,17 @@ public final class PinyinSmokeTest extends Instrumentation
     boolean separate = onMain(spellings::isShown);
     tap(separate ? spellings : layoutSwitch);
     screenshot("pinyin-toolbar-menu.png");
+    int menuWindowId = pinyinMenuItem("ming").getWindowId();
+    if (!getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+      throw new AssertionError("Could not send system Back");
+    waitForPinyinMenuDismissal(menuWindowId);
+    if (!onMain(() -> panel.isShown() && activity.plain.hasFocus()
+        && ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing()
+        && current.replace(" ", "").contentEquals(activity.plain.getText())))
+      throw new AssertionError("Back closed the keyboard or changed the composition: " + onMain(() -> activity.plain.getText().toString()));
+    passed("system Back dismisses only the reading menu and keeps the composition");
+
+    tap(separate ? spellings : layoutSwitch);
     choosePinyinMenuItem("ming");
     text(activity.plain, "ming");
     key("space");
@@ -624,6 +635,10 @@ public final class PinyinSmokeTest extends Instrumentation
     await("toolbar returns to 26-key", () -> !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
     if (!onMain(() -> activity.plain.hasFocus())) throw new AssertionError("Layout switch stole editor focus");
     passed("both layout switch directions work while preserving the editor focus");
+    if (!getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+      throw new AssertionError("Could not send system Back");
+    await("Back without a menu still hides the keyboard", () -> !panel.isShown());
+    passed("system Back still hides the keyboard when no reading menu is open");
   }
 
   private int assertReadableToolbarText(TextView preedit, String text)
@@ -1222,6 +1237,16 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void choosePinyinMenuItem(String label) throws Exception
   {
+    AccessibilityNodeInfo option = pinyinMenuItem(label);
+    Rect bounds = new Rect();
+    option.getBoundsInScreen(bounds);
+    if (bounds.isEmpty()) throw new AssertionError("The menu choice is not visible: " + label);
+    touch(bounds.exactCenterX(), bounds.exactCenterY());
+    waitForPinyinMenuDismissal(option.getWindowId());
+  }
+
+  private AccessibilityNodeInfo pinyinMenuItem(String label) throws Exception
+  {
     AccessibilityServiceInfo services = getUiAutomation().getServiceInfo();
     if ((services.flags & AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS) == 0)
     {
@@ -1229,24 +1254,19 @@ public final class PinyinSmokeTest extends Instrumentation
       getUiAutomation().setServiceInfo(services);
     }
     idle();
-    AccessibilityNodeInfo option = null;
-    search: for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
+    for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
     {
       AccessibilityNodeInfo root = window.getRoot();
       if (root == null) continue;
       for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(label))
         if (node.isVisibleToUser() && label.equals(String.valueOf(node.getText())) && isPinyinMenuListItem(node))
-        {
-          option = node;
-          break search;
-        }
+          return node;
     }
-    if (option == null) throw new AssertionError("Pinyin menu did not offer " + label);
-    Rect bounds = new Rect();
-    option.getBoundsInScreen(bounds);
-    if (bounds.isEmpty()) throw new AssertionError("The menu choice is not visible: " + label);
-    int menuWindowId = option.getWindowId();
-    touch(bounds.exactCenterX(), bounds.exactCenterY());
+    throw new AssertionError("Pinyin menu did not offer " + label);
+  }
+
+  private void waitForPinyinMenuDismissal(int menuWindowId) throws Exception
+  {
     await("pinyin menu dismissed", () -> {
       for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
         if (window.getId() == menuWindowId) return false;

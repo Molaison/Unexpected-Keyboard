@@ -484,6 +484,16 @@ public class Keyboard2 extends InputMethodService
   }
 
   @Override
+  public boolean onKeyUp(int keyCode, KeyEvent event)
+  {
+    // The nonmodal reading menu keeps editor focus, so the IME receives Back.
+    if (keyCode == KeyEvent.KEYCODE_BACK && event.isTracking() && !event.isCanceled()
+        && _pinyin_candidates_view != null && _pinyin_candidates_view.dismissReadingMenu())
+      return true;
+    return super.onKeyUp(keyCode, event);
+  }
+
+  @Override
   public void onFinishInputView(boolean finishingInput)
   {
     _voicePushToTalkActive = false;
