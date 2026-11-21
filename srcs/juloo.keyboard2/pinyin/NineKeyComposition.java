@@ -353,6 +353,7 @@ public final class NineKeyComposition implements ChineseComposition
       paths = rescued;
       Map<String, Candidate> unique = new LinkedHashMap<>();
       List<Reading> alternatives = new ArrayList<>(ALTERNATE_PATHS);
+      List<Reading> moreSplits = new ArrayList<>(ALTERNATE_PATHS);
       int pathCount = 0;
       for (Path path : paths)
       {
@@ -361,15 +362,26 @@ public final class NineKeyComposition implements ChineseComposition
         if (alternatives.size() < ALTERNATE_PATHS && remaining.length() < PinyinDecoder.MAX_PINYIN_LENGTH)
         {
           String decoded = formatSpelling(path.spelling, starts);
+          boolean firstSplit = true;
           for (Reading split : syllableGraph.splits(path.spelling))
           {
-            if (split.query.length() <= PinyinDecoder.MAX_PINYIN_LENGTH
-                && !decoded.equals(split.query.replace('\'', ' ')) && seenReadings.add(split.query))
+            if (split.query.length() > PinyinDecoder.MAX_PINYIN_LENGTH
+                || decoded.equals(split.query.replace('\'', ' ')) || !seenReadings.add(split.query))
+              continue;
+            // Give a different spelling a chance before trying more cuts of this one.
+            if (firstSplit)
+            {
               alternatives.add(split);
+              firstSplit = false;
+            }
+            else if (moreSplits.size() < ALTERNATE_PATHS)
+              moreSplits.add(split);
             if (alternatives.size() >= ALTERNATE_PATHS) break;
           }
         }
       }
+      int spare = ALTERNATE_PATHS - alternatives.size();
+      alternatives.addAll(moreSplits.subList(0, Math.min(spare, moreSplits.size())));
       for (Reading reading : alternatives) addNativeCandidates(unique, reading, remaining.length());
       for (NineKeyLexicon.Entry e : direct)
       {

@@ -1311,6 +1311,15 @@ public final class PinyinSmokeTest extends Instrumentation
     key("backspace");
     await("the four original keys remain after reopening the first syllables", () ->
       ((KeyEventHandler)Config.globalConfig().handler)._pinyin.getCandidates().contains("西安"));
+
+    clear();
+    nineKeys("54684262664942624832");
+    int sentenceRank = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
+        .getCandidates().indexOf("今天从西安出发") + 1);
+    if (sentenceRank == 0 || sentenceRank > 5)
+      throw new AssertionError("Nine-key alternate split 今天从西安出发 ranked " + sentenceRank);
+    tapCandidate("今天从西安出发");
+    text(activity.plain, "今天从西安出发");
     passed("nine-key alternate split commits and backspace preserves the original key boundaries");
   }
 
