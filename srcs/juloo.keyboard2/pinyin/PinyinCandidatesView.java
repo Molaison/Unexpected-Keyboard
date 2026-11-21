@@ -24,6 +24,8 @@ import juloo.keyboard2.R;
 /** Visible tools, readable preedit, and a separate candidate row. */
 public final class PinyinCandidatesView extends LinearLayout
 {
+  private static final int CANDIDATE_TEXT_SP = 20;
+
   public interface Listener
   {
     void onCandidateSelected(int index);
@@ -48,6 +50,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private final ScrollView expandedScroll;
   private final LinearLayout expandedItems;
   private final TextView loadMore;
+  private int candidateRowHeight;
   private View latinCandidates;
   private boolean expanded;
   private int expandedWidth;
@@ -59,6 +62,7 @@ public final class PinyinCandidatesView extends LinearLayout
   {
     super(context, attrs);
     ui = new KeyboardUi(context);
+    candidateRowHeight = measureCandidateRowHeight();
     setOrientation(VERTICAL);
     setBackgroundColor(ui.background);
     setLayoutDirection(LAYOUT_DIRECTION_LTR);
@@ -113,7 +117,7 @@ public final class PinyinCandidatesView extends LinearLayout
     });
     more.setContentDescription(context.getString(R.string.ux_more_candidates));
     row.addView(more, new LayoutParams(ui.dp(48), LayoutParams.MATCH_PARENT));
-    addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(48)));
+    addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
     expandedPanel = new LinearLayout(context);
     expandedPanel.setOrientation(VERTICAL);
     expandedScroll = new ScrollView(context);
@@ -152,7 +156,27 @@ public final class PinyinCandidatesView extends LinearLayout
     row.addView(view, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
   }
 
-  public void refreshConfig(Config config) {}
+  public void refreshConfig(Config config)
+  {
+    int height = measureCandidateRowHeight();
+    if (height == candidateRowHeight) return;
+    candidateRowHeight = height;
+    ViewGroup.LayoutParams params = row.getLayoutParams();
+    params.height = height;
+    row.setLayoutParams(params);
+    expandedWidth = -1;
+  }
+
+  private int measureCandidateRowHeight()
+  {
+    // A Han glyph includes the CJK fallback font's line metrics. Reserve
+    // the same height before composition so pressing a key never moves it.
+    TextView sample = ui.label("你", CANDIDATE_TEXT_SP, true);
+    sample.setSingleLine(true);
+    int natural = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+    sample.measure(natural, natural);
+    return Math.max(ui.dp(48), sample.getMeasuredHeight() + ui.dp(8));
+  }
 
   public void setState(boolean chinese, String composition, List<String> candidates, boolean hasMore)
   {
@@ -211,7 +235,7 @@ public final class PinyinCandidatesView extends LinearLayout
       expanded = false;
       if (listener != null) listener.onCandidateSelected(index);
     });
-    v.setTextSize(20);
+    v.setTextSize(CANDIDATE_TEXT_SP);
     v.setSingleLine(true);
     v.setTypeface(Typeface.create("sans-serif", index == 0 ? Typeface.BOLD : Typeface.NORMAL));
     v.setTextColor(index == 0 ? ui.accent : ui.text);
@@ -259,7 +283,7 @@ public final class PinyinCandidatesView extends LinearLayout
       if (line == null || width + need > available)
       {
         line = new LinearLayout(getContext());
-        expandedItems.addView(line, new LayoutParams(-1, ui.dp(48)));
+        expandedItems.addView(line, new LayoutParams(-1, candidateRowHeight));
         width = 0;
       }
       v.setEllipsize(TextUtils.TruncateAt.END);

@@ -32,6 +32,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private int checks;
   private boolean benchmark;
   private boolean uxCapture;
+  private boolean largePinyinFont;
   private boolean voiceLive;
   private boolean voiceFresh;
   private boolean voiceContinuous;
@@ -43,6 +44,7 @@ public final class PinyinSmokeTest extends Instrumentation
   {
     super.onCreate(arguments);
     uxCapture = arguments != null && "true".equals(arguments.getString("ux_capture"));
+    largePinyinFont = arguments != null && "true".equals(arguments.getString("large_pinyin_font"));
     benchmark = arguments != null && "true".equals(arguments.getString("benchmark"));
     voiceLive = arguments != null && "true".equals(arguments.getString("voice_live"));
     voiceFresh = arguments != null && "true".equals(arguments.getString("voice_fresh"));
@@ -116,6 +118,13 @@ public final class PinyinSmokeTest extends Instrumentation
         finish(Activity.RESULT_OK, result);
         return;
       }
+      if (largePinyinFont)
+      {
+        checkLargePinyinWindow();
+        result.putString("stream", "PINYIN_LARGE_FONT_OK checks=" + checks + "\n");
+        finish(Activity.RESULT_OK, result);
+        return;
+      }
       onMain(() -> {
         checkCustomKeyLabels(keyboard().getContext());
         return null;
@@ -137,7 +146,8 @@ public final class PinyinSmokeTest extends Instrumentation
       if (Math.abs(onMain(() -> keyPoint("n", false)[1]) - idleKeyY) > 1f
           || !onMain(() -> activity.plain.hasFocus()))
         throw new AssertionError("Composition moved the typing target or stole editor focus");
-      if (composingPinyinHeight > Math.round(
+      if (getTargetContext().getResources().getConfiguration().fontScale <= 1f
+          && composingPinyinHeight > Math.round(
             96 * getTargetContext().getResources().getDisplayMetrics().density))
         throw new AssertionError("Chinese preedit and candidates exceed two separate rows");
       text(activity.plain, "nihao");
@@ -245,33 +255,7 @@ public final class PinyinSmokeTest extends Instrumentation
       text(activity.plain, " nihao");
       passed("moving the cursor preserves text and ends conversion");
 
-      clear();
-      type("shi");
-      int beforeMore = onMain(() -> ((ViewGroup)field(candidatesView(), "items")).getChildCount());
-      tap(onMain(() -> (View)field(candidatesView(), "more")));
-      await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
-      View loadMore = onMain(() -> findText(candidatesView(),
-          getTargetContext().getString(R.string.pinyin_more_candidates)));
-      Rect pagingBounds = onMain(() -> {
-        Rect bounds = new Rect();
-        if (loadMore == null || !loadMore.getGlobalVisibleRect(bounds)
-            || bounds.height() != loadMore.getHeight())
-          throw new AssertionError("More candidates must be fully visible without scrolling");
-        return bounds;
-      });
-      tap(loadMore);
-      await("additional candidate cells", () ->
-          ((ViewGroup)field(candidatesView(), "items")).getChildCount() > beforeMore);
-      onMain(() -> {
-        Rect bounds = new Rect();
-        if (loadMore.isShown() && (!loadMore.getGlobalVisibleRect(bounds) || !pagingBounds.equals(bounds)))
-          throw new AssertionError("Loading a page moved the paging control");
-        if (!activity.plain.hasFocus()) throw new AssertionError("Paging stole the editor focus");
-        return null;
-      });
-      key("enter");
-      text(activity.plain, "shi");
-      passed("fixed paging control loads additional candidates and preserves editor focus");
+      checkFixedCandidatePaging();
 
       clear();
       type("nihao");
@@ -451,6 +435,80 @@ public final class PinyinSmokeTest extends Instrumentation
       return null;
     });
     passed("constrained keyboard and candidate widths, and emoji at 2x font scale");
+  }
+
+  private void checkLargePinyinWindow() throws Exception
+  {
+    View panel = onMain(this::candidatesView);
+    if (panel.getResources().getConfiguration().fontScale != 2f)
+      throw new AssertionError("Set the emulator's system font_scale to 2.0 first");
+    float idleKeyY = onMain(() -> keyPoint("n", false)[1]);
+    type("nihao");
+    await("large-font candidate", () -> findText(panel, "你好") != null);
+    onMain(() -> {
+      if (Math.abs(keyPoint("n", false)[1] - idleKeyY) > 1f || !activity.plain.hasFocus())
+        throw new AssertionError("Large-font composition moved the keyboard or editor focus");
+      assertCandidateLineFits((TextView)findText(panel, "你好"));
+      return null;
+    });
+    screenshot("large-pinyin-inline.png");
+
+    tap(onMain(() -> (View)field(panel, "more")));
+    View expanded = onMain(() -> (View)field(panel, "expandedScroll"));
+    await("large-font expanded candidate", () -> expanded.isShown() && findText(expanded, "你好") != null);
+    onMain(() -> { assertCandidateLineFits((TextView)findText(expanded, "你好")); return null; });
+    screenshot("large-pinyin-expanded.png");
+    tap(onMain(() -> findText(expanded, "你好")));
+    text(activity.plain, "你好");
+    passed("real inline and expanded pinyin candidates fit at 2x system font scale");
+
+    focus(activity.password);
+    if (onMain(() -> candidatesView().isShown()))
+      throw new AssertionError("Chinese candidates visible in a password editor at large font scale");
+    focus(activity.plain);
+    await("large-font candidate panel returns", () -> candidatesView().isShown());
+    checkFixedCandidatePaging();
+  }
+
+  private void assertCandidateLineFits(TextView candidate)
+  {
+    int line = candidate.getLayout().getHeight();
+    Rect bounds = new Rect();
+    if (!candidate.getGlobalVisibleRect(bounds) || bounds.height() != candidate.getHeight()
+        || candidate.getHeight() < line)
+      throw new AssertionError("Large-font candidate '" + candidate.getText()
+          + "' has " + candidate.getHeight() + "px for a " + line + "px line");
+  }
+
+  private void checkFixedCandidatePaging() throws Exception
+  {
+    clear();
+    type("shi");
+    int beforeMore = onMain(() -> ((ViewGroup)field(candidatesView(), "items")).getChildCount());
+    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
+    View loadMore = onMain(() -> findText(candidatesView(),
+        getTargetContext().getString(R.string.pinyin_more_candidates)));
+    Rect pagingBounds = onMain(() -> {
+      Rect bounds = new Rect();
+      if (loadMore == null || !loadMore.getGlobalVisibleRect(bounds)
+          || bounds.height() != loadMore.getHeight())
+        throw new AssertionError("More candidates must be fully visible without scrolling");
+      return bounds;
+    });
+    tap(loadMore);
+    await("additional candidate cells", () ->
+        ((ViewGroup)field(candidatesView(), "items")).getChildCount() > beforeMore);
+    onMain(() -> {
+      Rect bounds = new Rect();
+      if (loadMore.isShown() && (!loadMore.getGlobalVisibleRect(bounds) || !pagingBounds.equals(bounds)))
+        throw new AssertionError("Loading a page moved the paging control");
+      if (!activity.plain.hasFocus()) throw new AssertionError("Paging stole the editor focus");
+      return null;
+    });
+    key("enter");
+    text(activity.plain, "shi");
+    passed("fixed paging control loads additional candidates and preserves editor focus");
   }
 
   private void checkCustomKeyLabels(Context context) throws Exception
