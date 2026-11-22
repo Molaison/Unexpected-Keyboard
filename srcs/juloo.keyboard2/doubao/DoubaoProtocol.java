@@ -142,7 +142,7 @@ public final class DoubaoProtocol
     public boolean useTwopassRetry = true;
 
     /** VAD smoothing window, {@code end_smooth_window_ms}. */
-    public int endSmoothWindowMs = 800;
+    public int endSmoothWindowMs = 1100;
     public boolean removeSpaceBetweenHanNum;
     public boolean removeSpaceBetweenHanEng;
     public boolean formatSpaceAtNewline = true;
