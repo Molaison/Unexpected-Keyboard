@@ -34,6 +34,8 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int ENDING_WORDS = 8;
   private static final int ENDING_NATIVE_CHOICES = 3;
   private static final int ENDING_PRESERVED_CANDIDATES = 5;
+  private static final Set<String> CONTINUATION_TIME_WORDS = new HashSet<>(Arrays.asList(
+      "晚点", "稍后", "待会", "等会", "回头"));
   private static final int EARLIER_ENDING_PREFIXES = 4;
   private static final int EARLIER_ENDING_WORDS = 3;
   private static final int SENTENCE_READINGS = 12;
@@ -135,11 +137,13 @@ public final class NineKeyComposition implements ChineseComposition
   {
     final EndingCut earlier;
     final Candidate alternative;
+    final Candidate continuation;
     final int minimumPosition;
-    EndingFallbacks(EndingCut earlier, Candidate alternative, int minimumPosition)
+    EndingFallbacks(EndingCut earlier, Candidate alternative, Candidate continuation, int minimumPosition)
     {
       this.earlier = earlier;
       this.alternative = alternative;
+      this.continuation = continuation;
       this.minimumPosition = minimumPosition;
     }
   }
@@ -615,6 +619,14 @@ public final class NineKeyComposition implements ChineseComposition
         }
         mergeWordEndings(indexed, Math.min(ENDING_PRESERVED_CANDIDATES, candidates.size()));
       }
+      if (endingFallbacks != null && endingFallbacks.continuation != null
+          && candidates.size() < MAX_CANDIDATES)
+      {
+        Candidate continuation = endingFallbacks.continuation;
+        Map<String, Candidate> addition = new LinkedHashMap<>(1);
+        addition.put(continuation.text, continuation);
+        mergeWordEndings(addition, Math.min(ENDING_PRESERVED_CANDIDATES, candidates.size()));
+      }
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
@@ -991,8 +1003,62 @@ public final class NineKeyComposition implements ChineseComposition
     }
     if (separator >= 0 && earlier != null) recoverEarlierEnding(raw, earlier, recovered, seenReadings);
     mergeWordEndings(recovered);
-    return separator < 0 && (earlier != null || alternative != null)
-        ? new EndingFallbacks(earlier, alternative, minimumPosition) : null;
+    Candidate continuation = separator < 0 && fixedEnd == 0 ? indexedContinuation(raw, best, cuts) : null;
+    return separator < 0 && (earlier != null || alternative != null || continuation != null)
+        ? new EndingFallbacks(earlier, alternative, continuation, minimumPosition) : null;
+  }
+
+  private Candidate indexedContinuation(String raw, Candidate anchor, List<EndingCut> cuts)
+  {
+    if (anchor.index != 0 || anchor.partial || anchor.text.indexOf('在', 2) < 0) return null;
+    String[] syllables = anchor.display.split(" ");
+    if (syllables.length != anchor.text.length()) return null;
+    float score = Math.nextUp(anchor.score);
+    for (EndingCut cut : cuts)
+    {
+      int pivot = cut.characters;
+      if (pivot < 2 || pivot >= syllables.length || anchor.text.charAt(pivot) != '在'
+          || !"zai".equals(syllables[pivot])) continue;
+      for (NineKeyLexicon.Entry ending : cut.words)
+      {
+        if (!ending.text.startsWith("再") || !ending.display.startsWith("zai ")) continue;
+        String keys = raw.substring(0, cut.rawEnd);
+        String text = anchor.text.substring(0, pivot);
+        String display = syllableReading(syllables, 0, pivot);
+        for (NineKeyLexicon.Entry prefix : lexicon.lookupWords(keys, ENDING_WORDS))
+          if (text.equals(prefix.text) && display.equals(prefix.display))
+            return continuation(text, display, ending, score);
+        Candidate timed = timedContinuation(keys, anchor, syllables, pivot, ending, score);
+        if (timed != null) return timed;
+      }
+    }
+    return null;
+  }
+
+  private Candidate timedContinuation(String keys, Candidate anchor, String[] syllables, int pivot,
+      NineKeyLexicon.Entry ending, float score)
+  {
+    for (int from = Math.max(1, pivot - 3); from <= pivot - 2; from++)
+    {
+      int offset = anchor.reading.rawEnd(anchor.spellingStarts[from]);
+      if (offset >= keys.length() || keys.length() - offset > 8) continue;
+      for (NineKeyLexicon.Entry word : lexicon.lookupWords(keys.substring(offset), ENDING_WORDS))
+      {
+        if (!CONTINUATION_TIME_WORDS.contains(word.text)) continue;
+        String text = anchor.text.substring(0, from) + word.text;
+        String display = syllableReading(syllables, 0, from) + " " + word.display;
+        if (text.equals(decodeCompleteDisplay(display))) return continuation(text, display, ending, score);
+      }
+    }
+    return null;
+  }
+
+  private Candidate continuation(String text, String display, NineKeyLexicon.Entry ending, float score)
+  {
+    Reading reading = Reading.withWordEnding(display.replace(" ", ""), ending);
+    Candidate candidate = new Candidate(text + ending.text, reading, -1, score);
+    candidate.display = display + " " + ending.display;
+    return candidate;
   }
 
   private void addEarlierWordBoundary(String raw, EndingCut cut, Set<String> seenReadings)

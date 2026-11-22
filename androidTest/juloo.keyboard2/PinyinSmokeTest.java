@@ -1444,6 +1444,9 @@ public final class PinyinSmokeTest extends Instrumentation
     });
     passed("nine-key long composition accepts and deletes a literal letter");
     for (String[] example : new String[][] {
+        {"966369263426924542694", "我们晚点再联系", "16"},
+        {"64648426924542694", "明天再联系", "16"},
+        {"96898926924542694", "有需要再联系", "16"},
         {"54684267824264267249426", "今天去长安拍照", "16"},
         {"64649262486365433324726", "明早出门记得带伞", "24"},
         {"94298743426524484", "下午四点开会", "16"},
