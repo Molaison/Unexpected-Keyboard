@@ -33,6 +33,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int SEQUENCE_WORD_KEYS = 12;
   private static final int SEQUENCE_MIDDLES = 4;
   private static final int SEQUENCE_ENDINGS = 16;
+  private static final int SEQUENCE_NATIVE_CHOICES = 3;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
   private static final int TRANSPOSED_WORDS = 3;
@@ -552,11 +553,13 @@ public final class NineKeyComposition implements ChineseComposition
 
   private void addWordSequence(String raw, Candidate first)
   {
-    if (first.index != 0 || first.partial || first.text.startsWith("先")) return;
+    if (first.index != 0 || first.partial) return;
     int start = SEQUENCE_CUE_KEYS.length();
     int joinLength = SEQUENCE_JOIN_KEYS.length();
     int limit = Math.min(raw.length() - joinLength - 4, start + SEQUENCE_WORD_KEYS);
     Map<String, Candidate> connectorFallback = new LinkedHashMap<>();
+    List<Candidate> homophones = new ArrayList<>(SEQUENCE_NATIVE_CHOICES - 1);
+    boolean recoverPrefix = first.text.startsWith("先");
     for (int cut = raw.indexOf(SEQUENCE_JOIN_KEYS, start + 4); cut >= 0 && cut <= limit;
          cut = raw.indexOf(SEQUENCE_JOIN_KEYS, cut + 1))
     {
@@ -566,6 +569,8 @@ public final class NineKeyComposition implements ChineseComposition
       if (middle == null) continue;
       String prefix = "xian " + middle.display;
       String firstClause = "先" + middle.text;
+      // A leading 先 alone does not establish that the right middle word was decoded.
+      if (first.text.startsWith(firstClause)) continue;
       String clause = firstClause + '再';
       float score = Math.nextUp(first.score);
       Candidate known = conflictingSentencePrefix(clause, score, first.text.length());
@@ -589,7 +594,8 @@ public final class NineKeyComposition implements ChineseComposition
       if (alternatives.isEmpty())
       {
         int endingLimit = conflicting ? 1 : SEQUENCE_ENDINGS;
-        for (NineKeyLexicon.Entry word : lexicon.lookupWords(raw.substring(tail), endingLimit))
+        List<NineKeyLexicon.Entry> tailWords = lexicon.lookupWords(raw.substring(tail), endingLimit);
+        for (NineKeyLexicon.Entry word : tailWords)
         {
           if (alternatives.size() == 2 || candidates.size() + alternatives.size() == MAX_CANDIDATES) break;
           String display = prefix + " zai " + word.display;
@@ -613,7 +619,30 @@ public final class NineKeyComposition implements ChineseComposition
             alternatives.put(candidate.text, candidate);
             score = Math.nextUp(score);
           }
-          else connectorFallback.put(candidate.text, candidate);
+          else
+          {
+            connectorFallback.put(candidate.text, candidate);
+            if (recoverPrefix && !conflicting && connectorFallback.size() == 1 && homophones.isEmpty())
+            {
+              // The isolated tail decode is still active. Keep full dictionary words
+              // with the exact same reading among its first three native choices.
+              float alternateScore = candidate.score;
+              int choices = Math.min(SEQUENCE_NATIVE_CHOICES, decoder.getCandidateCount());
+              for (int i = 1; i < choices; i++)
+              {
+                String alternative = decoder.getCandidate(i);
+                for (NineKeyLexicon.Entry entry : tailWords)
+                {
+                  if (!entry.text.equals(alternative) || !entry.display.equals(word.display)) continue;
+                  alternateScore = Math.nextUp(alternateScore);
+                  Candidate ending = new Candidate(clause + alternative, candidate.reading, -1, alternateScore);
+                  ending.display = candidate.display;
+                  homophones.add(ending);
+                  break;
+                }
+              }
+            }
+          }
         }
       }
       if (!alternatives.isEmpty())
@@ -623,6 +652,8 @@ public final class NineKeyComposition implements ChineseComposition
       }
     }
     // The homophonic connector can provide a candidate after exact sequential paths are exhausted.
+    for (Candidate ending : homophones)
+      if (!connectorFallback.containsKey(ending.text)) connectorFallback.put(ending.text, ending);
     if (!connectorFallback.isEmpty()) mergeWordEndings(connectorFallback);
   }
 

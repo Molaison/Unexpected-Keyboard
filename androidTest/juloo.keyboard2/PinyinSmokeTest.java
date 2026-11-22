@@ -142,7 +142,7 @@ public final class PinyinSmokeTest extends Instrumentation
       }
       focus(activity.plain);
       chinese(true);
-      nineKey(false);
+      if (!nineKeySplitting) nineKey(false);
       if (voiceStatusLayout)
       {
         checkVoiceStatusLayout();
@@ -1411,6 +1411,21 @@ public final class PinyinSmokeTest extends Instrumentation
   {
     clear();
     nineKey(true);
+    for (String[] example : new String[][] {
+        {"942646874269245469426", "先购票再进站"},
+        {"94264687426924787426", "先购票再取票"}})
+    {
+      clear();
+      nineKeys(example[0]);
+      int position = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
+          .getCandidates().indexOf(example[1]) + 1);
+      if (position == 0 || position > 16)
+        throw new AssertionError("Nine-key sequence " + example[1] + " ranked " + position);
+      tapCandidate(example[1]);
+      text(activity.plain, example[1]);
+      passed("nine-key " + example[1] + " commits from candidate " + position);
+    }
+    clear();
     nineKeys("942624832");
     int rank = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
         .getCandidates().indexOf("西安出发") + 1);
