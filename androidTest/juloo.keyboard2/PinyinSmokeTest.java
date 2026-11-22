@@ -1415,16 +1415,19 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     nineKey(true);
     for (String[] example : new String[][] {
-        {"94262343369247426248", "先备份再删除"},
-        {"942633645492424832", "先登记再出发"},
-        {"942646874269245469426", "先购票再进站"},
-        {"94264687426924787426", "先购票再取票"}})
+        {"26649426986426843", "从西安坐高铁", "32"},
+        {"2664942698646645426", "从西安坐公交", "16"},
+        {"2664942698634843", "从西安坐地铁", "16"},
+        {"94262343369247426248", "先备份再删除", "16"},
+        {"942633645492424832", "先登记再出发", "16"},
+        {"942646874269245469426", "先购票再进站", "16"},
+        {"94264687426924787426", "先购票再取票", "16"}})
     {
       clear();
       nineKeys(example[0]);
       int position = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
           .getCandidates().indexOf(example[1]) + 1);
-      if (position == 0 || position > 16)
+      if (position == 0 || position > Integer.parseInt(example[2]))
         throw new AssertionError("Nine-key sequence " + example[1] + " ranked " + position);
       tapCandidate(example[1]);
       text(activity.plain, example[1]);

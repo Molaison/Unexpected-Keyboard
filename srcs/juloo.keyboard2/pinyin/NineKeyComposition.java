@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -427,9 +428,11 @@ public final class NineKeyComposition implements ChineseComposition
       Collections.sort(candidates, CANDIDATE_ORDER);
       if (constraint.isEmpty() && remaining.length() >= 4)
         addCorrections(remaining, lexicon != null && direct.isEmpty());
+      EndingCut earlierWord = null;
       if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
           && constraint.isEmpty() && !unique.isEmpty())
-        addWordEndings(remaining, unique, seenReadings);
+        earlierWord = addWordEndings(remaining, unique, seenReadings);
+      int beforeSequences = candidates.size();
       if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
           && candidates.size() < MAX_CANDIDATES
           && fixedEnd == 0 && constraint.isEmpty() && remaining.indexOf('\'') < 0)
@@ -439,6 +442,9 @@ public final class NineKeyComposition implements ChineseComposition
             && candidates.size() < MAX_CANDIDATES)
           addWordSequence(remaining, candidates.get(0));
       }
+      if (earlierWord != null && candidates.size() == beforeSequences
+          && candidates.size() < MAX_CANDIDATES)
+        addEarlierWordBoundary(remaining, earlierWord, seenReadings);
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
     finally { decoder.reset(); decoder.setLearningEnabled(learning); }
@@ -750,13 +756,13 @@ public final class NineKeyComposition implements ChineseComposition
     return reading.toString();
   }
 
-  private void addWordEndings(String raw, Map<String, Candidate> unique, Set<String> seenReadings)
+  private EndingCut addWordEndings(String raw, Map<String, Candidate> unique, Set<String> seenReadings)
   {
     // Pick a dictionary word ending at a boundary the native decoder already found.
     Candidate best = Collections.min(unique.values(), CANDIDATE_ORDER);
     int separator = raw.lastIndexOf('\'');
     EndingCut preferred = null;
-    List<EndingCut> explicitCuts = separator < 0 ? Collections.emptyList() : new ArrayList<>();
+    List<EndingCut> cuts = new ArrayList<>();
     for (int i = best.spellingStarts.length - 1; i > 0; i--)
     {
       int cut = best.reading.rawEnd(best.spellingStarts[i]);
@@ -766,12 +772,10 @@ public final class NineKeyComposition implements ChineseComposition
       List<NineKeyLexicon.Entry> endings = lexicon.lookupWords(raw.substring(cut), ENDING_WORDS);
       if (endings.isEmpty()) continue;
       EndingCut choice = new EndingCut(cut, i, endings);
+      cuts.add(choice);
       if (preferred == null || endings.get(0).score < preferred.words.get(0).score) preferred = choice;
-      // Recover the prefix after an explicit separator without guessing a different tail reading.
-      if (separator >= 0 && cut > separator && !best.partial
-          && best.display.endsWith(" " + endings.get(0).display)) explicitCuts.add(choice);
     }
-    if (preferred == null) return;
+    if (preferred == null) return null;
     // Reuse the cached beam before the ending to recover spellings that were pruned later.
     List<Path> prefixes = searchPaths(raw.substring(0, preferred.rawEnd));
     Set<String> distinct = new HashSet<>();
@@ -792,11 +796,47 @@ public final class NineKeyComposition implements ChineseComposition
     if (homophone != null && !unique.containsKey(homophone.text) && !recovered.containsKey(homophone.text))
       recovered.put(homophone.text, homophone);
     EndingCut earlier = null;
-    for (EndingCut cut : explicitCuts)
-      if (cut.rawEnd < preferred.rawEnd
-          && (earlier == null || cut.words.get(0).score < earlier.words.get(0).score)) earlier = cut;
-    if (earlier != null) recoverEarlierEnding(raw, earlier, recovered, seenReadings);
+    for (EndingCut cut : cuts)
+    {
+      if (cut.rawEnd >= preferred.rawEnd) continue;
+      NineKeyLexicon.Entry ending = cut.words.get(0);
+      if (separator >= 0)
+      {
+        if (cut.rawEnd <= separator || best.partial || !best.display.endsWith(" " + ending.display))
+          continue;
+      }
+      else if (ending.text.length() <= preferred.words.get(0).text.length()) continue;
+      if (earlier == null || ending.score < earlier.words.get(0).score) earlier = cut;
+    }
+    if (separator >= 0 && earlier != null) recoverEarlierEnding(raw, earlier, recovered, seenReadings);
     mergeWordEndings(recovered);
+    return separator < 0 ? earlier : null;
+  }
+
+  private void addEarlierWordBoundary(String raw, EndingCut cut, Set<String> seenReadings)
+  {
+    NineKeyLexicon.Entry ending = cut.words.get(0);
+    List<Path> prefixes = searchPaths(raw.substring(0, cut.rawEnd));
+    Map<String, Candidate> complete = new LinkedHashMap<>();
+    for (int i = 0; i < Math.min(EARLIER_ENDING_PREFIXES, prefixes.size()); i++)
+    {
+      List<Reading> splits = syllableGraph.splits(prefixes.get(i).spelling);
+      if (splits.size() < 2) continue;
+      for (Reading prefix : splits)
+      {
+        Reading reading = Reading.withWordEnding(prefix, ending);
+        if (reading.query.length() <= PinyinDecoder.MAX_PINYIN_LENGTH && seenReadings.add(reading.query))
+          addNativeCandidates(complete, reading, raw.length(), true);
+      }
+    }
+    Iterator<Candidate> entries = complete.values().iterator();
+    while (entries.hasNext())
+    {
+      Candidate candidate = entries.next();
+      if (!candidate.text.endsWith(ending.text) || !candidate.display.endsWith(" " + ending.display))
+        entries.remove();
+    }
+    mergeWordEndings(complete, 1);
   }
 
   private void recoverEarlierEnding(String raw, EndingCut cut, Map<String, Candidate> recovered,
@@ -857,6 +897,11 @@ public final class NineKeyComposition implements ChineseComposition
 
   private void mergeWordEndings(Map<String, Candidate> recovered)
   {
+    mergeWordEndings(recovered, 0);
+  }
+
+  private void mergeWordEndings(Map<String, Candidate> recovered, int insertion)
+  {
     for (Candidate candidate : candidates) recovered.remove(candidate.text);
     if (recovered.isEmpty()) return;
 
@@ -864,7 +909,6 @@ public final class NineKeyComposition implements ChineseComposition
         Math.min(CANDIDATE_PAGE_SIZE, candidates.size())));
     List<Candidate> ranked = new ArrayList<>(recovered.values());
     Collections.sort(ranked, CANDIDATE_ORDER);
-    int insertion = 0;
     for (Candidate addition : ranked)
     {
       while (insertion < candidates.size()
