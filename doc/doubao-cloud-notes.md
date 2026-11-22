@@ -35,7 +35,7 @@ hands out a pre-signed download URL.
   | 2nd PEM | **`CN=ImeNetSDK`, issuer `CN=Bytedance`** — the client certificate |
   | 3rd PEM | the matching RSA-2048 key |
 
-  The server accepts it, so the channel is reproducible outside the vendor SDK.
+  These observations establish the vendor client's connection path. Independent integration requires service credentials issued for that integration.
 
 ## Framing
 
@@ -59,41 +59,47 @@ answer `502`.
 
 | route | state |
 |---|---|
-| `ime-cloud` | exists → `ConvertByJson` / `ConvertByPB` (payload unknown, see below) |
+| `ime-cloud` | exists → `ConvertByJson` / `ConvertByPB` (observed protobuf described below) |
 | `ime-cloud-word_association` | exists, accepts the documented field set |
 | `ime-cloud-prefetch_ctx_regulator` | exists, answers `"forced success"` |
 
-## The `convert` payload is still unknown
+## Android 1.5.6 conversion payload
 
-The gateway reports:
+The signed Android 1.5.6 keyboard sends an envelope with `aid=ime-cloud` and a
+Base64-encoded protobuf in `data`. The following tags were observed in the
+inner request while typing in a dedicated synthetic editor.
 
-```
-biz error: ConvertByJson and ConvertByPB both error,
-[proto: cannot parse invalid wire-format data]
-```
+| Tag | Wire type | Observed value |
+|---|---|---|
+| 2 | varint | Present in nine-key requests. Value 1 in the sampled nine-key gestures and ordinary requests. |
+| 3 | length-delimited | The input prefix. Nine-key requests contain the digits, with an apostrophe at an explicit syllable boundary. Full-key requests contain letters. |
+| 4 | repeated length-delimited | Sixteen records in each sampled request immediately following a reading choice or separator tap. |
+| 7 | length-delimited | The selected reading after a reading choice. For example, tag 3 remains `9426` while tag 7 is `xian`. |
+| 8 | length-delimited | Literal `1.0.0` in the sampled nine-key requests. |
+| 9 | varint | Value 12 in the sampled ordinary inputs. Omitted in the requests immediately following the two gestures. |
 
-so it accepts both JSON and protobuf, and rejected everything tried:
+An independent encoder reproduced the complete inner protobuf of six observed
+ordinary nine-key requests byte for byte. They carried tags 2, 3, 8 and 9.
+That test covered `9`, `94`, `942`, `9426`, `94'2`, and `94'26`.
 
-* 16 container shapes — `{}`, `[]`, bare string, `{"pinyin":...}`,
-  `{"comps":[...]}`, `{"cands":[]}`, nested `case/data`, arrays of objects,
-  mixed string/number types;
-* 3 capitalisation schemes — `round`, `Round`, full PascalCase
-  (`Pinyin`/`Input`/…), matching the lowercase keys the `.so` does contain
-  (`pinyin`, `keyboard_type`, `input`);
-* the field set that `ime-cloud-word_association` *does* accept
-  (`Round`, `pinyin`, `extend`, `msg`, `input`, `keyboard_type`, `input_type`,
-  `rank_version`, `rounds_history`, `text_before_cursor`, `text_after_cursor`,
-  `req`, `session_id`).
+In the sampled gesture requests, several tag-4 records matched candidate text in
+child tag 1. The recorded test matches include `先`, `线`, and `现` after selecting
+`xian`, and `一`, `已`, and `以` after tapping the separator. Child tag 2 had two
+bytes that remain uninterpreted. Child tag 3 was zero and child tag 4 was an
+empty length-delimited field. The samples do not establish how the service uses
+the records or the literals in tags 8 and 9.
 
-`libkeyboard.so` keeps its symbols (`cloud::CloudModel`,
-`InputModel::MakeCloudRequest`, `oime_engine::ConvertParamsIn`, …) and carries all
-nine `/obric/ime/cloud/*` URLs, but the request serializer references no literal
-field names, and the library links no protobuf runtime — so the schema cannot be
-read off the binary.
+The observed conversion response contains Base64-encoded protobuf in `Data`.
+In a synthetic long sentence, child tag 4 of a repeated top-level tag 3 record
+matched the complete candidate text. Association responses and unclassified
+stream calls were observed separately.
 
-**Next step:** one capture of a real device request (UDP/443 to `ime-gw3`,
-`StreamDataReceived` payload), decode the `data` field, and the schema is known.
-Until then `convert` stays unwired; a fabricated payload would just fail.
+Earlier trials with guessed JSON containers, field capitalization, and the
+association request layout returned conversion errors.
+
+These values describe the signed app at its SDK boundary. Integrating this
+channel still requires service access issued for this project and validation
+of the remaining gesture and response fields.
 
 ## Hot-word dictionary is engine-private
 
@@ -115,8 +121,8 @@ URL, and a caller with the engine available could use it.
 | capability | status |
 |---|---|
 | cursor/package context in the session | **shipped here** |
-| full `extra` field set | **shipped here** |
+| ASR session `extra` | multi-pass settings are sent; original post-stop full-text refinement remains unverified in this app |
 | release-frame `force_asr_twopass` + `finish_audio` | **shipped here** |
-| user words / NER / correction-pair uploads | implemented, but the routes answer `403 路由已封禁` until a Doubao account login exists |
-| cloud pinyin candidates | blocked on the capture above |
+| user words / NER / correction-pair uploads | request adapters exist; the observed route returned `403 路由已封禁`; account integration remains unverified |
+| cloud pinyin candidates | ordinary request format verified; service authorization and gesture handling pending |
 | cloud hot-words | blocked on the engine's dictionary reader |
