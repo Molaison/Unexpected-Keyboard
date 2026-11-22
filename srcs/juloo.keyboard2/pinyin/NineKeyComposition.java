@@ -3,6 +3,7 @@ package juloo.keyboard2.pinyin;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final String SEQUENCE_CUE_KEYS = digits("xian");
   private static final String SEQUENCE_JOIN_KEYS = digits("zai");
   private static final int SEQUENCE_WORD_KEYS = 12;
+  private static final int SEQUENCE_MIDDLES = 4;
   private static final int SEQUENCE_ENDINGS = 16;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
@@ -560,18 +562,19 @@ public final class NineKeyComposition implements ChineseComposition
     {
       int tail = cut + joinLength;
       if (raw.length() - tail > SEQUENCE_WORD_KEYS) continue;
-      NineKeyLexicon.Entry middle = lexicon.firstWord(raw.substring(start, cut));
+      NineKeyLexicon.Entry middle = sequenceMiddle(raw.substring(start, cut));
       if (middle == null) continue;
       String prefix = "xian " + middle.display;
       String firstClause = "先" + middle.text;
-      if (!decodeCompleteDisplay(prefix).equals(firstClause)) continue;
       String clause = firstClause + '再';
       float score = Math.nextUp(first.score);
       Candidate known = conflictingSentencePrefix(clause, score, first.text.length());
-      if (known != null && !known.corrected) continue;
+      boolean conflicting = known != null && !known.corrected;
 
       Map<String, Candidate> alternatives = new LinkedHashMap<>();
-      for (NineKeyLexicon.Entry word : lexicon.lookupWords(raw.substring(cut), ENDING_WORDS))
+      List<NineKeyLexicon.Entry> endings = conflicting ? Collections.emptyList()
+          : lexicon.lookupWords(raw.substring(cut), ENDING_WORDS);
+      for (NineKeyLexicon.Entry word : endings)
       {
         if (!word.text.startsWith("再") || !word.display.startsWith("zai ") || word.text.length() < 3) continue;
         // Trust a complete sequential reading already decoded with this indexed ending.
@@ -585,15 +588,21 @@ public final class NineKeyComposition implements ChineseComposition
       }
       if (alternatives.isEmpty())
       {
-        for (NineKeyLexicon.Entry word : lexicon.lookupWords(raw.substring(tail), SEQUENCE_ENDINGS))
+        int endingLimit = conflicting ? 1 : SEQUENCE_ENDINGS;
+        for (NineKeyLexicon.Entry word : lexicon.lookupWords(raw.substring(tail), endingLimit))
         {
           if (alternatives.size() == 2 || candidates.size() + alternatives.size() == MAX_CANDIDATES) break;
           String display = prefix + " zai " + word.display;
           String decoded = decodeCompleteDisplay(display);
-          boolean sequential = decoded.startsWith(clause);
-          if (!sequential && (connectorFallback.size() == 2
-              || candidates.size() + connectorFallback.size() == MAX_CANDIDATES
-              || !decoded.equals(firstClause + "在" + word.text))) continue;
+          boolean sequential = !conflicting && decoded.startsWith(clause);
+          if (!sequential)
+          {
+            if (connectorFallback.size() == 2
+                || candidates.size() + connectorFallback.size() == MAX_CANDIDATES) continue;
+            // A competing split requires the complete reading to match both words.
+            if (!decoded.equals(firstClause + "在" + word.text)
+                && (!conflicting || !decoded.equals(clause + word.text))) continue;
+          }
           if (!decodeCompleteDisplay(word.display).equals(word.text)) continue;
           Candidate candidate = new Candidate(clause + word.text,
               new Reading(display.replace(" ", "")), -1,
@@ -615,6 +624,29 @@ public final class NineKeyComposition implements ChineseComposition
     }
     // The homophonic connector can provide a candidate after exact sequential paths are exhausted.
     if (!connectorFallback.isEmpty()) mergeWordEndings(connectorFallback);
+  }
+
+  private NineKeyLexicon.Entry sequenceMiddle(String keys)
+  {
+    List<NineKeyLexicon.Entry> words = lexicon.lookupWords(keys, SEQUENCE_MIDDLES);
+    if (words.isEmpty()) return null;
+    NineKeyLexicon.Entry first = words.get(0);
+    if (decodeCompleteDisplay("xian " + first.display).equals("先" + first.text)) return first;
+
+    Map<String, String> decoded = new HashMap<>();
+    for (NineKeyLexicon.Entry word : words.subList(1, words.size()))
+    {
+      // Look for another spelling of these keys.
+      if (word.display.equals(first.display)) continue;
+      String prefix = decoded.get(word.display);
+      if (prefix == null)
+      {
+        prefix = decodeCompleteDisplay("xian " + word.display);
+        decoded.put(word.display, prefix);
+      }
+      if (prefix.equals("先" + word.text)) return word;
+    }
+    return null;
   }
 
   private boolean hasSequentialEnding(String ending)
