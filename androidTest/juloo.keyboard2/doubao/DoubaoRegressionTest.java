@@ -145,6 +145,8 @@ public final class DoubaoRegressionTest
     passed(test, "indexless sentence boundaries preserve earlier sentences and retain indexed fallback");
     checkWholeTranscript(test);
     passed(test, "stream, second pass, and final pass replace complete text without appending result fragments");
+    checkThreepassResultPair(test);
+    passed(test, "the original three-pass result pair survives a late segment and ordinary details can still change");
     checkIndexedUpdatesAfterSnapshot(test);
     passed(test, "indexed updates after a full snapshot can revise or append a sentence without losing the rest");
     checkBurstResults(test);
@@ -922,6 +924,35 @@ public final class DoubaoRegressionTest
       editor.complete();
       if (editor.voice.isActive() || !editor.text().equals("前缀今天散步吧，顺便买点水果回来。"))
         throw new AssertionError("Session finish committed the wrong transcript: " + editor.text());
+    }
+  }
+
+  private static void checkThreepassResultPair(Instrumentation test) throws Exception
+  {
+    String whole = "今天先去买菜。晚上回来做饭。";
+    for (boolean duplicate : new boolean[]{true, false})
+    {
+      try (Editor editor = new Editor(test, "前缀"))
+      {
+        editor.run.onResponse(response(finalJson("今天先去买菜。", 0)));
+        editor.run.onResponse(response(finalJson("晚上回来。", 1)));
+        test.runOnMainSync(() -> editor.voice.toggle());
+        String detail = duplicate ? whole : "晚上回来做饭。";
+        editor.run.onResponse(response("{\"results\":["
+            + "{\"text\":\"" + whole + "\",\"is_interim\":false,\"is_vad_finished\":true},"
+            + "{\"text\":\"" + detail + "\",\"is_interim\":false,\"extra\":{\"nonstream_result\":true}}"
+            + "],\"extra\":{\"lastpkt_threepass_latency\":120}}"));
+        if (!editor.text().equals("前缀" + whole))
+          throw new AssertionError("Original three-pass snapshot did not update the editor: " + editor.text());
+
+        editor.run.onResponse(response(finalJson("旧分句。", 1)));
+        editor.run.onResponse(DoubaoProtocol.parseResponse(packet("SessionFinished", 20000000, "OK", "")));
+        editor.complete();
+        String expected = duplicate ? whole : "今天先去买菜。旧分句。";
+        if (!editor.text().equals("前缀" + expected))
+          throw new AssertionError((duplicate ? "Original three-pass snapshot was overwritten: "
+              : "A normal detail was incorrectly treated as a whole transcript: ") + editor.text());
+      }
     }
   }
 

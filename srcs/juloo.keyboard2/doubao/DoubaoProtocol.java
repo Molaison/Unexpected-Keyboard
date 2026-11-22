@@ -434,6 +434,12 @@ public final class DoubaoProtocol
     JsonObject firstExtra = first == null ? null : optionalObject(first, "extra");
     boolean nonstream = optionalBoolean(first, "nonstream_result", false)
         || optionalBoolean(firstExtra, "nonstream_result", false);
+    // The original three-pass packet puts the final marker on a duplicate
+    // of the whole transcript. A marked sentence detail is still a fragment.
+    if (!nonstream && results.size() == 2 && allStable && !text.isEmpty()
+        && firstBooleanValue(first, false, "is_vad_finished", "vad_finished")
+        && text.equals(fragments.get(0).text) && isThreepassCopy(extra, results.get(1)))
+      nonstream = true;
     boolean isFinal = nonstream || (allStable && (wholeTranscript || vadFinished));
     TranscriptLayout layout = TranscriptLayout.INDEXED;
     if (extractedText != null && (nonstream || wholeTranscript))
@@ -443,6 +449,17 @@ public final class DoubaoProtocol
             ? ResponseType.VAD_START : ResponseType.INTERIM_RESULT;
     return new Response(type, text, isFinal, allStable, vadStart, vadFinished, layout,
         utteranceIndex, -1, 0, "", resultJson, fragments);
+  }
+
+  private static boolean isThreepassCopy(JsonObject extra, JsonObject copy)
+  {
+    JsonElement timing = extra == null ? null : extra.get("lastpkt_threepass_latency");
+    if (timing == null || !timing.isJsonPrimitive() || !timing.getAsJsonPrimitive().isNumber())
+      return false;
+    JsonElement copyExtra = copy.get("extra");
+    return optionalBoolean(copy, "nonstream_result", false)
+        || (copyExtra != null && copyExtra.isJsonObject()
+            && optionalBoolean(copyExtra.getAsJsonObject(), "nonstream_result", false));
   }
 
   private static byte[] request(String requestId, String token,
