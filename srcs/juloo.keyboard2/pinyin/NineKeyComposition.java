@@ -662,13 +662,18 @@ public final class NineKeyComposition implements ChineseComposition
     List<NineKeyLexicon.Entry> words = lexicon.lookupWords(keys, SEQUENCE_MIDDLES);
     if (words.isEmpty()) return null;
     NineKeyLexicon.Entry first = words.get(0);
-    if (decodeCompleteDisplay("xian " + first.display).equals("先" + first.text)) return first;
+    String firstPrefix = decodeCompleteDisplay("xian " + first.display);
+    if (firstPrefix.equals("先" + first.text)) return first;
 
     Map<String, String> decoded = new HashMap<>();
+    NineKeyLexicon.Entry sameReading = null;
     for (NineKeyLexicon.Entry word : words.subList(1, words.size()))
     {
-      // Look for another spelling of these keys.
-      if (word.display.equals(first.display)) continue;
+      if (word.display.equals(first.display))
+      {
+        if (firstPrefix.equals("先" + word.text)) sameReading = word;
+        continue;
+      }
       String prefix = decoded.get(word.display);
       if (prefix == null)
       {
@@ -677,7 +682,10 @@ public final class NineKeyComposition implements ChineseComposition
       }
       if (prefix.equals("先" + word.text)) return word;
     }
-    return null;
+    // A complete prefix can split inside the word. Verify the isolated reading
+    // before using a lower-ranked homophone as the middle word.
+    return sameReading != null && decodeCompleteDisplay(sameReading.display).equals(sameReading.text)
+        ? sameReading : null;
   }
 
   private boolean hasSequentialEnding(String ending)

@@ -1412,6 +1412,7 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     nineKey(true);
     for (String[] example : new String[][] {
+        {"942633645492424832", "先登记再出发"},
         {"942646874269245469426", "先购票再进站"},
         {"94264687426924787426", "先购票再取票"}})
     {
@@ -1425,6 +1426,12 @@ public final class PinyinSmokeTest extends Instrumentation
       text(activity.plain, example[1]);
       passed("nine-key " + example[1] + " commits from candidate " + position);
     }
+    clear();
+    nineKeys("94262343369247426248");
+    if (onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
+        .getCandidates().contains("先辈分再删除")))
+      throw new AssertionError("Nine-key sequence accepted a conflicting middle word");
+    passed("nine-key fallback rejects a conflicting same-reading middle word");
     clear();
     nineKeys("942624832");
     int rank = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
