@@ -1,6 +1,7 @@
 package juloo.keyboard2.pinyin;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -49,6 +50,8 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int PER_PATH = 32;
   private static final int MAX_CANDIDATES = 256;
   private static final int IMPOSSIBLE = 1000000;
+  private static final int MAX_SYLLABLE_LENGTH = 6;
+  private static final int[] EMPTY_PHONETIC_COSTS = {0};
   private static final String INITIALS = " b c ch d f g h j k l m n p q r s sh t w x y z zh ";
   private final PinyinDecoder decoder;
   private final NineKeyLexicon lexicon;
@@ -81,7 +84,13 @@ public final class NineKeyComposition implements ChineseComposition
   {
     final String spelling;
     final float score;
-    Path(String spelling, float score) { this.spelling = spelling; this.score = score; }
+    final int[] phoneticCosts;
+    Path(String spelling, float score, int[] phoneticCosts)
+    {
+      this.spelling = spelling;
+      this.score = score;
+      this.phoneticCosts = phoneticCosts;
+    }
   }
 
   private static final Comparator<Path> PATH_ORDER = (a, b) -> {
@@ -336,38 +345,46 @@ public final class NineKeyComposition implements ChineseComposition
     indexedCache.clear();
   }
 
-  /** Minimum phonetic cost to each prefix end. The search beam can also
-   * accept an unfinished final syllable, such as 'zhon' before 'zhong'. */
-  private int[] phoneticCosts(String input, boolean incomplete)
+  /** Costs for complete syllables only, so a longer path can reuse them. */
+  private int[] extendPhoneticCosts(String input, int[] previous)
   {
-    int n = input.length();
-    int[] costs = new int[n + 1];
-    java.util.Arrays.fill(costs, IMPOSSIBLE);
-    costs[0] = 0;
-    for (int i = 0; i < n; i++)
+    int[] costs = Arrays.copyOf(previous, input.length() + 1);
+    for (int end = previous.length; end <= input.length(); end++)
     {
-      if (costs[i] == IMPOSSIBLE) continue;
-      if (input.charAt(i) == '\'')
+      if (input.charAt(end - 1) == '\'')
       {
-        if (i > 0 && input.charAt(i - 1) != '\'') costs[i + 1] = Math.min(costs[i + 1], costs[i]);
+        costs[end] = end > 1 && input.charAt(end - 2) != '\'' ? costs[end - 1] : IMPOSSIBLE;
         continue;
       }
-      for (int j = i + 1; j <= Math.min(n, i + 6); j++)
+      int best = IMPOSSIBLE;
+      for (int start = Math.max(0, end - MAX_SYLLABLE_LENGTH); start < end; start++)
       {
-        String s = input.substring(i, j);
+        if (costs[start] == IMPOSSIBLE) continue;
+        String s = input.substring(start, end);
         int penalty = syllables.contains(s) ? 800 : INITIALS.contains(" " + s + " ") ? 3300 : IMPOSSIBLE;
-        if (incomplete && j == n && prefixes.contains(s)) penalty = Math.min(penalty, 1000);
-        if (penalty < IMPOSSIBLE) costs[j] = Math.min(costs[j], costs[i] + penalty);
+        if (penalty < IMPOSSIBLE) best = Math.min(best, costs[start] + penalty);
       }
+      costs[end] = best;
     }
     return costs;
+  }
+
+  /** Relax only the last syllable for ranking, without saving an incomplete split. */
+  private int beamCost(String input, int[] costs)
+  {
+    int end = input.length();
+    int best = costs[end];
+    for (int start = Math.max(0, end - MAX_SYLLABLE_LENGTH); start < end; start++)
+      if (costs[start] + 1000 < best && prefixes.contains(input.substring(start, end)))
+        best = costs[start] + 1000;
+    return best;
   }
 
   private List<Path> searchPaths(String keys)
   {
     List<Path> hit = cache.get(keys);
     if (hit != null) return hit;
-    if (keys.isEmpty()) return Collections.singletonList(new Path("", 0));
+    if (keys.isEmpty()) return Collections.singletonList(new Path("", 0, EMPTY_PHONETIC_COSTS));
     List<Path> previous = searchPaths(keys.substring(0, keys.length() - 1));
     String letters = lettersFor(keys.charAt(keys.length() - 1));
     List<Path> next = new ArrayList<>();
@@ -377,7 +394,7 @@ public final class NineKeyComposition implements ChineseComposition
         String s = p.spelling + letters.charAt(i);
         if (s.length() <= constraint.length() && !constraint.startsWith(s)) continue;
         if (s.length() > constraint.length() && !s.startsWith(constraint)) continue;
-        Path extension = scorePath(s, null);
+        Path extension = scorePath(p, s, null);
         if (extension != null) next.add(extension);
       }
     Collections.sort(next, PATH_ORDER);
@@ -391,9 +408,10 @@ public final class NineKeyComposition implements ChineseComposition
     return key >= '2' && key <= '9' ? LETTERS[key - '0'] : String.valueOf(key);
   }
 
-  private Path scorePath(String spelling, NineKeyLexicon.Entry ending)
+  private Path scorePath(Path prefix, String spelling, NineKeyLexicon.Entry ending)
   {
-    int cost = phoneticCosts(spelling, true)[spelling.length()];
+    int[] costs = extendPhoneticCosts(spelling, prefix.phoneticCosts);
+    int cost = beamCost(spelling, costs);
     if (cost == IMPOSSIBLE) return null;
     decoder.reset();
     int count = decoder.search(spelling);
@@ -410,7 +428,7 @@ public final class NineKeyComposition implements ChineseComposition
     }
     // An incomplete syllable can temporarily have no native candidate.
     float lexical = count == 0 ? 9000 : decoder.getCandidateScore(0) / Math.max(1, first.length());
-    return new Path(spelling, lexical + cost);
+    return new Path(spelling, lexical + cost, costs);
   }
 
   /** Preserve the original beam and its sentence anchors. */
@@ -429,7 +447,7 @@ public final class NineKeyComposition implements ChineseComposition
       {
         String spelling = path.spelling + letters.charAt(i);
         if (!spellings.add(spelling)) continue;
-        Path extension = scorePath(spelling, null);
+        Path extension = scorePath(path, spelling, null);
         if (extension != null) next.add(extension);
       }
     addIndexedWordPaths(keys, next, spellings);
@@ -473,9 +491,10 @@ public final class NineKeyComposition implements ChineseComposition
   {
     for (int i = 0; i < Math.min(limit, prefixes.size()); i++)
     {
-      String spelling = prefixes.get(i).spelling + word.spelling;
+      Path prefix = prefixes.get(i);
+      String spelling = prefix.spelling + word.spelling;
       if (!spellings.add(spelling)) continue;
-      Path path = scorePath(spelling, word);
+      Path path = scorePath(prefix, spelling, word);
       if (path != null) next.add(path);
     }
   }
@@ -499,7 +518,7 @@ public final class NineKeyComposition implements ChineseComposition
       Set<String> seenReadings = new HashSet<>();
       for (NineKeyLexicon.Entry e : direct)
         if (rescued.size() < 12 && seenReadings.add(e.spelling))
-          rescued.add(new Path(e.spelling, e.score));
+          rescued.add(new Path(e.spelling, e.score, null));
       for (Path path : paths) if (seenReadings.add(path.spelling)) rescued.add(path);
       paths = rescued;
       Map<String, Candidate> unique = new LinkedHashMap<>();
@@ -1165,7 +1184,7 @@ public final class NineKeyComposition implements ChineseComposition
       int queryEnd = starts[text.length()];
       int consumed = reading.rawEnd(queryEnd);
       if (consumed <= 0 || consumed > rawLength || (onlyBestComplete && consumed != rawLength)) continue;
-      if (spellingCosts == null) spellingCosts = phoneticCosts(reading.spelling, false);
+      if (spellingCosts == null) spellingCosts = extendPhoneticCosts(reading.spelling, EMPTY_PHONETIC_COSTS);
       int spellingCost = spellingCosts[consumed];
       if (spellingCost == IMPOSSIBLE) continue;
       float score = decoder.getCandidateScore(i) / Math.max(1, text.length()) + spellingCost;
