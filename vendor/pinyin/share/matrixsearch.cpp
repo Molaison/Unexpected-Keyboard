@@ -888,6 +888,8 @@ size_t MatrixSearch::choose(size_t cand_id) {
     step_to++;
   }
 
+  // The fixed choice can change the best path through the remaining spelling.
+  get_spl_start_id();
   if (fixed_hzs_ < spl_id_num_) {
     prepare_candidates();
   } else {

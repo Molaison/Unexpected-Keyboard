@@ -66,6 +66,18 @@ public final class PinyinDecoderTest
       check(decoder.getCandidate(0).equals("尼豪"), "Custom phrase selection failed");
       decoder.flush();
       check(Files.size(user) > 0, "User dictionary was not persisted");
+
+      decoder.reset();
+      decoder.search("xian'bei'fen'zai'shan'chu");
+      decoder.choose(find(decoder, "先"));
+      check(decoder.getFixedLength() == 1, "Partial selection did not fix the leading syllable");
+      String sentence = decoder.getCandidate(0);
+      check(sentence.equals("先备份在删除"), "Partial selection lost the remaining sentence");
+      decoder.choose(0);
+      check(decoder.getFixedLength() == sentence.length(), "Whole selection did not fix the sentence");
+      check(decoder.getCandidate(0).equals(sentence), "Whole selection changed the sentence");
+      decoder.flush();
+
       decoder.reset();
       String[] predictions = decoder.predict("中国");
       check(predictions.length > 0, "Expected following-word predictions");
@@ -85,6 +97,9 @@ public final class PinyinDecoderTest
     {
       decoder.search("nihao");
       find(decoder, "尼豪");
+      decoder.reset();
+      decoder.search("xian'bei'fen'zai'shan'chu");
+      find(decoder, "先备份在删除");
       decoder.reset();
       long size = Files.size(user);
       decoder.setLearningEnabled(false);
