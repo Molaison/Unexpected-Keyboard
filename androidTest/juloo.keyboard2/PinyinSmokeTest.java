@@ -10,6 +10,8 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.Region;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
@@ -141,6 +143,7 @@ public final class PinyinSmokeTest extends Instrumentation
         if (!status.contains("selected")) throw new AssertionError(status);
       }
       focus(activity.plain);
+      awaitImeTouchTarget(onMain(() -> (View)field(candidatesView(), "preedit")));
       chinese(true);
       if (!nineKeySplitting) nineKey(false);
       if (voiceStatusLayout)
@@ -1706,7 +1709,7 @@ public final class PinyinSmokeTest extends Instrumentation
     throw new AssertionError("Cannot scroll to reading " + label);
   }
 
-  private AccessibilityNodeInfo pinyinMenuItem(String label) throws Exception
+  private void enableInteractiveWindows()
   {
     AccessibilityServiceInfo services = getUiAutomation().getServiceInfo();
     if ((services.flags & AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS) == 0)
@@ -1714,6 +1717,44 @@ public final class PinyinSmokeTest extends Instrumentation
       services.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
       getUiAutomation().setServiceInfo(services);
     }
+  }
+
+  private void awaitImeTouchTarget(View target) throws Exception
+  {
+    enableInteractiveWindows();
+    Region area = new Region();
+    Rect windowBounds = new Rect();
+    long deadline = SystemClock.uptimeMillis() + 30000;
+    // A laid-out IME view can report its final position while the window is still sliding in.
+    do
+    {
+      Rect bounds = onMain(() -> visibleTouchBounds(target));
+      int targetWindow = onMain(() -> {
+        AccessibilityNodeInfo node = target.createAccessibilityNodeInfo();
+        try { return node.getWindowId(); }
+        finally { node.recycle(); }
+      });
+      for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
+      {
+        if (window.getType() != AccessibilityWindowInfo.TYPE_INPUT_METHOD || window.getId() != targetWindow)
+          continue;
+        if (Build.VERSION.SDK_INT >= 30)
+          window.getRegionInScreen(area);
+        else
+        {
+          window.getBoundsInScreen(windowBounds);
+          area.set(windowBounds);
+        }
+        if (area.contains(bounds.centerX(), bounds.centerY())) return;
+      }
+      SystemClock.sleep(25);
+    } while (SystemClock.uptimeMillis() < deadline);
+    throw new AssertionError("The mode label is outside the touchable keyboard window");
+  }
+
+  private AccessibilityNodeInfo pinyinMenuItem(String label) throws Exception
+  {
+    enableInteractiveWindows();
     idle();
     // The popup can be showing before its accessibility window is published.
     long deadline = SystemClock.uptimeMillis() + 1500;
