@@ -37,6 +37,7 @@ public final class DoubaoVoiceInput
   private static final int ASR_CONCURRENCY_LIMIT = 40200011;
   private static final long FINAL_DRAIN_TIMEOUT_MS = 10000;
   private static final long INTERIM_UPDATE_INTERVAL_NS = 150000000L;
+  private static final int MAX_RENDERED_SUFFIX = 256;
   private static final int CARET_UNAVAILABLE = -1;
   private static final int SELECTION_RANGE = -2;
 
@@ -382,7 +383,7 @@ public final class DoubaoVoiceInput
       failInputConnection(run, "The target editor changed during voice input");
       return;
     }
-    if (editorSelectionMoved(run))
+    if (editorChanged(run))
     {
       cancel();
       return;
@@ -400,8 +401,11 @@ public final class DoubaoVoiceInput
       failInputConnection(run, "The target editor rejected voice text");
     else
     {
-      // Use the actual caret so filters or maxLength limits can change the text.
-      run.lastRenderedCaret = readEditorCaret(run);
+      // Capture what the editor accepted, including any formatting or length filters.
+      int length = Math.min(text.length(), run.renderedSuffixLimit);
+      SurroundingText rendered = readRenderedSnapshot(run, length);
+      run.lastRenderedCaret = readEditorCaret(run, rendered);
+      run.lastRenderedSuffix = caretSuffix(rendered, Math.min(length, run.renderedSuffixLimit));
       if (retracts)
       {
         run.pendingRetractionUpdates++;
@@ -412,7 +416,7 @@ public final class DoubaoVoiceInput
     }
   }
 
-  private boolean editorSelectionMoved(SessionRun run)
+  private boolean editorChanged(SessionRun run)
   {
     if (!run.hasComposingText)
     {
@@ -422,8 +426,33 @@ public final class DoubaoVoiceInput
       return compareEditorContext(run) == ContextMatch.CHANGED;
     }
     if (run.lastRenderedCaret == CARET_UNAVAILABLE) return false;
-    int currentCaret = readEditorCaret(run);
-    return currentCaret != CARET_UNAVAILABLE && currentCaret != run.lastRenderedCaret;
+    String previous = run.lastRenderedSuffix;
+    int length = previous == null ? 0 : previous.length();
+    SurroundingText current = readRenderedSnapshot(run, length);
+    int currentCaret = readEditorCaret(run, current);
+    if (currentCaret == CARET_UNAVAILABLE) return false;
+    if (currentCaret != run.lastRenderedCaret) return true;
+    String suffix = caretSuffix(current, Math.min(length, run.renderedSuffixLimit));
+    return suffix != null && suffix.length() == length && !suffix.equals(previous);
+  }
+
+  private SurroundingText readRenderedSnapshot(SessionRun run, int length)
+  {
+    SurroundingText snapshot = readSurroundingText(run, length, 0);
+    if (length == 0 || !run.canReadEditorCaret || absoluteSelection(snapshot) != null) return snapshot;
+
+    // Editors may give a caret position even when they withhold surrounding text.
+    run.renderedSuffixLimit = 0;
+    return readSurroundingText(run, 0, 0);
+  }
+
+  private static String caretSuffix(SurroundingText snapshot, int length)
+  {
+    if (snapshot == null || length == 0) return null;
+    int caret = snapshot.getSelectionStart();
+    CharSequence text = snapshot.getText();
+    if (caret != snapshot.getSelectionEnd() || caret <= 0 || caret > text.length()) return null;
+    return text.subSequence(Math.max(0, caret - length), caret).toString();
   }
 
   private enum ContextMatch { SAME, CHANGED, UNKNOWN }
@@ -439,7 +468,12 @@ public final class DoubaoVoiceInput
 
   private int readEditorCaret(SessionRun run)
   {
-    EditorSelection selection = readEditorSelection(run);
+    return readEditorCaret(run, readSurroundingText(run, 0, 0));
+  }
+
+  private static int readEditorCaret(SessionRun run, SurroundingText snapshot)
+  {
+    EditorSelection selection = absoluteSelection(snapshot);
     if (selection == null)
     {
       // Some editors report only a relative position. Use their callbacks.
@@ -596,6 +630,8 @@ public final class DoubaoVoiceInput
     int pendingRetractionUpdates;
     int composingStart = CARET_UNAVAILABLE;
     int lastRenderedCaret = CARET_UNAVAILABLE;
+    int renderedSuffixLimit = MAX_RENDERED_SUFFIX;
+    String lastRenderedSuffix;
     int retractionCaret = CARET_UNAVAILABLE;
     final DoubaoTranscript transcript = new DoubaoTranscript();
     final Runnable renderTranscript = () -> applyPendingTranscript(this);

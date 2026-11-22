@@ -167,7 +167,87 @@ public final class DoubaoRegressionTest
     passed(test, "first transcripts respect moved and stable selections without accessing private context");
     checkEmptyTranscriptBeforeFirstWrite(test);
     passed(test, "empty first transcripts preserve the selection and do not claim the editor");
-    passed(test, "DOUBAO_REGRESSION_OK checks=21");
+    if (android.os.Build.VERSION.SDK_INT >= 31)
+    {
+      checkCaretOnlyVoiceEditor(test);
+      passed(test, "caret-only editors still reject a result after the user moves the caret");
+      checkEditedVoiceTextAtSameCaret(test);
+      passed(test, "a later voice result preserves editor changes made without moving the caret");
+    }
+    passed(test, "DOUBAO_REGRESSION_OK checks=" + (android.os.Build.VERSION.SDK_INT >= 31 ? 23 : 21));
+  }
+
+  private static void checkCaretOnlyVoiceEditor(Instrumentation test) throws Exception
+  {
+    List<String> violations = new ArrayList<>();
+    for (boolean rejectsFromStart : new boolean[] { true, false })
+    {
+      try (Editor editor = new Editor(test, "固定："))
+      {
+        boolean[] rejectsText = { rejectsFromStart };
+        test.runOnMainSync(() -> {
+          editor.currentConnection = new InputConnectionWrapper(editor.currentConnection, false) {
+            @Override public SurroundingText getSurroundingText(int before, int after, int flags)
+            {
+              return rejectsText[0] && before > 0 ? null : super.getSurroundingText(before, after, flags);
+            }
+          };
+          editor.run = editor.voice.new SessionRun(editor.currentConnection);
+        });
+        set(editor.voice, "activeRun", editor.run);
+        editor.run.onResponse(response(finalJson("语音初稿")));
+        if (!editor.text().equals("固定：语音初稿")) throw new AssertionError("Initial draft was not written");
+        test.runOnMainSync(() -> {
+          rejectsText[0] = true;
+          editor.view.setSelection(0);
+        });
+        editor.run.onResponse(response(finalJson("迟到的修订")));
+        editor.complete();
+        if (!editor.text().equals("固定：语音初稿"))
+          violations.add("rejectsFromStart=" + rejectsFromStart + " text=[" + editor.text() + "]");
+      }
+    }
+    if (!violations.isEmpty()) throw new AssertionError("Caret-only voice editor lost its draft: " + violations);
+  }
+
+  private static void checkEditedVoiceTextAtSameCaret(Instrumentation test) throws Exception
+  {
+    String prefix = "固定：";
+    String initial = "请发旧稿";
+    String later = "请把旧稿发出去。";
+    List<String> violations = new ArrayList<>();
+    for (boolean wholeSpan : new boolean[] { false, true })
+    {
+      try (Editor editor = new Editor(test, prefix))
+      {
+        editor.run.onResponse(response(finalJson(initial)));
+        if (!editor.text().equals(prefix + initial))
+          throw new AssertionError("Voice draft was not written");
+        int start = prefix.length();
+        int caret = start + initial.length();
+        String expected = prefix + (wholeSpan ? "改好新稿" : "请发新稿");
+        test.runOnMainSync(() -> {
+          if (wholeSpan) editor.view.getText().replace(start, caret, "改好新稿");
+          else editor.view.getText().replace(start + 2, start + 3, "新");
+          if (editor.view.getSelectionStart() != caret || editor.view.getSelectionEnd() != caret)
+            throw new AssertionError("Independent editor change moved the caret");
+        });
+        if (!expected.equals(editor.text())) throw new AssertionError("Independent editor change was not applied");
+        editor.run.onResponse(response(finalJson(later)));
+        editor.complete();
+        if (!expected.equals(editor.text())) violations.add("wholeSpan=" + wholeSpan + " text=[" + editor.text() + "]");
+      }
+    }
+    try (Editor editor = new Editor(test, prefix))
+    {
+      test.runOnMainSync(() -> editor.view.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.AllCaps() }));
+      editor.run.onResponse(response(finalJson("draft")));
+      if (!editor.text().equals(prefix + "DRAFT")) throw new AssertionError("Editor filter was not applied");
+      editor.run.onResponse(response(finalJson("draft revision")));
+      editor.complete();
+      if (!editor.text().equals(prefix + "DRAFT REVISION")) violations.add("Editor filter blocked the next result");
+    }
+    if (!violations.isEmpty()) throw new AssertionError("Voice overwrote a same-caret editor change: " + violations);
   }
 
   private static void checkEmptyTranscriptBeforeFirstWrite(Instrumentation test) throws Exception
