@@ -165,7 +165,60 @@ public final class DoubaoRegressionTest
     passed(test, "delayed or coalesced selection updates preserve speech retractions and user cursor moves");
     checkSelectionBeforeFirstTranscript(test);
     passed(test, "first transcripts respect moved and stable selections without accessing private context");
-    passed(test, "DOUBAO_REGRESSION_OK checks=20");
+    checkEmptyTranscriptBeforeFirstWrite(test);
+    passed(test, "empty first transcripts preserve the selection and do not claim the editor");
+    passed(test, "DOUBAO_REGRESSION_OK checks=21");
+  }
+
+  private static void checkEmptyTranscriptBeforeFirstWrite(Instrumentation test) throws Exception
+  {
+    String original = "标题：正文：尾巴";
+    String emptyWhole = "{\"results\":[{\"text\":\"\",\"is_interim\":true,\"index\":0},"
+        + "{\"text\":\"\",\"is_interim\":true,\"index\":1}]}";
+    String emptyFinal = "{\"results\":[{\"text\":\"\",\"nonstream_result\":true,\"index\":0}]}";
+    List<String> violations = new ArrayList<>();
+    for (boolean privateEditor : new boolean[] { false, true })
+    {
+      for (boolean finalResult : new boolean[] { false, true })
+      {
+        try (Editor editor = new Editor(test, original, 3, 5))
+        {
+          if (privateEditor) editor.usePrivateConnection();
+          if (finalResult) test.runOnMainSync(() -> editor.voice.toggle());
+          try (Transport transport = new Transport(editor.run))
+          {
+            transport.receive("", 20000000, "OK", finalResult ? emptyFinal : emptyWhole);
+          }
+          editor.complete();
+          int[] selection = new int[2];
+          test.runOnMainSync(() -> {
+            selection[0] = editor.view.getSelectionStart();
+            selection[1] = editor.view.getSelectionEnd();
+          });
+          String actual = editor.text();
+          if (!actual.equals(original) || selection[0] != 3 || selection[1] != 5)
+            violations.add("private=" + privateEditor + " final=" + finalResult
+                + " text=[" + actual + "] selection=" + Arrays.toString(selection));
+        }
+      }
+    }
+
+    for (boolean moved : new boolean[] { false, true })
+    {
+      try (Editor editor = new Editor(test, original, 3, 5))
+      {
+        editor.run.onResponse(response(emptyWhole));
+        if (!editor.text().equals(original) || !editor.voice.isActive())
+          violations.add("Empty interim changed the text or stopped recording");
+        if (moved) test.runOnMainSync(() -> editor.view.setSelection(0, 2));
+        editor.run.onResponse(response(finalJson("有效听写")));
+        editor.complete();
+        String expected = moved ? original : "标题：有效听写：尾巴";
+        String actual = editor.text();
+        if (!actual.equals(expected)) violations.add("moved=" + moved + " text=[" + actual + "]");
+      }
+    }
+    if (!violations.isEmpty()) throw new AssertionError("Empty first transcript: " + violations);
   }
 
   private static void checkSelectionBeforeFirstTranscript(Instrumentation test) throws Exception

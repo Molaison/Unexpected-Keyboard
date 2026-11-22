@@ -389,6 +389,8 @@ public final class DoubaoVoiceInput
     }
     String text = run.pendingTranscript;
     run.pendingTranscript = null;
+    // An empty result can retract our composition but must not replace the user's selection.
+    if (text.isEmpty() && !run.hasComposingText) return;
     boolean retracts = text.isEmpty() && run.hasComposingText && !run.lastWriteEmpty;
     run.lastWriteEmpty = text.isEmpty();
     boolean accepted = run.connection.setComposingText(text, 1);
