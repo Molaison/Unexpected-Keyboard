@@ -324,6 +324,7 @@ public class DoubaoProtocolTest
     config.deviceId = "123";
     config.context = "{\"before_context\":\"你好\"}";
     config.endSmoothWindowMs = 650;
+    config.retryServerCodes = java.util.Arrays.asList(40100000, 50700000);
 
     JsonObject extra = JsonParser.parseString(
         DoubaoProtocol.buildSessionPayload(config)).getAsJsonObject()
@@ -333,7 +334,7 @@ public class DoubaoProtocolTest
     assertEquals(650, extra.get("end_smooth_window_ms").getAsInt());
     assertTrue(extra.get("use_twopass_retry").getAsBoolean());
     assertTrue(extra.has("network_change"));
-    assertTrue(extra.has("retry_server_code"));
+    assertEquals("[40100000,50700000]", extra.getAsJsonArray("retry_server_code").toString());
     assertTrue(extra.has("s2a_send_commands"));
   }
 

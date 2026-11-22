@@ -423,7 +423,7 @@ public final class DoubaoRegressionTest
     constructor.setAccessible(true);
     Object store = constructor.newInstance(test.getTargetContext(), client);
     Method execute = credentialStore.getDeclaredMethod("executeJson", Request.class, String.class,
-        DoubaoAsrClient.CredentialRequests.class);
+        DoubaoAsrClient.CredentialRequests.class, long.class);
     execute.setAccessible(true);
     ExecutorService worker = Executors.newSingleThreadExecutor();
     DoubaoAsrClient.CredentialRequests abandoned = new DoubaoAsrClient.CredentialRequests();
@@ -460,7 +460,7 @@ public final class DoubaoRegressionTest
       DoubaoAsrClient.CredentialRequests requests) throws Exception
   {
     Request request = new Request.Builder().url("https://localhost" + path).build();
-    try { return execute.invoke(store, request, "test credentials", requests); }
+    try { return execute.invoke(store, request, "test credentials", requests, 0L); }
     catch (InvocationTargetException error)
     {
       if (error.getCause() instanceof IOException) throw (IOException)error.getCause();

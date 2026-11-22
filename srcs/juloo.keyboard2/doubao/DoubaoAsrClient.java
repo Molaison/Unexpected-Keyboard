@@ -15,6 +15,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Locale;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.TimeZone;
 import java.util.UUID;
@@ -458,6 +459,7 @@ public final class DoubaoAsrClient
       DoubaoProtocol.SessionConfig config = new DoubaoProtocol.SessionConfig();
       config.deviceId = credentials.deviceId;
       config.context = contextJson == null ? "" : contextJson;
+      config.retryServerCodes = credentials.retryServerCodes;
       send(DoubaoProtocol.buildStartSession(requestId, credentials.token, config));
       awaitControl(DoubaoProtocol.ResponseType.SESSION_STARTED,
           HANDSHAKE_TIMEOUT_MS);
@@ -706,16 +708,20 @@ public final class DoubaoAsrClient
     String openudid;
     String clientudid;
     String token;
+    List<Integer> retryServerCodes = Collections.emptyList();
   }
 
   private static final class CredentialStore
   {
     private static final String PREFS_NAME = "doubao_asr_credentials";
+    private static final String RETRY_CODES_KEY = "retry_server_codes";
+    private static final long LEGACY_SETTINGS_TIMEOUT_MS = 1500;
 
     private final Context context;
     private final OkHttpClient httpClient;
     private final SharedPreferences preferences;
     private final SecureRandom secureRandom = new SecureRandom();
+    private boolean attemptedLegacySettings;
 
     CredentialStore(Context context, OkHttpClient httpClient)
     {
@@ -745,7 +751,27 @@ public final class DoubaoAsrClient
         requestToken(credentials, requests);
         save(credentials);
       }
+      else if (!preferences.contains(RETRY_CODES_KEY) && !attemptedLegacySettings)
+      {
+        attemptedLegacySettings = true;
+        refreshCachedSettings(credentials, requests);
+      }
       return credentials;
+    }
+
+    private void refreshCachedSettings(Credentials credentials, CredentialRequests requests) throws IOException
+    {
+      try
+      {
+        requestToken(credentials, requests);
+      }
+      catch (IOException error)
+      {
+        requests.throwIfCancelled();
+        Log.w(TAG, "Could not refresh the settings for cached ASR credentials");
+        return;
+      }
+      save(credentials);
     }
 
     synchronized Credentials acquireFreshCredentials(CredentialRequests requests) throws IOException
@@ -780,6 +806,15 @@ public final class DoubaoAsrClient
       credentials.openudid = preferences.getString("openudid", "");
       credentials.clientudid = preferences.getString("clientudid", "");
       credentials.token = preferences.getString("token", "");
+      try
+      {
+        credentials.retryServerCodes = readRetryServerCodes(
+            JsonParser.parseString(preferences.getString(RETRY_CODES_KEY, "[]")));
+      }
+      catch (JsonParseException error)
+      {
+        Log.w(TAG, "Invalid cached ASR retry settings");
+      }
       return credentials;
     }
 
@@ -792,6 +827,7 @@ public final class DoubaoAsrClient
         .putString("openudid", credentials.openudid)
         .putString("clientudid", credentials.clientudid)
         .putString("token", credentials.token)
+        .putString(RETRY_CODES_KEY, credentials.retryServerCodes.toString())
         .commit();
       if (!committed)
         throw new IOException("Failed to persist Doubao ASR credentials");
@@ -828,7 +864,7 @@ public final class DoubaoAsrClient
         .header("User-Agent", userAgent())
         .post(RequestBody.create(body.toString(), JSON))
         .build();
-      JsonObject result = executeJson(request, "device registration", requests);
+      JsonObject result = executeJson(request, "device registration", requests, 0);
       credentials.deviceId = requiredId(result, "device_id");
       credentials.installId = requiredId(result, "install_id");
       if (credentials.deviceId.equals("0"))
@@ -850,16 +886,36 @@ public final class DoubaoAsrClient
         .post(RequestBody.create(body, null))
         .build();
 
-      JsonObject root = executeJson(request, "ASR settings", requests);
-      credentials.token = requiredString(
-          requiredJsonObject(
-              requiredJsonObject(
-                  requiredJsonObject(root, "data"), "settings"),
-              "asr_config"),
-          "app_key");
-      if (credentials.token.isEmpty())
+      long timeoutMs = credentials.token.isEmpty() ? 0 : LEGACY_SETTINGS_TIMEOUT_MS;
+      JsonObject root = executeJson(request, "ASR settings", requests, timeoutMs);
+      JsonObject config = requiredJsonObject(
+          requiredJsonObject(requiredJsonObject(root, "data"), "settings"), "asr_config");
+      String token = requiredString(config, "app_key");
+      if (token.isEmpty())
         throw new IOException("ASR settings returned an empty app_key");
+      credentials.retryServerCodes = readRetryServerCodes(config.get("retry_server_code"));
+      credentials.token = token;
       Log.i(TAG, "token_received");
+    }
+
+    private static List<Integer> readRetryServerCodes(JsonElement field)
+    {
+      if (field == null || !field.isJsonArray()) return Collections.emptyList();
+      List<Integer> codes = new ArrayList<>();
+      for (JsonElement value : field.getAsJsonArray())
+      {
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) continue;
+        try
+        {
+          int code = value.getAsBigDecimal().intValueExact();
+          if (code > 0) codes.add(code);
+        }
+        catch (ArithmeticException | NumberFormatException error)
+        {
+          // Ignore a numeric field that cannot represent an integer response code.
+        }
+      }
+      return Collections.unmodifiableList(codes);
     }
 
     private HttpUrl.Builder commonUrl(String baseUrl, Credentials credentials,
@@ -878,10 +934,11 @@ public final class DoubaoAsrClient
         .addQueryParameter("version_name", VERSION_NAME);
     }
 
-    private JsonObject executeJson(Request request, String operation, CredentialRequests requests)
-        throws IOException
+    private JsonObject executeJson(Request request, String operation, CredentialRequests requests,
+        long timeoutMs) throws IOException
     {
       Call call = httpClient.newCall(request);
+      if (timeoutMs > 0) call.timeout().timeout(timeoutMs, TimeUnit.MILLISECONDS);
       requests.inFlight = call;
       try
       {
