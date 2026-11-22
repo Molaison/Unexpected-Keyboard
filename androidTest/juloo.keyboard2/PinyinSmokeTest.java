@@ -215,7 +215,7 @@ public final class PinyinSmokeTest extends Instrumentation
         type("shi");
         String selected = selectScrolledCandidate(openExpandedPinyinCandidates(), 8);
         passed("scrolling to candidate 9 and tapping it commits " + selected);
-        checkFixedCandidatePaging(true);
+        checkCandidatePaging(true);
         result.putString("stream", "PINYIN_PAGING_SELECTION_OK checks=" + checks + "\n");
         finish(Activity.RESULT_OK, result);
         return;
@@ -348,7 +348,7 @@ public final class PinyinSmokeTest extends Instrumentation
       text(activity.plain, " nihao");
       passed("moving the cursor preserves text and ends conversion");
 
-      checkFixedCandidatePaging(false);
+      checkCandidatePaging(false);
 
       clear();
       type("nihao");
@@ -656,9 +656,14 @@ public final class PinyinSmokeTest extends Instrumentation
     });
     int bottom = list.bottom - list.height() / 8;
     int top = list.top + list.height() / 8;
-    swipe(list.centerX(), bottom, list.centerX(), top);
+    swipe(list.centerX(), bottom, list.centerX(), top, true);
     await("expanded list scrolls", () -> expanded.getScrollY() > 0);
-    swipe(list.centerX(), top, list.centerX(), bottom);
+    awaitCandidateScrollSettled(expanded);
+    for (int i = 0; i < 3 && onMain(expanded::getScrollY) > 0; i++)
+    {
+      swipe(list.centerX(), top, list.centerX(), bottom, true);
+      awaitCandidateScrollSettled(expanded);
+    }
     await("expanded list returns to its first row", () -> expanded.getScrollY() == 0);
     tap(onMain(() -> findText(expanded, "你好")));
     text(activity.plain, "你好");
@@ -671,7 +676,7 @@ public final class PinyinSmokeTest extends Instrumentation
       throw new AssertionError("Chinese candidates visible in a password editor at large font scale");
     focus(activity.plain);
     await("large-font candidate panel returns", () -> candidatesView().isShown());
-    checkFixedCandidatePaging(false);
+    checkCandidatePaging(false);
 
     clear();
     type("nihao");
@@ -731,6 +736,7 @@ public final class PinyinSmokeTest extends Instrumentation
     ViewGroup expanded = openExpandedPinyinCandidates();
     await("expanded row lists 你好", () -> findText(expanded, "你好") != null);
     screenshot("pinyin-toolbar-expanded.png");
+    onMain(() -> { assertNoCandidateTools(panel); return null; });
     chooseCandidateExpansion(R.string.ux_candidate_collapse);
     await("candidate row returns to the horizontal list",
         () -> ((View)field(panel, "candidateScroll")).isShown()
@@ -1084,7 +1090,7 @@ public final class PinyinSmokeTest extends Instrumentation
     return center >= bounds.top + margin && center < bounds.bottom - margin;
   }
 
-  private void checkFixedCandidatePaging(boolean selectNewCandidate) throws Exception
+  private void checkCandidatePaging(boolean selectNewCandidate) throws Exception
   {
     clear();
     type("shi");
@@ -1092,28 +1098,12 @@ public final class PinyinSmokeTest extends Instrumentation
       ? onMain(() -> editorVisibility(candidatesView())) : null;
     ViewGroup expanded = openExpandedPinyinCandidates();
     int beforeMore = onMain(() -> expandedCandidateCount(expanded));
-    View loadMore = onMain(() -> {
-      View panel = candidatesView();
-      String title = panel.getContext().getString(R.string.pinyin_more_candidates);
-      View described = findDescription(panel, title);
-      return described == null ? findText(panel, title) : described;
-    });
-    Rect pagingBounds = onMain(() -> {
-      Rect bounds = new Rect();
-      if (loadMore == null || !loadMore.getGlobalVisibleRect(bounds)
-          || bounds.height() != loadMore.getHeight() || bounds.width() != loadMore.getWidth())
-        throw new AssertionError("More candidates must be fully visible without scrolling");
-      if (((TextView)loadMore).getLayout().getEllipsisCount(0) > 0)
-        throw new AssertionError("The paging action label is truncated");
-      return bounds;
-    });
-    String pagingLabel = onMain(() -> ((TextView)loadMore).getText().toString());
-    tap(loadMore);
+    View panel = onMain(this::candidatesView);
+    onMain(() -> { assertNoCandidateTools(panel); return null; });
+    chooseCandidateExpansion(R.string.pinyin_more_candidates);
     await("additional expanded candidate cells", () -> expandedCandidateCount(expanded) > beforeMore);
     onMain(() -> {
-      Rect bounds = new Rect();
-      if (loadMore.isShown() && (!loadMore.getGlobalVisibleRect(bounds) || !pagingBounds.equals(bounds)))
-        throw new AssertionError("Loading a page moved the paging control");
+      assertNoCandidateTools(panel);
       if (!activity.plain.hasFocus()) throw new AssertionError("Paging stole the editor focus");
       if (collapsed != null) checkEditorAboveCandidates(candidatesView(), collapsed);
       return null;
@@ -1121,13 +1111,13 @@ public final class PinyinSmokeTest extends Instrumentation
     if (selectNewCandidate)
     {
       String selected = selectScrolledCandidate(expanded, beforeMore);
-      passed("paging (" + pagingLabel + ") and tapping candidate " + (beforeMore + 1) + " commits " + selected);
+      passed("paging from the preedit menu and tapping candidate " + (beforeMore + 1) + " commits " + selected);
     }
     else
     {
       key("enter");
       text(activity.plain, "shi");
-      passed("fixed paging control (" + pagingLabel + ") loads additional candidates and preserves editor focus");
+      passed("paging from the preedit menu loads additional candidates and preserves editor focus");
     }
   }
 

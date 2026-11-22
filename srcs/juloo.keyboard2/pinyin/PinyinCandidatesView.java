@@ -60,8 +60,6 @@ public final class PinyinCandidatesView extends LinearLayout
   private final LinearLayout items;
   private final ScrollView expandedScroll;
   private final LinearLayout expandedItems;
-  private final TextView loadMore;
-  private final String loadMoreLabel;
   private int candidateRowHeight;
   private CandidatesView latinCandidates;
   private boolean chinese;
@@ -127,16 +125,8 @@ public final class PinyinCandidatesView extends LinearLayout
     expandedItems = new LinearLayout(context);
     expandedItems.setOrientation(VERTICAL);
     expandedScroll.addView(expandedItems);
-    loadMoreLabel = context.getString(R.string.pinyin_more_candidates);
-    loadMore = ui.button(loadMoreLabel, () -> {
-      if (listener != null) listener.onMoreCandidates();
-    });
-    loadMore.setContentDescription(loadMoreLabel);
-    loadMore.setSingleLine(true);
     expandedScroll.setVisibility(GONE);
-    loadMore.setVisibility(GONE);
     row.addView(expandedScroll, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
-    row.addView(loadMore, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
     candidateRow = new FrameLayout(context);
     candidateRow.addView(row, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
     voiceStatus = ui.label("", 15, true);
@@ -172,6 +162,9 @@ public final class PinyinCandidatesView extends LinearLayout
     int expansionChoice = canToggle ? labels.size() : -1;
     if (canToggle)
       labels.add(getContext().getString(expanded ? R.string.ux_candidate_collapse : R.string.ux_more_candidates));
+    int pagingChoice = wasChinese && expanded && hasMore ? labels.size() : -1;
+    if (pagingChoice >= 0)
+      labels.add(getContext().getString(R.string.pinyin_more_candidates));
     int spellingStart = labels.size();
     labels.addAll(choices);
     if (idle) labels.add(getContext().getString(R.string.ux_clipboard));
@@ -195,7 +188,12 @@ public final class PinyinCandidatesView extends LinearLayout
           || wasNineKey != nineKey) return;
       if (choice == expansionChoice)
       {
-        setExpanded(!expanded);
+        if (expanded || hasMore || previousCandidates.size() > 1) setExpanded(!expanded);
+        return;
+      }
+      if (choice == pagingChoice)
+      {
+        if (expanded && hasMore) listener.onMoreCandidates();
         return;
       }
       expanded = false;
@@ -402,7 +400,6 @@ public final class PinyinCandidatesView extends LinearLayout
     // and typing keys in place. Hide invalid candidates in the input callback.
     candidateScroll.setVisibility(chinese && !expanded ? VISIBLE : GONE);
     expandedScroll.setVisibility(expanded ? VISIBLE : GONE);
-    loadMore.setVisibility(expanded && hasMore ? VISIBLE : GONE);
     expandedWidth = -1;
     requestLayout();
   }
@@ -424,7 +421,7 @@ public final class PinyinCandidatesView extends LinearLayout
     if (config.orientation != Configuration.ORIENTATION_LANDSCAPE || config.screenHeightDp > 480)
       return 0;
     int headerWidth = Math.max(width / 3, paddedTextWidth(preedit, "nihao"));
-    // Keep space for candidate text and the paging action.
+    // Keep space for candidate text.
     return width - headerWidth >= 4 * ui.dp(CONTROL_DP) ? headerWidth : 0;
   }
 
@@ -461,25 +458,8 @@ public final class PinyinCandidatesView extends LinearLayout
     int availableWidth = availableWidth(width);
     int compactWidth = compactHeaderWidth(availableWidth);
     configureLayout(compactWidth);
-    if (expanded)
-    {
-      int control = ui.dp(CONTROL_DP);
-      int available = availableWidth - compactWidth;
-      if (hasMore)
-      {
-        int labelWidth = paddedTextWidth(loadMore, loadMoreLabel);
-        // Keep space for the list. The accessible label stays the same when
-        // the visual action switches from its full text to a plus sign.
-        boolean showLabel = labelWidth <= available / 2;
-        String label = showLabel ? loadMoreLabel : "+";
-        if (!TextUtils.equals(label, loadMore.getText())) loadMore.setText(label);
-        int pageWidth = showLabel ? labelWidth : control;
-        loadMore.getLayoutParams().width = pageWidth;
-        available -= pageWidth;
-      }
-      available = Math.max(1, available);
-      if (expandedWidth != available) renderExpandedItems(available);
-    }
+    int candidateWidth = Math.max(1, availableWidth - compactWidth);
+    if (expanded && expandedWidth != candidateWidth) renderExpandedItems(candidateWidth);
     super.onMeasure(widthSpec, heightSpec);
   }
 
@@ -504,8 +484,7 @@ public final class PinyinCandidatesView extends LinearLayout
       }
       if (need > available)
       {
-        // Give a long phrase its own row and let it scroll sideways without
-        // taking the paging or collapse controls out of view.
+        // Give a long phrase its own row and let it scroll sideways.
         HorizontalScrollView overflow = new HorizontalScrollView(getContext());
         overflow.setScrollbarFadingEnabled(false);
         overflow.addView(v, new ViewGroup.LayoutParams(need, LayoutParams.MATCH_PARENT));
