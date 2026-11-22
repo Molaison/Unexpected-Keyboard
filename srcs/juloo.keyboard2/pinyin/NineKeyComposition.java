@@ -554,6 +554,7 @@ public final class NineKeyComposition implements ChineseComposition
     int start = SEQUENCE_CUE_KEYS.length();
     int joinLength = SEQUENCE_JOIN_KEYS.length();
     int limit = Math.min(raw.length() - joinLength - 4, start + SEQUENCE_WORD_KEYS);
+    Map<String, Candidate> connectorFallback = new LinkedHashMap<>();
     for (int cut = raw.indexOf(SEQUENCE_JOIN_KEYS, start + 4); cut >= 0 && cut <= limit;
          cut = raw.indexOf(SEQUENCE_JOIN_KEYS, cut + 1))
     {
@@ -583,25 +584,37 @@ public final class NineKeyComposition implements ChineseComposition
         break;
       }
       if (alternatives.isEmpty())
+      {
         for (NineKeyLexicon.Entry word : lexicon.lookupWords(raw.substring(tail), SEQUENCE_ENDINGS))
         {
           if (alternatives.size() == 2 || candidates.size() + alternatives.size() == MAX_CANDIDATES) break;
           String display = prefix + " zai " + word.display;
-          // Both a complete word and the native sequential reading must agree at this cut.
-          if (!decodeCompleteDisplay(display).startsWith(clause)
-              || !decodeCompleteDisplay(word.display).equals(word.text)) continue;
+          String decoded = decodeCompleteDisplay(display);
+          boolean sequential = decoded.startsWith(clause);
+          if (!sequential && (connectorFallback.size() == 2
+              || candidates.size() + connectorFallback.size() == MAX_CANDIDATES
+              || !decoded.equals(firstClause + "在" + word.text))) continue;
+          if (!decodeCompleteDisplay(word.display).equals(word.text)) continue;
           Candidate candidate = new Candidate(clause + word.text,
-              new Reading(display.replace(" ", "")), -1, score);
+              new Reading(display.replace(" ", "")), -1,
+              sequential || connectorFallback.isEmpty() ? score : Math.nextUp(score));
           candidate.display = display;
-          alternatives.put(candidate.text, candidate);
-          score = Math.nextUp(score);
+          if (sequential)
+          {
+            alternatives.put(candidate.text, candidate);
+            score = Math.nextUp(score);
+          }
+          else connectorFallback.put(candidate.text, candidate);
         }
+      }
       if (!alternatives.isEmpty())
       {
         mergeWordEndings(alternatives);
         return;
       }
     }
+    // The homophonic connector can provide a candidate after exact sequential paths are exhausted.
+    if (!connectorFallback.isEmpty()) mergeWordEndings(connectorFallback);
   }
 
   private boolean hasSequentialEnding(String ending)
