@@ -23,6 +23,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int BEAM = 48;
   private static final int CANDIDATE_PATHS = 24;
   private static final int ALTERNATE_PATHS = 4;
+  private static final int SENTENCE_ALTERNATE_PATHS = 8;
   private static final int ENDING_PREFIXES = 12;
   private static final int ENDING_READINGS = 2;
   private static final int ENDING_WORDS = 8;
@@ -401,14 +402,17 @@ public final class NineKeyComposition implements ChineseComposition
       for (Path path : paths) if (seenReadings.add(path.spelling)) rescued.add(path);
       paths = rescued;
       Map<String, Candidate> unique = new LinkedHashMap<>();
-      List<Reading> alternatives = new ArrayList<>(ALTERNATE_PATHS);
-      List<Reading> moreSplits = new ArrayList<>(ALTERNATE_PATHS);
+      boolean automaticSentence = lexicon != null && direct.isEmpty() && remaining.length() >= 12
+          && fixedEnd == 0 && constraint.isEmpty() && remaining.indexOf('\'') < 0;
+      int alternateLimit = automaticSentence ? SENTENCE_ALTERNATE_PATHS : ALTERNATE_PATHS;
+      List<Reading> alternatives = new ArrayList<>(alternateLimit);
+      List<Reading> moreSplits = new ArrayList<>(alternateLimit);
       int pathCount = 0;
       for (Path path : paths)
       {
         if (pathCount++ >= CANDIDATE_PATHS) break;
         int[] starts = addNativeCandidates(unique, new Reading(path.spelling), remaining.length(), false);
-        if (alternatives.size() < ALTERNATE_PATHS && remaining.length() < PinyinDecoder.MAX_PINYIN_LENGTH)
+        if (alternatives.size() < alternateLimit && remaining.length() < PinyinDecoder.MAX_PINYIN_LENGTH)
         {
           String decoded = formatSpelling(path.spelling, starts);
           boolean firstSplit = true;
@@ -423,13 +427,13 @@ public final class NineKeyComposition implements ChineseComposition
               alternatives.add(split);
               firstSplit = false;
             }
-            else if (moreSplits.size() < ALTERNATE_PATHS)
+            else if (moreSplits.size() < alternateLimit)
               moreSplits.add(split);
-            if (alternatives.size() >= ALTERNATE_PATHS) break;
+            if (alternatives.size() >= alternateLimit) break;
           }
         }
       }
-      int spare = ALTERNATE_PATHS - alternatives.size();
+      int spare = alternateLimit - alternatives.size();
       alternatives.addAll(moreSplits.subList(0, Math.min(spare, moreSplits.size())));
       for (Reading reading : alternatives) addNativeCandidates(unique, reading, remaining.length(), false);
       for (NineKeyLexicon.Entry e : direct)
@@ -448,9 +452,7 @@ public final class NineKeyComposition implements ChineseComposition
           && constraint.isEmpty() && !unique.isEmpty())
         endingFallbacks = addWordEndings(remaining, unique, seenReadings);
       int beforeSequences = candidates.size();
-      if (lexicon != null && direct.isEmpty() && remaining.length() >= 12
-          && candidates.size() < MAX_CANDIDATES
-          && fixedEnd == 0 && constraint.isEmpty() && remaining.indexOf('\'') < 0)
+      if (automaticSentence && candidates.size() < MAX_CANDIDATES)
       {
         addSequentialSentence(remaining, unique);
         if (remaining.startsWith(SEQUENCE_CUE_KEYS) && !candidates.isEmpty()
