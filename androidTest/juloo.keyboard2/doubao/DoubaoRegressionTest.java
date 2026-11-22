@@ -141,6 +141,8 @@ public final class DoubaoRegressionTest
 
     checkEditor(test);
     passed(test, "sentence boundaries keep recording; final revisions and subsequent utterances preserve editor text");
+    checkIndexlessBoundaries(test);
+    passed(test, "indexless sentence boundaries preserve earlier sentences and retain indexed fallback");
     checkWholeTranscript(test);
     passed(test, "stream, second pass, and final pass replace complete text without appending result fragments");
     checkIndexedUpdatesAfterSnapshot(test);
@@ -174,7 +176,7 @@ public final class DoubaoRegressionTest
       checkEditedVoiceTextAtSameCaret(test);
       passed(test, "a later voice result preserves editor changes made without moving the caret");
     }
-    passed(test, "DOUBAO_REGRESSION_OK checks=" + (android.os.Build.VERSION.SDK_INT >= 31 ? 23 : 21));
+    passed(test, "DOUBAO_REGRESSION_OK checks=" + (android.os.Build.VERSION.SDK_INT >= 31 ? 24 : 22));
   }
 
   private static void checkCaretOnlyVoiceEditor(Instrumentation test) throws Exception
@@ -959,6 +961,36 @@ public final class DoubaoRegressionTest
       cancelled.onResponse(response(finalJson("迟到结果")));
       if (!editor.text().equals("前缀你好世界。第二句。手动"))
         throw new AssertionError("Cancelled voice changed the editor: " + editor.text());
+    }
+  }
+
+  private static void checkIndexlessBoundaries(Instrumentation test) throws Exception
+  {
+    try (Editor editor = new Editor(test, "前缀："))
+    {
+      DoubaoVoiceInput.SessionRun run = editor.run;
+      run.onResponse(response("{\"results\":[{\"text\":\"第一句\",\"is_interim\":true}]}"));
+      run.onResponse(response("{\"results\":[{\"text\":\"第一句。\",\"is_vad_finished\":true}]}"));
+      if (!editor.text().equals("前缀：第一句。") || run.stopRequested)
+        throw new AssertionError("An unindexed utterance boundary stopped or failed to update the editor");
+      run.onResponse(response("{\"results\":[{\"text\":\"第二句话\",\"is_interim\":true}]}"));
+      test.runOnMainSync(() -> editor.voice.toggle());
+      run.onResponse(response("{\"results\":[{\"text\":\"第二句。\",\"is_vad_finished\":true}]}"));
+      editor.complete();
+      if (!editor.text().equals("前缀：第一句。第二句。"))
+        throw new AssertionError("An unindexed utterance replaced the preceding sentence: " + editor.text());
+    }
+
+    try (Editor editor = new Editor(test, ""))
+    {
+      DoubaoVoiceInput.SessionRun run = editor.run;
+      run.onResponse(response(finalJson("第一句。", 0)));
+      run.onResponse(response(finalJson("第二句话。", 1)));
+      run.onResponse(response("{\"results\":[{\"text\":\"第二句。\",\"is_vad_finished\":true}]}"));
+      run.onResponse(response("{\"results\":[{\"text\":\"第二句修订。\",\"is_vad_finished\":true}]}"));
+      editor.complete();
+      if (!editor.text().equals("第一句。第二句修订。"))
+        throw new AssertionError("An indexless revision of an indexed result opened a new sentence: " + editor.text());
     }
   }
 

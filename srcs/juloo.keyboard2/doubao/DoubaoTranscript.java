@@ -10,6 +10,8 @@ final class DoubaoTranscript
   private final TreeMap<Integer, String> utterances = new TreeMap<>();
   private final TreeMap<Integer, Span> spans = new TreeMap<>();
   private int currentIndex;
+  private boolean hasExplicitIndex;
+  private boolean endedImplicitUtterance;
   private int lastFragment;
   private String snapshot;
   private boolean sealed;
@@ -34,7 +36,13 @@ final class DoubaoTranscript
     if (snapshot != null)
       return updateFragment(response.utteranceIndex, response.text, response.stable);
 
-    int index = response.utteranceIndex >= 0 ? response.utteranceIndex : currentIndex;
+    int index = response.utteranceIndex;
+    if (index >= 0)
+      hasExplicitIndex = true;
+    else
+      index = endedImplicitUtterance ? currentIndex + 1 : currentIndex;
+    // The ordinary indexless stream starts a new sentence after a VAD boundary.
+    endedImplicitUtterance = !hasExplicitIndex && response.vadFinished;
     currentIndex = Math.max(currentIndex, index);
     utterances.put(index, response.text);
     StringBuilder text = new StringBuilder();
@@ -54,6 +62,8 @@ final class DoubaoTranscript
       // Clear the previous indices so a later recognition can start again.
       snapshot = null;
       currentIndex = 0;
+      hasExplicitIndex = false;
+      endedImplicitUtterance = false;
       return "";
     }
     int cursor = 0;
