@@ -23,6 +23,7 @@ import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.core.graphics.Insets;
@@ -744,7 +745,9 @@ public final class PinyinSmokeTest extends Instrumentation
     })) throw new AssertionError("Missing accessible options on the preedit");
     longPressPreedit(preedit);
     screenshot("pinyin-toolbar-menu.png");
-    int menuWindowId = pinyinMenuItem("ming").getWindowId();
+    String fullLayoutLabel = panel.getContext().getString(R.string.ux_candidate_layout_full);
+    int menuWindowId = pinyinMenuItem(fullLayoutLabel).getWindowId();
+    checkReadingMenuBounds(panel, preedit);
     if (!getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
       throw new AssertionError("Could not send system Back");
     waitForPinyinMenuDismissal(menuWindowId);
@@ -764,19 +767,20 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     nineKeys("6464");
     longPressPreedit(preedit);
-    choosePinyinMenuItem("ming");
-    text(activity.plain, "ming");
+    choosePinyinMenuItem("nini");
+    text(activity.plain, "nini");
+    passed("scrolling the compact menu reaches the reading beyond its first four rows");
     onMain(() -> { activity.plain.setSelection(0); return null; });
     await("moving the cursor ends the selected spelling", () ->
         !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing());
     key("space");
-    text(activity.plain, " ming");
+    text(activity.plain, " nini");
     passed("moving the cursor after the picker leaves the original spelling alone");
 
     clear();
     nineKeys("6464");
     longPressPreedit(preedit);
-    choosePinyinMenuItem(panel.getContext().getString(R.string.ux_candidate_layout_full));
+    choosePinyinMenuItem(fullLayoutLabel);
     await("toolbar returns to 26-key", () -> !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
     if (!onMain(() -> activity.plain.hasFocus())) throw new AssertionError("Layout switch stole editor focus");
     passed("both layout switch directions work while preserving the editor focus");
@@ -794,6 +798,33 @@ public final class PinyinSmokeTest extends Instrumentation
     injectTouch(down, MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY());
     SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 100);
     injectTouch(down, MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY());
+  }
+
+  private void checkReadingMenuBounds(View panel, View preedit) throws Exception
+  {
+    String geometry = onMain(() -> {
+      android.widget.ListPopupWindow popup = (android.widget.ListPopupWindow)field(panel, "readingMenu");
+      android.widget.ListView list = popup.getListView();
+      Rect menuBounds = visibleTouchBounds(list);
+      Rect preeditBounds = visibleTouchBounds(preedit);
+      int visible = list.getChildCount();
+      if (visible > 4 || visible == 0
+          || (menuBounds.bottom > preeditBounds.top && menuBounds.top < preeditBounds.top))
+        throw new AssertionError("Reading menu straddles the keyboard edge or has too many visible rows: "
+            + menuBounds + " above " + preeditBounds + ", visible rows=" + visible);
+      Rect frame = new Rect();
+      preedit.getWindowVisibleDisplayFrame(frame);
+      int above = preeditBounds.top - frame.top;
+      int firstTwoRows = list.getChildAt(0).getHeight()
+          + (visible > 1 ? list.getChildAt(1).getHeight() : 0);
+      boolean openAbove = menuBounds.bottom <= preeditBounds.top;
+      if (openAbove != (above >= firstTwoRows))
+        throw new AssertionError("Reading menu was placed on the wrong side of the keyboard: "
+            + menuBounds + ", space above=" + above + ", first rows=" + firstTwoRows);
+      return "popup=" + menuBounds + ", preedit=" + preeditBounds + ", visible rows=" + visible
+          + ", opens above=" + openAbove;
+    });
+    passed("the reading menu is compact and stays at the keyboard edge; " + geometry);
   }
 
   private void checkEnglishCandidateTools() throws Exception
@@ -1574,12 +1605,48 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void choosePinyinMenuItem(String label) throws Exception
   {
+    scrollReadingMenuTo(label);
     AccessibilityNodeInfo option = pinyinMenuItem(label);
     Rect bounds = new Rect();
     option.getBoundsInScreen(bounds);
     if (bounds.isEmpty()) throw new AssertionError("The menu choice is not visible: " + label);
     touch(bounds.exactCenterX(), bounds.exactCenterY());
     waitForPinyinMenuDismissal(option.getWindowId());
+  }
+
+  private void scrollReadingMenuTo(String label) throws Exception
+  {
+    ListView list = onMain(() -> {
+      android.widget.ListPopupWindow popup =
+          (android.widget.ListPopupWindow)field(candidatesView(), "readingMenu");
+      if (popup == null || !popup.isShowing()) throw new AssertionError("The reading menu is closed");
+      return popup.getListView();
+    });
+    int target = onMain(() -> {
+      for (int i = 0; i < list.getCount(); i++)
+        if (label.equals(list.getItemAtPosition(i))) return i;
+      throw new AssertionError("The reading menu does not contain " + label);
+    });
+    for (int attempt = 0; attempt < 16; attempt++)
+    {
+      int direction = onMain(() -> {
+        int first = list.getFirstVisiblePosition();
+        if (target < first) return -1;
+        View item = list.getChildAt(target - first);
+        if (item == null) return 1;
+        int center = item.getTop() + item.getHeight() / 2;
+        if (center < 0) return -1;
+        return center >= list.getHeight() ? 1 : 0;
+      });
+      if (direction == 0) return;
+      Rect bounds = onMain(() -> visibleTouchBounds(list));
+      int inset = bounds.height() / 8;
+      int top = bounds.top + inset;
+      int bottom = bounds.bottom - inset;
+      swipe(bounds.centerX(), direction > 0 ? bottom : top,
+          bounds.centerX(), direction > 0 ? top : bottom, true);
+    }
+    throw new AssertionError("Cannot scroll to reading " + label);
   }
 
   private AccessibilityNodeInfo pinyinMenuItem(String label) throws Exception

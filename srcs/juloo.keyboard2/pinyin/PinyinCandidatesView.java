@@ -3,7 +3,9 @@ package juloo.keyboard2.pinyin;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.PorterDuff;
+import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.text.TextUtils;
 import android.util.AttributeSet;
@@ -35,6 +37,7 @@ public final class PinyinCandidatesView extends LinearLayout
 {
   private static final int CANDIDATE_TEXT_SP = 20;
   private static final int CONTROL_DP = 48;
+  private static final int READING_MENU_ROWS = 4;
 
   public interface Listener
   {
@@ -184,7 +187,9 @@ public final class PinyinCandidatesView extends LinearLayout
     // Keep the editor's input focus while the user chooses a reading.
     menu.setModal(false);
     menu.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
-    menu.setAdapter(new ArrayAdapter<>(getContext(), android.R.layout.simple_list_item_1, labels));
+    ArrayAdapter<String> adapter = new ArrayAdapter<>(getContext(), android.R.layout.simple_list_item_1, labels);
+    menu.setAdapter(adapter);
+    sizeReadingMenu(menu, adapter);
     Runnable unregisterBack = Build.VERSION.SDK_INT >= 33
         ? MenuBackCallback.register(preedit, menu) : () -> {};
     menu.setOnDismissListener(() -> {
@@ -203,6 +208,39 @@ public final class PinyinCandidatesView extends LinearLayout
       }
     });
     menu.show();
+  }
+
+  private void sizeReadingMenu(ListPopupWindow menu, ArrayAdapter<String> adapter)
+  {
+    Rect frame = new Rect();
+    preedit.getWindowVisibleDisplayFrame(frame);
+    int[] anchor = new int[2];
+    preedit.getLocationOnScreen(anchor);
+    int spaceAbove = anchor[1] - frame.top;
+
+    Rect padding = new Rect();
+    Drawable background = menu.getBackground();
+    if (background != null) background.getPadding(padding);
+    int itemWidth = Math.max(0, menu.getWidth() - padding.left - padding.right);
+    int widthSpec = MeasureSpec.makeMeasureSpec(itemWidth, MeasureSpec.EXACTLY);
+    int heightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+    int menuHeight = padding.top + padding.bottom;
+    int rowCount = Math.min(READING_MENU_ROWS, adapter.getCount());
+    int usableHeight = menuHeight;
+    View item = null;
+    for (int i = 0; i < rowCount; i++)
+    {
+      item = adapter.getView(i, item, this);
+      item.measure(widthSpec, heightSpec);
+      menuHeight += item.getMeasuredHeight();
+      if (i < 2) usableHeight = menuHeight;
+    }
+    // Leave the editor visible when even the first two rows cannot fit above.
+    boolean openAbove = spaceAbove >= usableHeight;
+    int height = openAbove ? Math.min(spaceAbove, menuHeight) : menuHeight;
+    menu.setHeight(height);
+    // The platform positions a dropdown from the bottom of its anchor.
+    menu.setVerticalOffset(-preedit.getHeight() - (openAbove ? height : 0));
   }
 
   public boolean dismissReadingMenu()
