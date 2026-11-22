@@ -404,9 +404,9 @@ public final class PinyinSmokeTest extends Instrumentation
     focus(activity.plain); clear(); chinese(true); nineKey(false);
     screenshot("keyboard-idle.png");
     type("nihao"); screenshot("keyboard-light.png");
-    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    openExpandedPinyinCandidates();
     screenshot("candidates-expanded.png");
-    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    chooseCandidateExpansion(R.string.ux_candidate_collapse);
     key("space"); text(activity.plain, "你好");
     clear(); nineKey(true); nineKeys("64426"); screenshot("nine-key-light.png");
     onMain(() -> { prefs.edit().putString("theme", "soft_dark").apply(); return null; });
@@ -503,7 +503,9 @@ public final class PinyinSmokeTest extends Instrumentation
       panel.setState(true, "ni", java.util.Arrays.asList("足够长的候选词组用来验证换行", "你好", "你知道"), false);
       panel.measure(View.MeasureSpec.makeMeasureSpec(ui.dp(320), View.MeasureSpec.EXACTLY), natural);
       panel.layout(0, 0, panel.getMeasuredWidth(), panel.getMeasuredHeight());
-      ((View)field(panel, "more")).performClick();
+      java.lang.reflect.Method setExpanded = PinyinCandidatesView.class.getDeclaredMethod("setExpanded", boolean.class);
+      setExpanded.setAccessible(true);
+      setExpanded.invoke(panel, true);
       panel.measure(narrow, natural);
       panel.layout(0, 0, width, panel.getMeasuredHeight());
       ViewGroup lines = (ViewGroup)field(panel, "expandedItems");
@@ -587,7 +589,7 @@ public final class PinyinSmokeTest extends Instrumentation
         throw new AssertionError("Typing moved the landscape keyboard. " + geometry);
       passed("composing line is visible above the keyboard. " + geometry);
 
-      tap(onMain(() -> (View)field(panel, "more")));
+      openExpandedPinyinCandidates();
       View expanded = onMain(() -> (View)field(panel, "expandedScroll"));
       await("landscape expanded candidate", () -> expanded.isShown() && findText(expanded, "你好") != null);
       if (Math.abs(onMain(() -> keyPoint("n", false)[1]) - keyY) > 1f)
@@ -639,7 +641,7 @@ public final class PinyinSmokeTest extends Instrumentation
     EditorVisibility collapsed = onMain(() -> editorVisibility(panel));
     screenshot("large-pinyin-inline.png");
 
-    tap(onMain(() -> (View)field(panel, "more")));
+    openExpandedPinyinCandidates();
     View expanded = onMain(() -> (View)field(panel, "expandedScroll"));
     await("large-font expanded candidate", () -> expanded.isShown() && findText(expanded, "你好") != null);
     screenshot("large-pinyin-expanded.png");
@@ -674,7 +676,7 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     type("nihao");
     View current = onMain(this::candidatesView);
-    tap(onMain(() -> (View)field(current, "more")));
+    openExpandedPinyinCandidates();
     View oldResults = onMain(() -> (View)field(current, "expandedScroll"));
     await("expanded list before editing composition", () -> oldResults.isShown());
     onMain(() -> {
@@ -691,7 +693,8 @@ public final class PinyinSmokeTest extends Instrumentation
   private void assertNoCandidateTools(View panel)
   {
     int[] labels = { R.string.ux_clipboard, R.string.ux_candidate_switch_full,
-        R.string.ux_candidate_switch_nine };
+        R.string.ux_candidate_switch_nine, R.string.ux_more_candidates,
+        R.string.ux_candidate_collapse, R.string.pinyin_more_candidates };
     for (int label : labels)
     {
       String description = panel.getContext().getString(label);
@@ -725,6 +728,15 @@ public final class PinyinSmokeTest extends Instrumentation
         throw new AssertionError("Composing resized the keyboard");
       return width;
     });
+    ViewGroup expanded = openExpandedPinyinCandidates();
+    await("expanded row lists 你好", () -> findText(expanded, "你好") != null);
+    screenshot("pinyin-toolbar-expanded.png");
+    chooseCandidateExpansion(R.string.ux_candidate_collapse);
+    await("candidate row returns to the horizontal list",
+        () -> ((View)field(panel, "candidateScroll")).isShown()
+            && !((View)field(panel, "expandedScroll")).isShown());
+    text(activity.plain, "nihao");
+    passed("long-pressing spelling expands and collapses candidates without changing the editor");
     tap(preedit);
     text(activity.plain, "nihao");
     if (!onMain(() -> activity.plain.hasFocus()
@@ -909,7 +921,7 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     type("zhonghuarenmingongheguo");
     View panel = onMain(this::candidatesView);
-    tap(onMain(() -> (View)field(panel, "more")));
+    openExpandedPinyinCandidates();
     View results = onMain(() -> (View)field(panel, "expandedScroll"));
     await("long expanded candidate", () -> results.isShown() && findText(results, phrase) != null);
     TextView candidate = onMain(() -> (TextView)findText(results, phrase));
@@ -987,9 +999,15 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private ViewGroup openExpandedPinyinCandidates() throws Exception
   {
-    tap(onMain(() -> (View)field(candidatesView(), "more")));
+    chooseCandidateExpansion(R.string.ux_more_candidates);
     await("expanded candidate panel", () -> ((View)field(candidatesView(), "expandedScroll")).isShown());
     return onMain(() -> (ViewGroup)field(candidatesView(), "expandedItems"));
+  }
+
+  private void chooseCandidateExpansion(int label) throws Exception
+  {
+    longPressPreedit(onMain(() -> (View)field(candidatesView(), "preedit")));
+    choosePinyinMenuItem(getTargetContext().getString(label));
   }
 
   private String selectScrolledCandidate(ViewGroup list, int index) throws Exception

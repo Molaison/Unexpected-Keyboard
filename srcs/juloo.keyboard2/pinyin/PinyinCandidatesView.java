@@ -56,7 +56,6 @@ public final class PinyinCandidatesView extends LinearLayout
   private final LinearLayout row;
   private final TextView voiceStatus;
   private final TextView preedit;
-  private final TextView more;
   private final HorizontalScrollView candidateScroll;
   private final LinearLayout items;
   private final ScrollView expandedScroll;
@@ -124,11 +123,6 @@ public final class PinyinCandidatesView extends LinearLayout
     items.setGravity(Gravity.CENTER_VERTICAL);
     candidateScroll.addView(items, new ViewGroup.LayoutParams(-2, -1));
     row.addView(candidateScroll, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
-    more = ui.button("⌄", () -> {
-      expanded = !expanded;
-      renderExpanded();
-    });
-    more.setContentDescription(context.getString(R.string.ux_more_candidates));
     expandedScroll = new ScrollView(context);
     expandedItems = new LinearLayout(context);
     expandedItems.setOrientation(VERTICAL);
@@ -143,7 +137,6 @@ public final class PinyinCandidatesView extends LinearLayout
     loadMore.setVisibility(GONE);
     row.addView(expandedScroll, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
     row.addView(loadMore, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
-    row.addView(more, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
     candidateRow = new FrameLayout(context);
     candidateRow.addView(row, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
     voiceStatus = ui.label("", 15, true);
@@ -172,9 +165,15 @@ public final class PinyinCandidatesView extends LinearLayout
     String composition = previousComposition;
     boolean wasChinese = chinese;
     boolean wasNineKey = nineKey;
-    List<String> labels = new ArrayList<>(choices);
+    List<String> labels = new ArrayList<>();
     if (wasChinese)
-      labels.add(0, getContext().getString(wasNineKey ? R.string.ux_candidate_layout_full : R.string.ux_candidate_layout_nine));
+      labels.add(getContext().getString(wasNineKey ? R.string.ux_candidate_layout_full : R.string.ux_candidate_layout_nine));
+    boolean canToggle = wasChinese && (expanded || hasMore || previousCandidates.size() > 1);
+    int expansionChoice = canToggle ? labels.size() : -1;
+    if (canToggle)
+      labels.add(getContext().getString(expanded ? R.string.ux_candidate_collapse : R.string.ux_more_candidates));
+    int spellingStart = labels.size();
+    labels.addAll(choices);
     if (idle) labels.add(getContext().getString(R.string.ux_clipboard));
     menu.setAnchorView(preedit);
     menu.setWidth(Math.min(ui.dp(180), availableWidth(getWidth())));
@@ -194,12 +193,17 @@ public final class PinyinCandidatesView extends LinearLayout
       menu.dismiss();
       if (listener == null || !composition.equals(previousComposition) || wasChinese != chinese
           || wasNineKey != nineKey) return;
+      if (choice == expansionChoice)
+      {
+        setExpanded(!expanded);
+        return;
+      }
       expanded = false;
       if (idle && choice == labels.size() - 1) listener.onClipboard();
       else if (choice == 0) listener.onLayoutSwitch();
       else
       {
-        int index = spellingOptions.indexOf(choices.get(choice - 1));
+        int index = spellingOptions.indexOf(choices.get(choice - spellingStart));
         if (index >= 0) listener.onSpellingSelected(index);
       }
     });
@@ -233,7 +237,8 @@ public final class PinyinCandidatesView extends LinearLayout
     }
     // Leave the editor visible when even the first two rows cannot fit above.
     boolean openAbove = spaceAbove >= usableHeight;
-    int height = openAbove ? Math.min(spaceAbove, menuHeight) : menuHeight;
+    int spaceBelow = frame.bottom - anchor[1];
+    int height = Math.max(1, Math.min(menuHeight, openAbove ? spaceAbove : spaceBelow));
     menu.setHeight(height);
     // The platform positions a dropdown from the bottom of its anchor.
     menu.setVerticalOffset(-preedit.getHeight() - (openAbove ? height : 0));
@@ -385,12 +390,14 @@ public final class PinyinCandidatesView extends LinearLayout
     return v;
   }
 
+  private void setExpanded(boolean value)
+  {
+    expanded = value;
+    renderExpanded();
+  }
+
   private void renderExpanded()
   {
-    more.setText(expanded ? "⌃" : "⌄");
-    more.setContentDescription(getContext().getString(expanded
-        ? R.string.ux_candidate_collapse : R.string.ux_more_candidates));
-    more.setVisibility(chinese && (expanded || hasMore || previousCandidates.size() > 1) ? VISIBLE : GONE);
     // Both presentations occupy the same row, so expansion leaves the editor
     // and typing keys in place. Hide invalid candidates in the input callback.
     candidateScroll.setVisibility(chinese && !expanded ? VISIBLE : GONE);
@@ -417,7 +424,7 @@ public final class PinyinCandidatesView extends LinearLayout
     if (config.orientation != Configuration.ORIENTATION_LANDSCAPE || config.screenHeightDp > 480)
       return 0;
     int headerWidth = Math.max(width / 3, paddedTextWidth(preedit, "nihao"));
-    // Keep space for a candidate as well as the paging and collapse actions.
+    // Keep space for candidate text and the paging action.
     return width - headerWidth >= 4 * ui.dp(CONTROL_DP) ? headerWidth : 0;
   }
 
@@ -457,7 +464,7 @@ public final class PinyinCandidatesView extends LinearLayout
     if (expanded)
     {
       int control = ui.dp(CONTROL_DP);
-      int available = availableWidth - compactWidth - control;
+      int available = availableWidth - compactWidth;
       if (hasMore)
       {
         int labelWidth = paddedTextWidth(loadMore, loadMoreLabel);
