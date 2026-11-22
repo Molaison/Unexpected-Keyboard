@@ -8,6 +8,7 @@ import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.BaseAdapter;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -150,8 +151,11 @@ public final class ClipboardPaneView extends LinearLayout
     empty.setGravity(Gravity.CENTER);
     empty.setPadding(ui.dp(24), ui.dp(16), ui.dp(24), ui.dp(16));
     empty.setTextColor(ui.secondary);
-    body.addView(empty, new android.widget.FrameLayout.LayoutParams(-1, -1));
-    list.setEmptyView(empty);
+    ScrollView emptyScroll = new ScrollView(context);
+    emptyScroll.setFillViewport(true);
+    emptyScroll.addView(empty, new ScrollView.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+    body.addView(emptyScroll, new android.widget.FrameLayout.LayoutParams(-1, -1));
+    list.setEmptyView(emptyScroll);
     addView(body, new LayoutParams(LayoutParams.MATCH_PARENT, 0, 1));
 
     footer = line();
@@ -178,13 +182,17 @@ public final class ClipboardPaneView extends LinearLayout
   @Override public android.view.WindowInsets onApplyWindowInsets(android.view.WindowInsets insets)
   {
     // Keyboard2's window draws behind system bars on API 35+. Unlike the key
-    // canvas, this replacement pane must reserve its own bottom/side insets.
-    // Otherwise the footer (including Undo) is covered by navigation buttons.
+    // canvas, this replacement pane must keep its header and footer clear
+    // of system bars when there is little screen height.
     if (android.os.Build.VERSION.SDK_INT >= 35)
     {
       android.graphics.Insets safe = insets.getInsets(
           android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
-      setPadding(ui.dp(8) + safe.left, 0, ui.dp(8) + safe.right, ui.dp(4) + safe.bottom);
+      WindowManager window = getContext().getSystemService(WindowManager.class);
+      int windowHeight = window.getCurrentWindowMetrics().getBounds().height();
+      int paneTop = Math.max(0, windowHeight - getLayoutParams().height);
+      int top = Math.max(0, safe.top - paneTop);
+      setPadding(ui.dp(8) + safe.left, top, ui.dp(8) + safe.right, ui.dp(4) + safe.bottom);
     }
     return super.onApplyWindowInsets(insets);
   }

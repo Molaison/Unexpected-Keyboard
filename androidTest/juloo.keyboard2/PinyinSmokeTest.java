@@ -733,7 +733,9 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     openClipboardFromMode();
     await("idle mode menu opens clipboard", () -> clipboard() != null && clipboard().isShown());
+    screenshot("pinyin-toolbar-clipboard.png");
     tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    await("keyboard is visible after closing clipboard", () -> candidatesView().isShown());
     View idleMode = onMain(() -> (View)field(candidatesView(), "preedit"));
     tap(idleMode);
     screenshot("pinyin-toolbar-idle-menu.png");
@@ -826,8 +828,10 @@ public final class PinyinSmokeTest extends Instrumentation
       Rect menuBounds = visibleTouchBounds(list);
       Rect preeditBounds = visibleTouchBounds(preedit);
       int visible = list.getChildCount();
-      if (visible > 4 || visible == 0
-          || (menuBounds.bottom > preeditBounds.top && menuBounds.top < preeditBounds.top))
+      // The platform clamps the popup to the display frame with rounded pixel offsets.
+      int tolerance = Math.round(2 * panel.getResources().getDisplayMetrics().density);
+      int overlap = Math.min(menuBounds.bottom - preeditBounds.top, preeditBounds.top - menuBounds.top);
+      if (visible > 4 || visible == 0 || overlap > tolerance)
         throw new AssertionError("Reading menu straddles the keyboard edge or has too many visible rows: "
             + menuBounds + " above " + preeditBounds + ", visible rows=" + visible);
       Rect frame = new Rect();
@@ -835,7 +839,7 @@ public final class PinyinSmokeTest extends Instrumentation
       int above = preeditBounds.top - frame.top;
       int firstTwoRows = list.getChildAt(0).getHeight()
           + (visible > 1 ? list.getChildAt(1).getHeight() : 0);
-      boolean openAbove = menuBounds.bottom <= preeditBounds.top;
+      boolean openAbove = menuBounds.bottom <= preeditBounds.top + tolerance;
       if (openAbove != (above >= firstTwoRows))
         throw new AssertionError("Reading menu was placed on the wrong side of the keyboard: "
             + menuBounds + ", space above=" + above + ", first rows=" + firstTwoRows);
