@@ -161,6 +161,9 @@ public final class PinyinSmokeTest extends Instrumentation
         {
           clear();
           nineKey(true);
+          checkNineKeySequence("64926342692448438", "你晚点再回复", 8);
+          checkNineKeySequence("96636926342692448438", "我们晚点再回复", 8);
+          checkNineKeySequence("92448438", "在恢复", 1);
           checkNineKeySequence("649263426924542694", "你晚点再联系", 8);
           checkNineKeySequence("966369263426924542694", "我们晚点再联系", 16);
           checkNineKeySequence("647426468924542694", "你稍后再联系", 16);
@@ -1498,6 +1501,8 @@ public final class PinyinSmokeTest extends Instrumentation
     for (String[] example : new String[][] {
         {"966369263426924542694", "我们晚点再联系", "16"},
         {"649263426924542694", "你晚点再联系", "8"},
+        {"64926342692448438", "你晚点再回复", "8"},
+        {"96636926342692448438", "我们晚点再回复", "8"},
         {"64648426924542694", "明天再联系", "16"},
         {"96898926924542694", "有需要再联系", "16"},
         {"54684267824264267249426", "今天去长安拍照", "16"},

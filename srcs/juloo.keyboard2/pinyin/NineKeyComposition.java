@@ -152,6 +152,19 @@ public final class NineKeyComposition implements ChineseComposition
     }
   }
 
+  private static final class TimedPrefix
+  {
+    final String text, display;
+    final boolean fixed;
+
+    TimedPrefix(String text, String display, boolean fixed)
+    {
+      this.text = text;
+      this.display = display;
+      this.fixed = fixed;
+    }
+  }
+
   private static final Comparator<Candidate> CANDIDATE_ORDER = (a, b) -> {
     int c = Float.compare(a.score, b.score);
     return c == 0 ? a.text.compareTo(b.text) : c;
@@ -1062,16 +1075,65 @@ public final class NineKeyComposition implements ChineseComposition
         for (NineKeyLexicon.Entry prefix : lexicon.lookupWords(keys, ENDING_WORDS))
           if (text.equals(prefix.text) && display.equals(prefix.display))
             return continuation(text, display, ending, score);
-        Candidate timed = timedContinuation(keys, anchor, syllables, pivot, ending, score, boundaryFallback);
-        if (timed != null) return timed;
+        TimedPrefix timed = timedPrefix(keys, anchor, syllables, pivot, boundaryFallback.isEmpty());
+        if (timed != null)
+        {
+          Candidate candidate = continuation(timed.text, timed.display, ending, score);
+          if (!timed.fixed) return candidate;
+          boundaryFallback.add(candidate);
+        }
       }
+    }
+    if (boundaryFallback.isEmpty())
+    {
+      Candidate split = splitTimedEnding(raw, anchor, syllables, cuts, score);
+      if (split != null) boundaryFallback.add(split);
     }
     return null;
   }
 
-  private Candidate timedContinuation(String keys, Candidate anchor, String[] syllables, int pivot,
-      NineKeyLexicon.Entry ending, float score, List<Candidate> boundaryFallback)
+  private Candidate splitTimedEnding(String raw, Candidate anchor, String[] syllables,
+      List<EndingCut> cuts, float score)
   {
+    for (EndingCut cut : cuts)
+    {
+      int pivot = cut.characters;
+      if (pivot < 2 || pivot + 3 != syllables.length || anchor.text.charAt(pivot) != '在'
+          || !"zai".equals(syllables[pivot])) continue;
+      String tailDisplay = syllableReading(syllables, pivot + 1, syllables.length);
+      String endingDisplay = "zai " + tailDisplay;
+      if (!raw.substring(cut.rawEnd).equals(digits(endingDisplay.replace(" ", "")))
+          || !hasIndexedAtWithoutAgain(cut.words, endingDisplay)) continue;
+      String keys = raw.substring(0, cut.rawEnd);
+      TimedPrefix timed = timedPrefix(keys, anchor, syllables, pivot, true);
+      if (timed == null || !keys.equals(digits(timed.display.replace(" ", "")))) continue;
+      String tail = lexicon.firstReading(tailDisplay);
+      if (tail.length() != 2) continue;
+      String expected = "再" + tail;
+      String decoded = decodeCompleteDisplay(endingDisplay);
+      if (expected.equals(decoded) || (decoded.startsWith("在") && fixDecodedPrefix("再")
+          && expected.equals(completeDecodedDisplay(endingDisplay, endingDisplay.replace(' ', '\'')))))
+        return continuation(timed.text, timed.display, expected, endingDisplay, score);
+    }
+    return null;
+  }
+
+  private static boolean hasIndexedAtWithoutAgain(List<NineKeyLexicon.Entry> words, String display)
+  {
+    boolean hasAt = false;
+    for (NineKeyLexicon.Entry word : words)
+    {
+      if (!word.display.equals(display)) continue;
+      if (word.text.startsWith("再")) return false;
+      if (word.text.startsWith("在")) hasAt = true;
+    }
+    return hasAt;
+  }
+
+  private TimedPrefix timedPrefix(String keys, Candidate anchor, String[] syllables, int pivot,
+      boolean tryFixed)
+  {
+    TimedPrefix fallback = null;
     for (int from = Math.max(1, pivot - 3); from <= pivot - 2; from++)
     {
       int offset = anchor.reading.rawEnd(anchor.spellingStarts[from]);
@@ -1083,22 +1145,27 @@ public final class NineKeyComposition implements ChineseComposition
         String text = prefix + word.text;
         String display = syllableReading(syllables, 0, from) + " " + word.display;
         String decoded = decodeCompleteDisplay(display);
-        if (text.equals(decoded)) return continuation(text, display, ending, score);
+        if (text.equals(decoded)) return new TimedPrefix(text, display, false);
         // Keep the existing complete paths ahead of a spelling verified after locking a prefix.
-        if (boundaryFallback.isEmpty() && decoded.startsWith(prefix)
+        if (tryFixed && fallback == null && decoded.startsWith(prefix)
             && keys.equals(digits(display.replace(" ", ""))) && fixDecodedPrefix(prefix)
             && text.equals(completeDecodedDisplay(display, display.replace(' ', '\''))))
-          boundaryFallback.add(continuation(text, display, ending, score));
+          fallback = new TimedPrefix(text, display, true);
       }
     }
-    return null;
+    return fallback;
   }
 
   private Candidate continuation(String text, String display, NineKeyLexicon.Entry ending, float score)
   {
-    Reading reading = Reading.withWordEnding(display.replace(" ", ""), ending);
-    Candidate candidate = new Candidate(text + ending.text, reading, -1, score);
-    candidate.display = display + " " + ending.display;
+    return continuation(text, display, ending.text, ending.display, score);
+  }
+
+  private Candidate continuation(String text, String display, String ending, String endingDisplay, float score)
+  {
+    Reading reading = Reading.withWordEnding(display.replace(" ", ""), endingDisplay);
+    Candidate candidate = new Candidate(text + ending, reading, -1, score);
+    candidate.display = display + " " + endingDisplay;
     return candidate;
   }
 

@@ -65,15 +65,25 @@ final class NineKeySyllableGraph
 
     static Reading withWordEnding(Reading prefix, NineKeyLexicon.Entry ending)
     {
-      String spelling = prefix.spelling + ending.spelling;
+      return withWordEnding(prefix, ending.spelling, ending.display);
+    }
+
+    static Reading withWordEnding(String prefix, String endingDisplay)
+    {
+      return withWordEnding(new Reading(prefix), endingDisplay.replace(" ", ""), endingDisplay);
+    }
+
+    private static Reading withWordEnding(Reading prefix, String endingSpelling, String endingDisplay)
+    {
+      String spelling = prefix.spelling + endingSpelling;
       boolean[] cuts = new boolean[spelling.length()];
       for (int i = 0; i < prefix.query.length(); i++)
         if (prefix.query.charAt(i) == '\'') cuts[prefix.rawEnd(i)] = true;
       int raw = prefix.spelling.length();
       cuts[raw] = true;
-      for (int i = 0; i < ending.display.length(); i++)
+      for (int i = 0; i < endingDisplay.length(); i++)
       {
-        if (ending.display.charAt(i) == ' ') cuts[raw] = true;
+        if (endingDisplay.charAt(i) == ' ') cuts[raw] = true;
         else
         {
           while (spelling.charAt(raw) == '\'') raw++;
