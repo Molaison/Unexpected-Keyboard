@@ -789,11 +789,7 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void longPressPreedit(View view) throws Exception
   {
-    Rect bounds = onMain(() -> {
-      Rect visible = new Rect();
-      if (!view.getGlobalVisibleRect(visible)) throw new AssertionError("Preedit cannot be long-pressed");
-      return visible;
-    });
+    Rect bounds = onMain(() -> visibleTouchBounds(view));
     long down = SystemClock.uptimeMillis();
     injectTouch(down, MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY());
     SystemClock.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 100);
@@ -1595,14 +1591,20 @@ public final class PinyinSmokeTest extends Instrumentation
       getUiAutomation().setServiceInfo(services);
     }
     idle();
-    for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
+    // The popup can be showing before its accessibility window is published.
+    long deadline = SystemClock.uptimeMillis() + 1500;
+    do
     {
-      AccessibilityNodeInfo root = window.getRoot();
-      if (root == null) continue;
-      for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(label))
-        if (node.isVisibleToUser() && label.equals(String.valueOf(node.getText())) && isPinyinMenuListItem(node))
-          return node;
-    }
+      for (AccessibilityWindowInfo window : getUiAutomation().getWindows())
+      {
+        AccessibilityNodeInfo root = window.getRoot();
+        if (root == null) continue;
+        for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(label))
+          if (node.isVisibleToUser() && label.equals(String.valueOf(node.getText())) && isPinyinMenuListItem(node))
+            return node;
+      }
+      SystemClock.sleep(50);
+    } while (SystemClock.uptimeMillis() < deadline);
     throw new AssertionError("Pinyin menu did not offer " + label);
   }
 
@@ -2328,13 +2330,21 @@ public final class PinyinSmokeTest extends Instrumentation
 
   private void tap(View view) throws Exception
   {
+    Rect bounds = onMain(() -> visibleTouchBounds(view));
+    touch(bounds.exactCenterX(), bounds.exactCenterY());
+  }
+
+  private Rect visibleTouchBounds(View view)
+  {
     if (view == null) throw new AssertionError("The requested touch target was not found");
-    float[] point = onMain(() -> {
-      Rect bounds = new Rect();
-      if (!view.getGlobalVisibleRect(bounds)) throw new AssertionError("View is not visible");
-      return new float[] {bounds.exactCenterX(), bounds.exactCenterY()};
-    });
-    touch(point[0], point[1]);
+    Rect bounds = new Rect();
+    if (!view.isShown() || !view.getGlobalVisibleRect(bounds))
+      throw new AssertionError("Touch target is not visible");
+    // The clipped rectangle is root-relative. Injected events use screen coordinates.
+    int[] origin = new int[2];
+    view.getRootView().getLocationOnScreen(origin);
+    bounds.offset(origin[0], origin[1]);
+    return bounds;
   }
 
   private void touch(float x, float y) throws Exception
