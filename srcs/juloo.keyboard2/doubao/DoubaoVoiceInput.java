@@ -32,6 +32,7 @@ public final class DoubaoVoiceInput
   private static final int SAMPLES_PER_FRAME = 320;
   private static final int PCM_BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2;
   private static final int FRAME_DURATION_MS = 20;
+  private static final int MAX_FRAME_CATCH_UP_MS = 2;
   private static final int MAX_CAPTURE_FRAMES = 3000;
   private static final short[] CAPTURE_FINISHED = new short[0];
   private static final int ASR_CONCURRENCY_LIMIT = 40200011;
@@ -791,6 +792,7 @@ public final class DoubaoVoiceInput
         long startedAtMs = System.currentTimeMillis();
         long nextFrameAtNs = System.nanoTime();
         long framePeriodNs = TimeUnit.MILLISECONDS.toNanos(FRAME_DURATION_MS);
+        long maxCatchUpNs = TimeUnit.MILLISECONDS.toNanos(MAX_FRAME_CATCH_UP_MS);
         long frameIndex = 0;
         while (!cancelled && !session.isFinished())
         {
@@ -809,7 +811,10 @@ public final class DoubaoVoiceInput
           if (session.isFinished()) break;
           int frameState = last ? DoubaoProtocol.FRAME_LAST : frameIndex == 0
               ? DoubaoProtocol.FRAME_FIRST : DoubaoProtocol.FRAME_MIDDLE;
-          nextFrameAtNs = System.nanoTime() + framePeriodNs;
+          long sendAtNs = System.nanoTime();
+          // Compensate for wake-up delay without sending buffered audio in bursts.
+          long lateNs = Math.max(0, sendAtNs - nextFrameAtNs);
+          nextFrameAtNs = sendAtNs + framePeriodNs - Math.min(lateNs, maxCatchUpNs);
           // The terminal silence requests two-pass refinement on key release.
           session.sendAudio(opus, frameState, startedAtMs + frameIndex * FRAME_DURATION_MS, last, last);
           if (last)
