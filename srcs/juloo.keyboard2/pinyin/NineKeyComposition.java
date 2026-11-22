@@ -22,6 +22,10 @@ public final class NineKeyComposition implements ChineseComposition
   private static final String[] LETTERS = {"", "", "abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz"};
   private static final int BEAM = 48;
   private static final int CANDIDATE_PATHS = 24;
+  private static final int WORD_PATH_CUTS = 2;
+  private static final int WORD_PATH_READINGS = 3;
+  private static final int WORD_PATH_PREFIXES = 4;
+  private static final int WORD_PATH_BEAM = 6;
   private static final int ALTERNATE_PATHS = 4;
   private static final int SENTENCE_ALTERNATE_PATHS = 8;
   private static final int ENDING_PREFIXES = 12;
@@ -53,10 +57,12 @@ public final class NineKeyComposition implements ChineseComposition
   private final NineKeySyllableGraph syllableGraph;
   private final List<Fixed> fixed = new ArrayList<>();
   private final List<Candidate> candidates = new ArrayList<>();
-  private final Map<String, List<Path>> cache = new LinkedHashMap<String, List<Path>>() {
+  private static final class PathCache extends LinkedHashMap<String, List<Path>> {
     @Override protected boolean removeEldestEntry(Map.Entry<String, List<Path>> e)
     { return size() > PinyinDecoder.MAX_PINYIN_LENGTH + 1; }
-  };
+  }
+  private final PathCache cache = new PathCache();
+  private final PathCache indexedCache = new PathCache();
   private String raw = "";
   private String fixedText = "";
   private String constraint = "";
@@ -77,6 +83,11 @@ public final class NineKeyComposition implements ChineseComposition
     final float score;
     Path(String spelling, float score) { this.spelling = spelling; this.score = score; }
   }
+
+  private static final Comparator<Path> PATH_ORDER = (a, b) -> {
+    int comparison = Float.compare(a.score, b.score);
+    return comparison == 0 ? a.spelling.compareTo(b.spelling) : comparison;
+  };
 
   private static final class Candidate
   {
@@ -216,7 +227,7 @@ public final class NineKeyComposition implements ChineseComposition
     List<String> choices = getSpellings();
     if (index < 0 || index >= choices.size()) return;
     constraint = choices.get(index);
-    cache.clear();
+    clearPathCaches();
     dirty = true;
   }
 
@@ -239,7 +250,7 @@ public final class NineKeyComposition implements ChineseComposition
       for (Fixed f : fixed) fixedText += f.text;
       fixedEnd = fixed.isEmpty() ? 0 : fixed.get(fixed.size() - 1).end;
       constraint = "";
-      cache.clear();
+      clearPathCaches();
     }
     else
     {
@@ -281,7 +292,7 @@ public final class NineKeyComposition implements ChineseComposition
     fixedText += c.text;
     fixed.add(new Fixed(c.text, fixedEnd));
     constraint = "";
-    cache.clear();
+    clearPathCaches();
     dirty = true;
     decoder.reset();
     if (fixedEnd < raw.length()) return "";
@@ -315,8 +326,14 @@ public final class NineKeyComposition implements ChineseComposition
   {
     decoder.reset();
     raw = ""; fixedText = ""; constraint = ""; fixedEnd = 0;
-    fixed.clear(); candidates.clear(); cache.clear(); paths = Collections.emptyList();
+    fixed.clear(); candidates.clear(); clearPathCaches(); paths = Collections.emptyList();
     dirty = true;
+  }
+
+  private void clearPathCaches()
+  {
+    cache.clear();
+    indexedCache.clear();
   }
 
   /** Minimum phonetic cost to each prefix end. The search beam can also
@@ -352,8 +369,7 @@ public final class NineKeyComposition implements ChineseComposition
     if (hit != null) return hit;
     if (keys.isEmpty()) return Collections.singletonList(new Path("", 0));
     List<Path> previous = searchPaths(keys.substring(0, keys.length() - 1));
-    char key = keys.charAt(keys.length() - 1);
-    String letters = key >= '2' && key <= '9' ? LETTERS[key - '0'] : String.valueOf(key);
+    String letters = lettersFor(keys.charAt(keys.length() - 1));
     List<Path> next = new ArrayList<>();
     for (Path p : previous)
       for (int i = 0; i < letters.length(); i++)
@@ -361,22 +377,107 @@ public final class NineKeyComposition implements ChineseComposition
         String s = p.spelling + letters.charAt(i);
         if (s.length() <= constraint.length() && !constraint.startsWith(s)) continue;
         if (s.length() > constraint.length() && !s.startsWith(constraint)) continue;
-        int cost = phoneticCosts(s, true)[s.length()];
-        if (cost == IMPOSSIBLE) continue;
-        decoder.reset();
-        int count = decoder.search(s);
-        // An incomplete syllable can temporarily have no native candidate.
-        float lexical = count == 0 ? 9000 : decoder.getCandidateScore(0)
-          / Math.max(1, decoder.getCandidate(0).length());
-        next.add(new Path(s, lexical + cost));
+        Path extension = scorePath(s, null);
+        if (extension != null) next.add(extension);
       }
-    Collections.sort(next, (a, b) -> {
-      int c = Float.compare(a.score, b.score);
-      return c == 0 ? a.spelling.compareTo(b.spelling) : c;
-    });
+    Collections.sort(next, PATH_ORDER);
     if (next.size() > BEAM) next.subList(BEAM, next.size()).clear();
     cache.put(keys, next);
     return next;
+  }
+
+  private static String lettersFor(char key)
+  {
+    return key >= '2' && key <= '9' ? LETTERS[key - '0'] : String.valueOf(key);
+  }
+
+  private Path scorePath(String spelling, NineKeyLexicon.Entry ending)
+  {
+    int cost = phoneticCosts(spelling, true)[spelling.length()];
+    if (cost == IMPOSSIBLE) return null;
+    decoder.reset();
+    int count = decoder.search(spelling);
+    String first = count == 0 ? "" : decoder.getCandidate(0);
+    if (ending != null)
+    {
+      // An indexed word can bridge a pruned prefix only if native decoding
+      // keeps it at that boundary and consumes the whole spelling.
+      if (!first.endsWith(ending.text)) return null;
+      int[] starts = decoder.getSpellingStarts();
+      int boundary = spelling.length() - ending.spelling.length();
+      if (first.length() >= starts.length || starts[first.length()] != spelling.length()
+          || starts[first.length() - ending.text.length()] != boundary) return null;
+    }
+    // An incomplete syllable can temporarily have no native candidate.
+    float lexical = count == 0 ? 9000 : decoder.getCandidateScore(0) / Math.max(1, first.length());
+    return new Path(spelling, lexical + cost);
+  }
+
+  /** Preserve the original beam and its sentence anchors. */
+  private List<Path> indexedPaths(String keys)
+  {
+    if (keys.length() < 11) return Collections.emptyList();
+    List<Path> hit = indexedCache.get(keys);
+    if (hit != null) return hit;
+    List<Path> previous = indexedPaths(keys.substring(0, keys.length() - 1));
+    Set<String> spellings = new HashSet<>();
+    for (Path path : searchPaths(keys)) spellings.add(path.spelling);
+    String letters = lettersFor(keys.charAt(keys.length() - 1));
+    List<Path> next = new ArrayList<>();
+    for (Path path : previous)
+      for (int i = 0; i < letters.length(); i++)
+      {
+        String spelling = path.spelling + letters.charAt(i);
+        if (!spellings.add(spelling)) continue;
+        Path extension = scorePath(spelling, null);
+        if (extension != null) next.add(extension);
+      }
+    addIndexedWordPaths(keys, next, spellings);
+    Collections.sort(next, PATH_ORDER);
+    if (next.size() > WORD_PATH_BEAM) next.subList(WORD_PATH_BEAM, next.size()).clear();
+    indexedCache.put(keys, next);
+    return next;
+  }
+
+  private void addIndexedWordPaths(String keys, List<Path> next, Set<String> spellings)
+  {
+    List<List<NineKeyLexicon.Entry>> cuts = new ArrayList<>();
+    for (int tail = 4; tail <= Math.min(8, keys.length() - 3); tail++)
+    {
+      List<NineKeyLexicon.Entry> words = lexicon.lookupWords(keys.substring(keys.length() - tail), WORD_PATH_READINGS);
+      if (!words.isEmpty()) cuts.add(words);
+    }
+    Collections.sort(cuts, (a, b) -> Float.compare(a.get(0).score, b.get(0).score));
+
+    for (int i = 0; i < Math.min(WORD_PATH_CUTS, cuts.size()); i++)
+    {
+      List<NineKeyLexicon.Entry> words = cuts.get(i);
+      int boundary = keys.length() - words.get(0).spelling.length();
+      String prefixKeys = keys.substring(0, boundary);
+      List<Path> prefixes = searchPaths(prefixKeys);
+      List<Path> indexed = indexedPaths(prefixKeys);
+      Set<String> considered = new HashSet<>();
+      for (NineKeyLexicon.Entry word : words)
+      {
+        if (!considered.add(word.spelling)) continue;
+        // Give the best ending several prefixes and test other readings with the best prefix.
+        int prefixLimit = considered.size() == 1 ? WORD_PATH_PREFIXES : 1;
+        extendWithWord(next, spellings, prefixes, prefixLimit, word);
+        extendWithWord(next, spellings, indexed, WORD_PATH_PREFIXES, word);
+      }
+    }
+  }
+
+  private void extendWithWord(List<Path> next, Set<String> spellings, List<Path> prefixes,
+      int limit, NineKeyLexicon.Entry word)
+  {
+    for (int i = 0; i < Math.min(limit, prefixes.size()); i++)
+    {
+      String spelling = prefixes.get(i).spelling + word.spelling;
+      if (!spellings.add(spelling)) continue;
+      Path path = scorePath(spelling, word);
+      if (path != null) next.add(path);
+    }
   }
 
   private void prepare()
@@ -471,6 +572,21 @@ public final class NineKeyComposition implements ChineseComposition
           alternative.put(ending.text, ending);
           mergeWordEndings(alternative, Math.min(endingFallbacks.minimumPosition, candidates.size()));
         }
+      }
+      if (automaticSentence && candidates.size() < MAX_CANDIDATES)
+      {
+        Map<String, Candidate> indexed = new LinkedHashMap<>();
+        for (Path path : indexedPaths(remaining))
+          addNativeCandidates(indexed, new Reading(path.spelling), remaining.length(), true);
+        for (Candidate original : candidates) indexed.remove(original.text);
+        int available = MAX_CANDIDATES - candidates.size();
+        if (indexed.size() > available)
+        {
+          List<Candidate> ranked = new ArrayList<>(indexed.values());
+          Collections.sort(ranked, CANDIDATE_ORDER);
+          for (int i = available; i < ranked.size(); i++) indexed.remove(ranked.get(i).text);
+        }
+        mergeWordEndings(indexed, Math.min(ENDING_PRESERVED_CANDIDATES, candidates.size()));
       }
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }

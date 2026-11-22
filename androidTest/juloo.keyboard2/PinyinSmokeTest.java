@@ -1422,7 +1422,31 @@ public final class PinyinSmokeTest extends Instrumentation
   {
     clear();
     nineKey(true);
+    String mixedPrefix = "5468426782426426724942";
+    nineKeys(mixedPrefix);
+    onMain(() -> {
+      KeyEventHandler handler = (KeyEventHandler)Config.globalConfig().handler;
+      handler.key_up(KeyValue.getKeyByName("o"), Pointers.Modifiers.EMPTY);
+      juloo.keyboard2.pinyin.ChineseComposition current =
+          (juloo.keyboard2.pinyin.ChineseComposition)field(handler._pinyin, "composition");
+      if (!current.getSpelling().equals(mixedPrefix + "o"))
+        throw new AssertionError("Nine-key input did not retain its literal letter");
+      return null;
+    });
+    key("backspace");
+    onMain(() -> {
+      KeyEventHandler handler = (KeyEventHandler)Config.globalConfig().handler;
+      juloo.keyboard2.pinyin.ChineseComposition current =
+          (juloo.keyboard2.pinyin.ChineseComposition)field(handler._pinyin, "composition");
+      if (!current.getSpelling().equals(mixedPrefix))
+        throw new AssertionError("Nine-key backspace did not remove its literal letter");
+      return null;
+    });
+    passed("nine-key long composition accepts and deletes a literal letter");
     for (String[] example : new String[][] {
+        {"54684267824264267249426", "今天去长安拍照", "16"},
+        {"64649262486365433324726", "明早出门记得带伞", "24"},
+        {"94298743426524484", "下午四点开会", "16"},
         {"64648426789426524484", "明天去西安开会", "16"},
         {"74645465824542694", "请尽快联系", "8"},
         {"74645465824542694", "请尽快交易", "1"},
