@@ -1422,6 +1422,8 @@ public final class PinyinSmokeTest extends Instrumentation
   {
     clear();
     nineKey(true);
+    checkSelectedNineKeySyllable();
+    clear();
     String mixedPrefix = "5468426782426426724942";
     nineKeys(mixedPrefix);
     onMain(() -> {
@@ -1571,6 +1573,36 @@ public final class PinyinSmokeTest extends Instrumentation
     if (missingPhrases.length() != 0)
       throw new AssertionError("Nine-key long phrases:" + missingPhrases);
     passed("nine-key alternate split commits and backspace preserves the original key boundaries");
+  }
+
+  private void checkSelectedNineKeySyllable() throws Exception
+  {
+    nineKeys("9426");
+    android.widget.TextView preedit = onMain(() -> (android.widget.TextView)field(candidatesView(), "preedit"));
+    longPressPreedit(preedit);
+    choosePinyinMenuItem("xian");
+    String selected = onMain(() -> preedit.getText().toString());
+    if (!selected.equals("xian")) throw new AssertionError("Selected xian was split: " + selected);
+
+    nineKeys("24832");
+    if (!onMain(() -> "xian chu fa".contentEquals(preedit.getText())))
+      throw new AssertionError("Continuation changed the selected syllable");
+    for (int i = 0; i < 5; i++) key("backspace");
+    if (!onMain(() -> "xian".contentEquals(preedit.getText())))
+      throw new AssertionError("Deleting the suffix changed the selected syllable");
+    nineKeys("24832");
+    key("space");
+    text(activity.plain, "先出发");
+
+    clear();
+    nineKeys("9426");
+    longPressPreedit(preedit);
+    choosePinyinMenuItem("xian");
+    key("backspace");
+    key("pinyin_6");
+    tapCandidate("西安");
+    text(activity.plain, "西安");
+    passed("a selected nine-key syllable survives continuation and can be changed by editing it");
   }
 
   private void checkNineKeyFuzzyPinyin() throws Exception

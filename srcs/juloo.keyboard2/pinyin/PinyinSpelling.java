@@ -177,6 +177,13 @@ final class PinyinSpelling
     return matched[input.length()];
   }
 
+  static boolean beginsWithSyllable(String display, String syllable)
+  {
+    int length = syllable.length();
+    return length == 0 || display.startsWith(syllable)
+        && (display.length() == length || display.charAt(length) == ' ');
+  }
+
   static boolean hasVowel(String text)
   {
     for (int i = 0; i < text.length(); i++)

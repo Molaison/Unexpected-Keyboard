@@ -71,6 +71,7 @@ public final class NineKeyComposition implements ChineseComposition
   private String raw = "";
   private String fixedText = "";
   private String constraint = "";
+  private String selectedSyllable = "";
   private int fixedEnd;
   private boolean dirty = true;
   private List<Path> paths = Collections.emptyList();
@@ -240,6 +241,8 @@ public final class NineKeyComposition implements ChineseComposition
     List<String> choices = getSpellings();
     if (index < 0 || index >= choices.size()) return;
     constraint = choices.get(index);
+    selectedSyllable = syllables.contains(constraint) && PinyinSpelling.hasVowel(constraint)
+        ? constraint : "";
     clearPathCaches();
     dirty = true;
   }
@@ -263,13 +266,19 @@ public final class NineKeyComposition implements ChineseComposition
       for (Fixed f : fixed) fixedText += f.text;
       fixedEnd = fixed.isEmpty() ? 0 : fixed.get(fixed.size() - 1).end;
       constraint = "";
+      selectedSyllable = "";
       clearPathCaches();
     }
     else
     {
       raw = raw.substring(0, raw.length() - 1);
       int remaining = raw.length() - fixedEnd;
-      if (constraint.length() > remaining) constraint = constraint.substring(0, remaining);
+      if (constraint.length() > remaining)
+      {
+        constraint = constraint.substring(0, remaining);
+        selectedSyllable = "";
+        clearPathCaches();
+      }
     }
     dirty = true;
     if (raw.isEmpty()) reset();
@@ -305,6 +314,7 @@ public final class NineKeyComposition implements ChineseComposition
     fixedText += c.text;
     fixed.add(new Fixed(c.text, fixedEnd));
     constraint = "";
+    selectedSyllable = "";
     clearPathCaches();
     dirty = true;
     decoder.reset();
@@ -339,6 +349,7 @@ public final class NineKeyComposition implements ChineseComposition
   {
     decoder.reset();
     raw = ""; fixedText = ""; constraint = ""; fixedEnd = 0;
+    selectedSyllable = "";
     fixed.clear(); candidates.clear(); clearPathCaches(); paths = Collections.emptyList();
     dirty = true;
   }
@@ -523,7 +534,7 @@ public final class NineKeyComposition implements ChineseComposition
       String remaining = raw.substring(fixedEnd);
       paths = new ArrayList<>(searchPaths(remaining));
       List<NineKeyLexicon.Entry> direct = lexicon == null ? Collections.emptyList()
-          : lexicon.lookup(remaining, constraint, 128);
+          : lexicon.lookup(remaining, constraint, selectedSyllable, 128);
       // Exact lexical hits rescue pronunciations discarded by the incremental
       // beam. Query a bounded number natively as well, preserving native learning.
       List<Path> rescued = new ArrayList<>();
@@ -539,16 +550,25 @@ public final class NineKeyComposition implements ChineseComposition
       int alternateLimit = automaticSentence ? SENTENCE_ALTERNATE_PATHS : ALTERNATE_PATHS;
       List<Reading> alternatives = new ArrayList<>(alternateLimit);
       List<Reading> moreSplits = new ArrayList<>(alternateLimit);
+      int firstSyllableEnd = selectedSyllable.length();
       int pathCount = 0;
       for (Path path : paths)
       {
         if (pathCount++ >= CANDIDATE_PATHS) break;
-        int[] starts = addNativeCandidates(unique, new Reading(path.spelling), remaining.length(), false);
+        Reading reading = new Reading(path.spelling);
+        if (firstSyllableEnd > 0 && firstSyllableEnd < path.spelling.length()
+            && path.spelling.length() < PinyinDecoder.MAX_PINYIN_LENGTH)
+        {
+          boolean[] cuts = new boolean[path.spelling.length()];
+          cuts[firstSyllableEnd] = true;
+          reading = Reading.withCuts(path.spelling, cuts);
+        }
+        int[] starts = addNativeCandidates(unique, reading, remaining.length(), false);
         if (alternatives.size() < alternateLimit && remaining.length() < PinyinDecoder.MAX_PINYIN_LENGTH)
         {
-          String decoded = formatSpelling(path.spelling, starts);
+          String decoded = formatSpelling(reading.query, starts);
           boolean firstSplit = true;
-          for (Reading split : syllableGraph.splits(path.spelling))
+          for (Reading split : syllableGraph.splits(path.spelling, firstSyllableEnd))
           {
             if (split.query.length() > PinyinDecoder.MAX_PINYIN_LENGTH
                 || decoded.equals(split.query.replace('\'', ' ')) || !seenReadings.add(split.query))
@@ -1250,6 +1270,8 @@ public final class NineKeyComposition implements ChineseComposition
     decoder.reset();
     int count = decoder.search(reading.query);
     int[] starts = decoder.getSpellingStarts();
+    String display = formatSpelling(reading.query, starts);
+    if (!PinyinSpelling.beginsWithSyllable(display, selectedSyllable)) return starts;
     int[] spellingCosts = null;
     for (int i = 0; i < Math.min(count, onlyBestComplete ? 1 : PER_PATH); i++)
     {
@@ -1268,7 +1290,7 @@ public final class NineKeyComposition implements ChineseComposition
       Candidate old = unique.get(text);
       if (old != null && old.score <= score) continue;
       Candidate candidate = new Candidate(text, reading, i, score);
-      candidate.display = formatSpelling(reading.query, starts);
+      candidate.display = display;
       candidate.spellingStarts = starts;
       candidate.partial = partial;
       unique.put(text, candidate);

@@ -148,6 +148,11 @@ final class NineKeySyllableGraph
 
   List<Reading> splits(String spelling)
   {
+    return splits(spelling, 0);
+  }
+
+  List<Reading> splits(String spelling, int firstSyllableEnd)
+  {
     int length = spelling.length();
     List<List<Integer>> edges = new ArrayList<>(length + 1);
     for (int i = 0; i <= length; i++) edges.add(new ArrayList<>());
@@ -164,6 +169,7 @@ final class NineKeySyllableGraph
       {
         for (int end = Math.min(length, start + 6); end > start; end--)
         {
+          if (start == 0 && firstSyllableEnd != 0 && end != firstSyllableEnd) continue;
           if (!canFinish[end]) continue;
           String syllable = spelling.substring(start, end);
           if (syllables.contains(syllable) && PinyinSpelling.hasVowel(syllable)) ends.add(end);
