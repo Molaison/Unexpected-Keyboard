@@ -202,6 +202,10 @@ public class Keyboard2 extends InputMethodService
       public void onSpellingSelected(int index) { _pinyin.selectSpelling(index); }
       public void onClipboard() { open_clipboard(); }
       public void onLayoutSwitch() { toggle_pinyin_layout(); }
+      public void onDictionarySwitch()
+      {
+        _keyeventhandler.key_up(KeyValue.getKeyByName("change_dictionary"), Pointers.Modifiers.EMPTY);
+      }
     });
     update_voice_view(false);
   }
@@ -657,12 +661,6 @@ public class Keyboard2 extends InputMethodService
   public void launch_dictionaries_activity()
   {
     start_activity(DictionariesActivity.class);
-  }
-
-  /** Called from [onClick] attributes. */
-  public void launch_dictionaries_activity(View v)
-  {
-    launch_dictionaries_activity();
   }
 
   void start_activity(Class cls)

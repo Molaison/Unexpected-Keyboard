@@ -89,7 +89,7 @@ public final class Config
   public Cdict current_dictionary = null; // Might be 'null'.
   public Cdict emoji_dictionary = null; // Might be 'null'.
   public String current_dictionary_name = null; // Internal name for the current dictionary
-  /** Whether to show the dictionary switching button in the candidates view. */
+  /** Whether to offer dictionary switching in the English mode menu. */
   public boolean should_show_dictionary_switch = false;
   public IKeyEventHandler handler;
   public boolean orientation_landscape = false;

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="dictionary_page_title">词典</string>
+  <string name="dictionary_switcher_title">切换词典</string>
   <string name="dictionary_intro_title">添加更多语言的联想词</string>
   <string name="dictionary_intro_body">下载相应语言的词典，即可显示联想词。下载需要连接网络。</string>
   <string name="dictionary_chinese_included">中文拼音词库已内置，可离线使用，无需下载。</string>

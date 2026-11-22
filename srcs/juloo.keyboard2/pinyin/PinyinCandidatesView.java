@@ -46,6 +46,7 @@ public final class PinyinCandidatesView extends LinearLayout
     default void onSpellingSelected(int index) {}
     default void onClipboard() {}
     default void onLayoutSwitch() {}
+    default void onDictionarySwitch() {}
   }
 
   private final KeyboardUi ui;
@@ -167,6 +168,9 @@ public final class PinyinCandidatesView extends LinearLayout
       labels.add(getContext().getString(R.string.pinyin_more_candidates));
     int spellingStart = labels.size();
     labels.addAll(choices);
+    int dictionaryChoice = idle && canSwitchDictionary() ? labels.size() : -1;
+    if (dictionaryChoice >= 0)
+      labels.add(getContext().getString(R.string.dictionary_page_title));
     if (idle) labels.add(getContext().getString(R.string.ux_clipboard));
     menu.setAnchorView(preedit);
     menu.setWidth(Math.min(ui.dp(180), availableWidth(getWidth())));
@@ -196,6 +200,11 @@ public final class PinyinCandidatesView extends LinearLayout
         if (expanded && hasMore) listener.onMoreCandidates();
         return;
       }
+      if (choice == dictionaryChoice)
+      {
+        if (canSwitchDictionary()) listener.onDictionarySwitch();
+        return;
+      }
       expanded = false;
       if (idle && choice == labels.size() - 1) listener.onClipboard();
       else if (choice == 0) listener.onLayoutSwitch();
@@ -206,6 +215,13 @@ public final class PinyinCandidatesView extends LinearLayout
       }
     });
     menu.show();
+  }
+
+  private boolean canSwitchDictionary()
+  {
+    Config config = Config.globalConfig();
+    return !chinese && latinCandidates != null && latinCandidates.isShown()
+        && (config.should_show_dictionary_switch || config.current_dictionary == null);
   }
 
   private void sizeReadingMenu(ListPopupWindow menu, ArrayAdapter<String> adapter)

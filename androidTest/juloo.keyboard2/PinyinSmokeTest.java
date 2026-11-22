@@ -879,6 +879,33 @@ public final class PinyinSmokeTest extends Instrumentation
       onMain(() -> { activity.plain.setInputType(android.text.InputType.TYPE_CLASS_TEXT); return null; });
       focus(activity.plain);
       chinese(false);
+      await("English idle candidate row", () -> {
+        View latin = (View)field(candidatesView(), "latinCandidates");
+        return latin.isShown() && Config.globalConfig().should_show_dictionary_switch;
+      });
+      screenshot("pinyin-toolbar-english-idle.png");
+      onMain(() -> {
+        ViewGroup latin = (ViewGroup)field(candidatesView(), "latinCandidates");
+        for (int i = 0; i < latin.getChildCount(); i++)
+          if (latin.getChildAt(i).isShown())
+            throw new AssertionError("Persistent control in the idle English candidate row");
+        return null;
+      });
+      TextView mode = onMain(() -> (TextView)field(candidatesView(), "preedit"));
+      tap(mode);
+      String dictionaryTitle = getTargetContext().getString(R.string.dictionary_switcher_title);
+      screenshot("pinyin-toolbar-english-menu.png");
+      choosePinyinMenuItem(getTargetContext().getString(R.string.dictionary_page_title));
+      screenshot("pinyin-toolbar-dictionary-picker.png");
+      AccessibilityNodeInfo dialog = getUiAutomation().getRootInActiveWindow();
+      if (dialog == null || dialog.findAccessibilityNodeInfosByText(dictionaryTitle).isEmpty())
+        throw new AssertionError("The dictionary chooser did not open from the EN menu");
+      if (dialog.findAccessibilityNodeInfosByText(
+          getTargetContext().getString(R.string.launcher_button_dictionaries)).isEmpty())
+        throw new AssertionError("The dictionary chooser does not offer installation");
+      menuText(getTargetContext().getString(android.R.string.cancel));
+      await("English editor regains focus after dictionary chooser", () -> activity.plain.hasWindowFocus());
+      passed("the idle English candidate row is empty and the EN menu offers dictionary management");
       type("teh");
       englishCandidate("the");
       await("English suggestions row is visible", () -> {
