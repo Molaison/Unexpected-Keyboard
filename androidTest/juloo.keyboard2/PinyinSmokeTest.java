@@ -1412,6 +1412,7 @@ public final class PinyinSmokeTest extends Instrumentation
     clear();
     nineKey(true);
     for (String[] example : new String[][] {
+        {"94262343369247426248", "先备份再删除"},
         {"942633645492424832", "先登记再出发"},
         {"942646874269245469426", "先购票再进站"},
         {"94264687426924787426", "先购票再取票"}})

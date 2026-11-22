@@ -34,6 +34,7 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int SEQUENCE_MIDDLES = 4;
   private static final int SEQUENCE_ENDINGS = 16;
   private static final int SEQUENCE_NATIVE_CHOICES = 3;
+  private static final int SEQUENCE_CUE_CHOICES = 12;
   private static final int FUZZY_NATIVE_PATHS = 6;
   private static final int PROMOTED_CORRECTIONS = 2;
   private static final int TRANSPOSED_WORDS = 3;
@@ -565,10 +566,10 @@ public final class NineKeyComposition implements ChineseComposition
     {
       int tail = cut + joinLength;
       if (raw.length() - tail > SEQUENCE_WORD_KEYS) continue;
-      NineKeyLexicon.Entry middle = sequenceMiddle(raw.substring(start, cut));
+      SequenceMiddle middle = sequenceMiddle(raw.substring(start, cut));
       if (middle == null) continue;
-      String prefix = "xian " + middle.display;
-      String firstClause = "先" + middle.text;
+      String prefix = "xian " + middle.word.display;
+      String firstClause = "先" + middle.word.text;
       // A leading 先 alone does not establish that the right middle word was decoded.
       if (first.text.startsWith(firstClause)) continue;
       String clause = firstClause + '再';
@@ -577,7 +578,7 @@ public final class NineKeyComposition implements ChineseComposition
       boolean conflicting = known != null && !known.corrected;
 
       Map<String, Candidate> alternatives = new LinkedHashMap<>();
-      List<NineKeyLexicon.Entry> endings = conflicting ? Collections.emptyList()
+      List<NineKeyLexicon.Entry> endings = conflicting || middle.fixedCue ? Collections.emptyList()
           : lexicon.lookupWords(raw.substring(cut), ENDING_WORDS);
       for (NineKeyLexicon.Entry word : endings)
       {
@@ -599,8 +600,9 @@ public final class NineKeyComposition implements ChineseComposition
         {
           if (alternatives.size() == 2 || candidates.size() + alternatives.size() == MAX_CANDIDATES) break;
           String display = prefix + " zai " + word.display;
-          String decoded = decodeCompleteDisplay(display);
-          boolean sequential = !conflicting && decoded.startsWith(clause);
+          String decoded = decodeCompleteDisplay(display, middle.fixedCue);
+          boolean sequential = !conflicting && (middle.fixedCue
+              ? decoded.equals(clause + word.text) : decoded.startsWith(clause));
           if (!sequential)
           {
             if (connectorFallback.size() == 2
@@ -657,13 +659,25 @@ public final class NineKeyComposition implements ChineseComposition
     if (!connectorFallback.isEmpty()) mergeWordEndings(connectorFallback);
   }
 
-  private NineKeyLexicon.Entry sequenceMiddle(String keys)
+  private static final class SequenceMiddle
+  {
+    final NineKeyLexicon.Entry word;
+    final boolean fixedCue;
+
+    SequenceMiddle(NineKeyLexicon.Entry word, boolean fixedCue)
+    {
+      this.word = word;
+      this.fixedCue = fixedCue;
+    }
+  }
+
+  private SequenceMiddle sequenceMiddle(String keys)
   {
     List<NineKeyLexicon.Entry> words = lexicon.lookupWords(keys, SEQUENCE_MIDDLES);
     if (words.isEmpty()) return null;
     NineKeyLexicon.Entry first = words.get(0);
     String firstPrefix = decodeCompleteDisplay("xian " + first.display);
-    if (firstPrefix.equals("先" + first.text)) return first;
+    if (firstPrefix.equals("先" + first.text)) return new SequenceMiddle(first, false);
 
     Map<String, String> decoded = new HashMap<>();
     NineKeyLexicon.Entry sameReading = null;
@@ -680,12 +694,19 @@ public final class NineKeyComposition implements ChineseComposition
         prefix = decodeCompleteDisplay("xian " + word.display);
         decoded.put(word.display, prefix);
       }
-      if (prefix.equals("先" + word.text)) return word;
+      if (prefix.equals("先" + word.text)) return new SequenceMiddle(word, false);
     }
     // A complete prefix can split inside the word. Verify the isolated reading
     // before using a lower-ranked homophone as the middle word.
-    return sameReading != null && decodeCompleteDisplay(sameReading.display).equals(sameReading.text)
-        ? sameReading : null;
+    if (!firstPrefix.startsWith("先")) return null;
+    String isolated = decodeCompleteDisplay(first.display);
+    if (sameReading != null && isolated.equals(sameReading.text))
+      return new SequenceMiddle(sameReading, false);
+    // The preferred isolated word can lose its boundary to the leading character.
+    if (isolated.equals(first.text)
+        && decodeCompleteDisplay("xian " + first.display, true).equals("先" + first.text))
+      return new SequenceMiddle(first, true);
+    return null;
   }
 
   private boolean hasSequentialEnding(String ending)
@@ -698,14 +719,28 @@ public final class NineKeyComposition implements ChineseComposition
 
   private String decodeCompleteDisplay(String display)
   {
+    return decodeCompleteDisplay(display, false);
+  }
+
+  private String decodeCompleteDisplay(String display, boolean fixCue)
+  {
     String query = display.replace(' ', '\'');
     if (query.length() > PinyinDecoder.MAX_PINYIN_LENGTH) return "";
     decoder.reset();
-    if (decoder.search(query) == 0) return "";
+    int count = decoder.search(query);
+    if (count == 0 || (fixCue && !fixSequenceCue(count))) return "";
     int[] starts = decoder.getSpellingStarts();
     if (starts.length == 0 || starts[starts.length - 1] != query.length()
         || !formatSpelling(query, starts).equals(display)) return "";
     return decoder.getCandidate(0);
+  }
+
+  private boolean fixSequenceCue(int count)
+  {
+    for (int i = 1; i < Math.min(count, SEQUENCE_CUE_CHOICES); i++)
+      if ("先".equals(decoder.getCandidate(i)))
+        return decoder.choose(i) > 0 && decoder.getFixedLength() == 1;
+    return false;
   }
 
   private String syllableReading(String[] syllables, int start, int end)
