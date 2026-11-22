@@ -139,12 +139,15 @@ public final class NineKeyComposition implements ChineseComposition
     final EndingCut earlier;
     final Candidate alternative;
     final Candidate continuation;
+    final boolean continuationFromFixedPrefix;
     final int minimumPosition;
-    EndingFallbacks(EndingCut earlier, Candidate alternative, Candidate continuation, int minimumPosition)
+    EndingFallbacks(EndingCut earlier, Candidate alternative, Candidate continuation,
+        boolean continuationFromFixedPrefix, int minimumPosition)
     {
       this.earlier = earlier;
       this.alternative = alternative;
       this.continuation = continuation;
+      this.continuationFromFixedPrefix = continuationFromFixedPrefix;
       this.minimumPosition = minimumPosition;
     }
   }
@@ -645,7 +648,8 @@ public final class NineKeyComposition implements ChineseComposition
         Candidate continuation = endingFallbacks.continuation;
         Map<String, Candidate> addition = new LinkedHashMap<>(1);
         addition.put(continuation.text, continuation);
-        mergeWordEndings(addition, Math.min(ENDING_PRESERVED_CANDIDATES, candidates.size()));
+        mergeWordEndings(addition, Math.min(ENDING_PRESERVED_CANDIDATES, candidates.size()),
+            !endingFallbacks.continuationFromFixedPrefix);
       }
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
     }
@@ -936,18 +940,23 @@ public final class NineKeyComposition implements ChineseComposition
     if (query.length() > PinyinDecoder.MAX_PINYIN_LENGTH) return "";
     decoder.reset();
     int count = decoder.search(query);
-    if (count == 0 || (fixCue && !fixSequenceCue(count))) return "";
+    if (count == 0 || (fixCue && !fixDecodedPrefix("先"))) return "";
+    return completeDecodedDisplay(display, query);
+  }
+
+  private String completeDecodedDisplay(String display, String query)
+  {
     int[] starts = decoder.getSpellingStarts();
     if (starts.length == 0 || starts[starts.length - 1] != query.length()
         || !formatSpelling(query, starts).equals(display)) return "";
     return decoder.getCandidate(0);
   }
 
-  private boolean fixSequenceCue(int count)
+  private boolean fixDecodedPrefix(String prefix)
   {
-    for (int i = 1; i < Math.min(count, SEQUENCE_CUE_CHOICES); i++)
-      if ("先".equals(decoder.getCandidate(i)))
-        return decoder.choose(i) > 0 && decoder.getFixedLength() == 1;
+    for (int i = 1; i < Math.min(decoder.getCandidateCount(), SEQUENCE_CUE_CHOICES); i++)
+      if (prefix.equals(decoder.getCandidate(i)))
+        return decoder.choose(i) > 0 && decoder.getFixedLength() == prefix.length();
     return false;
   }
 
@@ -1023,12 +1032,17 @@ public final class NineKeyComposition implements ChineseComposition
     }
     if (separator >= 0 && earlier != null) recoverEarlierEnding(raw, earlier, recovered, seenReadings);
     mergeWordEndings(recovered);
-    Candidate continuation = separator < 0 && fixedEnd == 0 ? indexedContinuation(raw, best, cuts) : null;
+    List<Candidate> boundaryFallback = new ArrayList<>(1);
+    Candidate continuation = separator < 0 && fixedEnd == 0
+        ? indexedContinuation(raw, best, cuts, boundaryFallback) : null;
+    boolean fromFixedPrefix = continuation == null && !boundaryFallback.isEmpty();
+    if (fromFixedPrefix) continuation = boundaryFallback.get(0);
     return separator < 0 && (earlier != null || alternative != null || continuation != null)
-        ? new EndingFallbacks(earlier, alternative, continuation, minimumPosition) : null;
+        ? new EndingFallbacks(earlier, alternative, continuation, fromFixedPrefix, minimumPosition) : null;
   }
 
-  private Candidate indexedContinuation(String raw, Candidate anchor, List<EndingCut> cuts)
+  private Candidate indexedContinuation(String raw, Candidate anchor, List<EndingCut> cuts,
+      List<Candidate> boundaryFallback)
   {
     if (anchor.index != 0 || anchor.partial || anchor.text.indexOf('在', 2) < 0) return null;
     String[] syllables = anchor.display.split(" ");
@@ -1048,7 +1062,7 @@ public final class NineKeyComposition implements ChineseComposition
         for (NineKeyLexicon.Entry prefix : lexicon.lookupWords(keys, ENDING_WORDS))
           if (text.equals(prefix.text) && display.equals(prefix.display))
             return continuation(text, display, ending, score);
-        Candidate timed = timedContinuation(keys, anchor, syllables, pivot, ending, score);
+        Candidate timed = timedContinuation(keys, anchor, syllables, pivot, ending, score, boundaryFallback);
         if (timed != null) return timed;
       }
     }
@@ -1056,7 +1070,7 @@ public final class NineKeyComposition implements ChineseComposition
   }
 
   private Candidate timedContinuation(String keys, Candidate anchor, String[] syllables, int pivot,
-      NineKeyLexicon.Entry ending, float score)
+      NineKeyLexicon.Entry ending, float score, List<Candidate> boundaryFallback)
   {
     for (int from = Math.max(1, pivot - 3); from <= pivot - 2; from++)
     {
@@ -1065,9 +1079,16 @@ public final class NineKeyComposition implements ChineseComposition
       for (NineKeyLexicon.Entry word : lexicon.lookupWords(keys.substring(offset), ENDING_WORDS))
       {
         if (!CONTINUATION_TIME_WORDS.contains(word.text)) continue;
-        String text = anchor.text.substring(0, from) + word.text;
+        String prefix = anchor.text.substring(0, from);
+        String text = prefix + word.text;
         String display = syllableReading(syllables, 0, from) + " " + word.display;
-        if (text.equals(decodeCompleteDisplay(display))) return continuation(text, display, ending, score);
+        String decoded = decodeCompleteDisplay(display);
+        if (text.equals(decoded)) return continuation(text, display, ending, score);
+        // Keep the existing complete paths ahead of a spelling verified after locking a prefix.
+        if (boundaryFallback.isEmpty() && decoded.startsWith(prefix)
+            && keys.equals(digits(display.replace(" ", ""))) && fixDecodedPrefix(prefix)
+            && text.equals(completeDecodedDisplay(display, display.replace(' ', '\''))))
+          boundaryFallback.add(continuation(text, display, ending, score));
       }
     }
     return null;
@@ -1240,6 +1261,11 @@ public final class NineKeyComposition implements ChineseComposition
 
   private void mergeWordEndings(Map<String, Candidate> recovered, int insertion)
   {
+    mergeWordEndings(recovered, insertion, true);
+  }
+
+  private void mergeWordEndings(Map<String, Candidate> recovered, int insertion, boolean advanceByScore)
+  {
     for (Candidate candidate : candidates) recovered.remove(candidate.text);
     if (recovered.isEmpty()) return;
 
@@ -1249,7 +1275,7 @@ public final class NineKeyComposition implements ChineseComposition
     Collections.sort(ranked, CANDIDATE_ORDER);
     for (Candidate addition : ranked)
     {
-      while (insertion < candidates.size()
+      while (advanceByScore && insertion < candidates.size()
           && CANDIDATE_ORDER.compare(candidates.get(insertion), addition) <= 0) insertion++;
       candidates.add(insertion++, addition);
     }

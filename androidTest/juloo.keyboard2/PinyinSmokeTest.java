@@ -51,6 +51,7 @@ public final class PinyinSmokeTest extends Instrumentation
   private boolean pinyinPagingSelection;
   private boolean pinyinToolbar;
   private boolean nineKeySplitting;
+  private boolean timedBoundaryTarget;
   private boolean nineKeyFuzzy;
   private boolean nineKeyTypo;
   private int landscapeEditorHeight;
@@ -73,6 +74,7 @@ public final class PinyinSmokeTest extends Instrumentation
     pinyinPagingSelection = arguments != null && "true".equals(arguments.getString("pinyin_paging_selection"));
     pinyinToolbar = arguments != null && "true".equals(arguments.getString("pinyin_toolbar"));
     nineKeySplitting = arguments != null && "true".equals(arguments.getString("nine_key_splitting"));
+    timedBoundaryTarget = arguments != null && "true".equals(arguments.getString("timed_boundary_target"));
     nineKeyFuzzy = arguments != null && "true".equals(arguments.getString("nine_key_fuzzy"));
     nineKeyTypo = arguments != null && "true".equals(arguments.getString("nine_key_typo"));
     landscapeEditorHeight = Integer.parseInt(arguments == null ? "0" : arguments.getString("landscape_editor_height", "0"));
@@ -155,7 +157,15 @@ public final class PinyinSmokeTest extends Instrumentation
       }
       if (nineKeySplitting)
       {
-        checkNineKeySplitting();
+        if (timedBoundaryTarget)
+        {
+          clear();
+          nineKey(true);
+          checkNineKeySequence("649263426924542694", "你晚点再联系", 8);
+          checkNineKeySequence("966369263426924542694", "我们晚点再联系", 16);
+          checkNineKeySequence("647426468924542694", "你稍后再联系", 16);
+        }
+        else checkNineKeySplitting();
         result.putString("stream", "NINE_KEY_SPLIT_OK\n");
         finish(Activity.RESULT_OK, result);
         return;
@@ -1445,6 +1455,19 @@ public final class PinyinSmokeTest extends Instrumentation
     }
   }
 
+  private void checkNineKeySequence(String keys, String expected, int maximumRank) throws Exception
+  {
+    clear();
+    nineKeys(keys);
+    int rank = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
+        .getCandidates().indexOf(expected) + 1);
+    if (rank == 0 || rank > maximumRank)
+      throw new AssertionError("Nine-key sequence " + expected + " ranked " + rank);
+    tapCandidate(expected);
+    text(activity.plain, expected);
+    passed("nine-key " + expected + " commits from candidate " + rank);
+  }
+
   private void checkNineKeySplitting() throws Exception
   {
     clear();
@@ -1474,6 +1497,7 @@ public final class PinyinSmokeTest extends Instrumentation
     passed("nine-key long composition accepts and deletes a literal letter");
     for (String[] example : new String[][] {
         {"966369263426924542694", "我们晚点再联系", "16"},
+        {"649263426924542694", "你晚点再联系", "8"},
         {"64648426924542694", "明天再联系", "16"},
         {"96898926924542694", "有需要再联系", "16"},
         {"54684267824264267249426", "今天去长安拍照", "16"},
@@ -1493,17 +1517,7 @@ public final class PinyinSmokeTest extends Instrumentation
         {"942633645492424832", "先登记再出发", "16"},
         {"942646874269245469426", "先购票再进站", "16"},
         {"94264687426924787426", "先购票再取票", "16"}})
-    {
-      clear();
-      nineKeys(example[0]);
-      int position = onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
-          .getCandidates().indexOf(example[1]) + 1);
-      if (position == 0 || position > Integer.parseInt(example[2]))
-        throw new AssertionError("Nine-key sequence " + example[1] + " ranked " + position);
-      tapCandidate(example[1]);
-      text(activity.plain, example[1]);
-      passed("nine-key " + example[1] + " commits from candidate " + position);
-    }
+      checkNineKeySequence(example[0], example[1], Integer.parseInt(example[2]));
     clear();
     nineKeys("94262343369247426248");
     if (onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin
