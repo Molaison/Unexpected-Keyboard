@@ -26,6 +26,8 @@ public final class NineKeyComposition implements ChineseComposition
   private static final int ENDING_PREFIXES = 12;
   private static final int ENDING_READINGS = 2;
   private static final int ENDING_WORDS = 8;
+  private static final int ENDING_NATIVE_CHOICES = 3;
+  private static final int ENDING_PRESERVED_CANDIDATES = 5;
   private static final int EARLIER_ENDING_PREFIXES = 4;
   private static final int EARLIER_ENDING_WORDS = 3;
   private static final int SENTENCE_READINGS = 12;
@@ -111,11 +113,13 @@ public final class NineKeyComposition implements ChineseComposition
   private static final class EndingFallbacks
   {
     final EndingCut earlier;
-    final Candidate homophone;
-    EndingFallbacks(EndingCut earlier, Candidate homophone)
+    final Candidate alternative;
+    final int minimumPosition;
+    EndingFallbacks(EndingCut earlier, Candidate alternative, int minimumPosition)
     {
       this.earlier = earlier;
-      this.homophone = homophone;
+      this.alternative = alternative;
+      this.minimumPosition = minimumPosition;
     }
   }
 
@@ -458,12 +462,12 @@ public final class NineKeyComposition implements ChineseComposition
       {
         if (endingFallbacks.earlier != null)
           addEarlierWordBoundary(remaining, endingFallbacks.earlier, seenReadings);
-        if (endingFallbacks.homophone != null && candidates.size() < MAX_CANDIDATES)
+        if (endingFallbacks.alternative != null && candidates.size() < MAX_CANDIDATES)
         {
           Map<String, Candidate> alternative = new LinkedHashMap<>(1);
-          Candidate homophone = endingFallbacks.homophone;
-          alternative.put(homophone.text, homophone);
-          mergeWordEndings(alternative, 1);
+          Candidate ending = endingFallbacks.alternative;
+          alternative.put(ending.text, ending);
+          mergeWordEndings(alternative, Math.min(endingFallbacks.minimumPosition, candidates.size()));
         }
       }
       if (candidates.size() > MAX_CANDIDATES) candidates.subList(MAX_CANDIDATES, candidates.size()).clear();
@@ -816,8 +820,17 @@ public final class NineKeyComposition implements ChineseComposition
     Candidate homophone = homophoneEnding(best, preferred.rawEnd, preferred.characters, preferred.words);
     if (homophone != null && !unique.containsKey(homophone.text) && !recovered.containsKey(homophone.text))
       recovered.put(homophone.text, homophone);
-    Candidate lowerHomophone = homophone == null && separator < 0 && fixedEnd == 0
-        ? lowerHomophoneEnding(best, preferred) : null;
+    Candidate alternative = null;
+    int minimumPosition = 1;
+    if (homophone == null && separator < 0 && fixedEnd == 0)
+    {
+      alternative = lowerHomophoneEnding(best, preferred);
+      if (alternative == null)
+      {
+        alternative = alternateReadingEnding(best, preferred, distinct, unique, recovered);
+        minimumPosition = ENDING_PRESERVED_CANDIDATES;
+      }
+    }
     EndingCut earlier = null;
     for (EndingCut cut : cuts)
     {
@@ -833,8 +846,8 @@ public final class NineKeyComposition implements ChineseComposition
     }
     if (separator >= 0 && earlier != null) recoverEarlierEnding(raw, earlier, recovered, seenReadings);
     mergeWordEndings(recovered);
-    return separator < 0 && (earlier != null || lowerHomophone != null)
-        ? new EndingFallbacks(earlier, lowerHomophone) : null;
+    return separator < 0 && (earlier != null || alternative != null)
+        ? new EndingFallbacks(earlier, alternative, minimumPosition) : null;
   }
 
   private void addEarlierWordBoundary(String raw, EndingCut cut, Set<String> seenReadings)
@@ -950,6 +963,43 @@ public final class NineKeyComposition implements ChineseComposition
     Candidate alternative = new Candidate(text, best.reading, -1, Math.nextUp(best.score));
     alternative.display = best.display;
     return alternative;
+  }
+
+  private Candidate alternateReadingEnding(Candidate best, EndingCut cut, Set<String> tried,
+      Map<String, Candidate> unique, Map<String, Candidate> recovered)
+  {
+    if (best.partial || cut.characters >= best.text.length()) return null;
+    String original = best.text.substring(cut.characters);
+    String suffix = best.reading.spelling.substring(cut.rawEnd);
+    NineKeyLexicon.Entry originalWord = null;
+    for (NineKeyLexicon.Entry word : cut.words)
+      if (word.text.equals(original) && word.spelling.equals(suffix)
+          && best.display.endsWith(" " + word.display))
+      {
+        originalWord = word;
+        break;
+      }
+    if (originalWord == null) return null;
+    for (NineKeyLexicon.Entry word : cut.words)
+    {
+      if (word.text.length() != original.length() || word.display.equals(originalWord.display)
+          || tried.contains(word.display)) continue;
+      String text = best.text.substring(0, cut.characters) + word.text;
+      if (unique.containsKey(text) || recovered.containsKey(text)) continue;
+      Reading reading = Reading.withWordEnding(best.reading.spelling.substring(0, cut.rawEnd), word);
+      if (reading.query.length() > PinyinDecoder.MAX_PINYIN_LENGTH
+          || decodeCompleteDisplay(word.display).length() != word.text.length()) return null;
+      for (int i = 0; i < Math.min(ENDING_NATIVE_CHOICES, decoder.getCandidateCount()); i++)
+        if (word.text.equals(decoder.getCandidate(i)))
+        {
+          Candidate alternative = new Candidate(text, reading, -1, Math.nextUp(best.score));
+          alternative.display = best.display.substring(0, best.display.length() - originalWord.display.length())
+              + word.display;
+          return alternative;
+        }
+      return null;
+    }
+    return null;
   }
 
   private void mergeWordEndings(Map<String, Candidate> recovered)
