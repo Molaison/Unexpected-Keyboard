@@ -66,6 +66,7 @@ public final class DoubaoVoiceInput
   private boolean destroyed;
   private final DoubaoTextContext textContext = new DoubaoTextContext();
   private EditorInfo pendingEditor;
+  private EditorSelection latestSelection;
   private String pendingAppPackage = "";
 
   public DoubaoVoiceInput(Context context, Host host)
@@ -142,11 +143,23 @@ public final class DoubaoVoiceInput
   public void cancelForSelectionChange(int start, int end, int composingStart, int composingEnd)
   {
     requireMainThread();
+    if (start < 0 || end < 0) return;
+    latestSelection = new EditorSelection(start, end);
     final SessionRun run;
     synchronized (lock) { run = activeRun; }
-    if (run == null || !run.hasComposingText || start < 0 || end < 0
-        || host.getCurrentInputConnection() != run.connection)
+    if (run == null || host.getCurrentInputConnection() != run.connection)
       return;
+    if (!run.hasComposingText)
+    {
+      if (run.initialSelection == null || !run.initialSelection.matches(latestSelection))
+      {
+        EditorSelection actual = run.initialSelection == null ? null : readEditorSelection(run);
+        boolean stillAtStart = actual != null ? run.initialSelection.matches(actual)
+            : compareEditorContext(run) == ContextMatch.SAME;
+        if (!stillAtStart) cancel();
+      }
+      return;
+    }
     if (composingEnd < 0 && start == end && run.pendingRetractionUpdates > 0
         && (run.retractionCaret == CARET_UNAVAILABLE || start == run.retractionCaret))
     {
@@ -226,7 +239,12 @@ public final class DoubaoVoiceInput
    * {@code onStartInputView}; the server re-ranks the transcript with the text
    * around the cursor and the target package.
    */
-  public void setEditorInfo(EditorInfo info) { pendingEditor = info; }
+  public void setEditorInfo(EditorInfo info)
+  {
+    pendingEditor = info;
+    latestSelection = info != null && info.initialSelStart >= 0 && info.initialSelEnd >= 0
+        ? new EditorSelection(info.initialSelStart, info.initialSelEnd) : null;
+  }
 
   public void setAppPackage(String packageName)
   {
@@ -235,15 +253,47 @@ public final class DoubaoVoiceInput
 
   private String buildContextJson(InputConnection connection)
   {
+    return buildContextJson(connection, null);
+  }
+
+  private String buildContextJson(InputConnection connection, SessionRun run)
+  {
     // Never read or transmit surrounding text from sensitive/private editors.
     if (!allowsEditorContext())
     {
       textContext.clear();
       return "";
     }
-    textContext.setEditor(cursorText(connection, true), cursorText(connection, false),
-        pendingAppPackage);
+    String before = cursorText(connection, true);
+    String after = cursorText(connection, false);
+    if (run != null)
+    {
+      run.initialBefore = before;
+      run.initialAfter = after;
+    }
+    textContext.setEditor(before, after, pendingAppPackage);
     return textContext.build();
+  }
+
+  private String buildSessionContext(SessionRun run)
+  {
+    SurroundingText surrounding = readSurroundingText(run, 256, 256);
+    if (surrounding != null)
+    {
+      int start = Math.min(surrounding.getSelectionStart(), surrounding.getSelectionEnd());
+      int end = Math.max(surrounding.getSelectionStart(), surrounding.getSelectionEnd());
+      CharSequence text = surrounding.getText();
+      if (start >= 0 && end <= text.length())
+      {
+        EditorSelection current = absoluteSelection(surrounding);
+        if (current != null) run.initialSelection = current;
+        run.initialBefore = text.subSequence(Math.max(0, start - 256), start).toString();
+        run.initialAfter = text.subSequence(end, end + Math.min(256, text.length() - end)).toString();
+        textContext.setEditor(run.initialBefore, run.initialAfter, pendingAppPackage);
+        return textContext.build();
+      }
+    }
+    return buildContextJson(run.connection, run);
   }
 
   private boolean allowsEditorContext()
@@ -262,9 +312,9 @@ public final class DoubaoVoiceInput
     }
     catch (RuntimeException error)
     {
-      return "";
+      return null;
     }
-    return text == null ? "" : text.toString();
+    return text == null ? null : text.toString();
   }
 
   private void startLocked()
@@ -280,7 +330,6 @@ public final class DoubaoVoiceInput
       throw new IllegalStateException("No active InputConnection for voice input");
 
     SessionRun run = new SessionRun(connection);
-    run.contextJson = buildContextJson(connection);
     activeRun = run;
     Log.i(TAG, "voice_start_requested");
     host.onVoiceStateChanged(State.CONNECTING);
@@ -363,30 +412,77 @@ public final class DoubaoVoiceInput
 
   private boolean editorSelectionMoved(SessionRun run)
   {
+    if (!run.hasComposingText)
+    {
+      EditorSelection actual = run.initialSelection == null ? null : readEditorSelection(run);
+      if (actual != null) return !run.initialSelection.matches(actual);
+      // Older editors may deliver their selection callback after the first ASR result.
+      return compareEditorContext(run) == ContextMatch.CHANGED;
+    }
     if (run.lastRenderedCaret == CARET_UNAVAILABLE) return false;
     int currentCaret = readEditorCaret(run);
     return currentCaret != CARET_UNAVAILABLE && currentCaret != run.lastRenderedCaret;
   }
 
+  private enum ContextMatch { SAME, CHANGED, UNKNOWN }
+
+  private static ContextMatch compareEditorContext(SessionRun run)
+  {
+    String before = run.initialBefore == null ? null : cursorText(run.connection, true);
+    if (before != null && !before.equals(run.initialBefore)) return ContextMatch.CHANGED;
+    String after = run.initialAfter == null ? null : cursorText(run.connection, false);
+    if (after != null && !after.equals(run.initialAfter)) return ContextMatch.CHANGED;
+    return before != null && after != null ? ContextMatch.SAME : ContextMatch.UNKNOWN;
+  }
+
   private int readEditorCaret(SessionRun run)
   {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !run.canReadEditorCaret)
-      return CARET_UNAVAILABLE;
-    SurroundingText selection = null;
-    try
+    EditorSelection selection = readEditorSelection(run);
+    if (selection == null)
     {
-      // Request no characters before or after the selection. Use only offsets.
-      selection = run.connection.getSurroundingText(0, 0, 0);
-    }
-    catch (RuntimeException ignored) { }
-    if (selection == null || selection.getOffset() < 0 || selection.getSelectionStart() < 0)
-    {
-      // Some editors can't report an absolute cursor position. Use their callbacks.
+      // Some editors report only a relative position. Use their callbacks.
       run.canReadEditorCaret = false;
       return CARET_UNAVAILABLE;
     }
-    return selection.getSelectionStart() == selection.getSelectionEnd()
-        ? selection.getOffset() + selection.getSelectionStart() : SELECTION_RANGE;
+    return selection.start == selection.end ? selection.start : SELECTION_RANGE;
+  }
+
+  private EditorSelection readEditorSelection(SessionRun run)
+  {
+    return absoluteSelection(readSurroundingText(run, 0, 0));
+  }
+
+  private SurroundingText readSurroundingText(SessionRun run, int before, int after)
+  {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !run.canReadEditorCaret)
+      return null;
+    try
+    {
+      return run.connection.getSurroundingText(before, after, 0);
+    }
+    catch (RuntimeException ignored) { return null; }
+  }
+
+  private static EditorSelection absoluteSelection(SurroundingText text)
+  {
+    if (text == null || text.getOffset() < 0 || text.getSelectionStart() < 0
+        || text.getSelectionEnd() < 0) return null;
+    return new EditorSelection(text.getOffset() + text.getSelectionStart(),
+        text.getOffset() + text.getSelectionEnd());
+  }
+
+  private static final class EditorSelection
+  {
+    final int start;
+    final int end;
+
+    EditorSelection(int start, int end)
+    {
+      this.start = Math.min(start, end);
+      this.end = Math.max(start, end);
+    }
+
+    boolean matches(EditorSelection other) { return start == other.start && end == other.end; }
   }
 
   private void clearPendingTranscript(SessionRun run)
@@ -476,7 +572,7 @@ public final class DoubaoVoiceInput
   {
     final InputConnection connection;
     /** {@code extra.context} captured on the main thread when the run starts. */
-    String contextJson = "";
+    final String contextJson;
     final AtomicReference<IOException> asyncFailure =
         new AtomicReference<IOException>();
     final DoubaoAsrClient.CredentialRequests credentialRequests =
@@ -492,6 +588,9 @@ public final class DoubaoVoiceInput
     boolean reportsComposingBounds;
     boolean lastWriteEmpty;
     boolean canReadEditorCaret;
+    EditorSelection initialSelection;
+    String initialBefore;
+    String initialAfter;
     int pendingRetractionUpdates;
     int composingStart = CARET_UNAVAILABLE;
     int lastRenderedCaret = CARET_UNAVAILABLE;
@@ -505,6 +604,8 @@ public final class DoubaoVoiceInput
     {
       this.connection = connection;
       canReadEditorCaret = allowsEditorContext();
+      initialSelection = latestSelection;
+      contextJson = buildSessionContext(this);
     }
 
     @Override

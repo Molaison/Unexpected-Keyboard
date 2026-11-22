@@ -18,6 +18,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -162,7 +163,76 @@ public final class DoubaoRegressionTest
     passed(test, "late callbacks and completion cannot modify a replacement editor or run");
     checkVoiceSelectionOrdering(test);
     passed(test, "delayed or coalesced selection updates preserve speech retractions and user cursor moves");
-    passed(test, "DOUBAO_REGRESSION_OK checks=19");
+    checkSelectionBeforeFirstTranscript(test);
+    passed(test, "first transcripts respect moved and stable selections without accessing private context");
+    passed(test, "DOUBAO_REGRESSION_OK checks=20");
+  }
+
+  private static void checkSelectionBeforeFirstTranscript(Instrumentation test) throws Exception
+  {
+    List<String> violations = new ArrayList<>();
+    String original = "标题：正文：尾巴";
+    for (boolean notifySelection : new boolean[] { true, false })
+    {
+      for (boolean range : new boolean[] { false, true })
+      {
+        int start = range ? 6 : 0;
+        int end = range ? 8 : 0;
+        try (Editor editor = range ? new Editor(test, original, 3, 5) : new Editor(test, original))
+        {
+          test.runOnMainSync(() -> {
+            editor.view.setSelection(start, end);
+            if (notifySelection) editor.voice.cancelForSelectionChange(start, end, -1, -1);
+          });
+          editor.run.onResponse(response(finalJson("第一条听写")));
+          editor.complete();
+          String actual = editor.text();
+          int[] selection = new int[2];
+          test.runOnMainSync(() -> {
+            selection[0] = editor.view.getSelectionStart();
+            selection[1] = editor.view.getSelectionEnd();
+          });
+          if (!actual.equals(original) || selection[0] != start || selection[1] != end)
+            violations.add("callback=" + notifySelection + " range=" + range
+                + " text=" + actual + " selection=" + Arrays.toString(selection));
+        }
+      }
+    }
+    if (!violations.isEmpty()) throw new AssertionError("First transcript followed a moved cursor: " + violations);
+
+    try (Editor editor = new Editor(test, original, 3, 5))
+    {
+      com.google.gson.JsonObject context =
+          com.google.gson.JsonParser.parseString(editor.run.contextJson).getAsJsonObject();
+      if (!"标题：".equals(context.get("before_context").getAsString())
+          || !"：尾巴".equals(context.get("after_context").getAsString()))
+        throw new AssertionError("Session context included the selected text");
+      // A selection report can be stale while the actual selection still matches.
+      test.runOnMainSync(() -> editor.voice.cancelForSelectionChange(6, 8, -1, -1));
+      editor.run.onResponse(response(finalJson("第一条听写")));
+      editor.complete();
+      if (!editor.text().equals("标题：第一条听写：尾巴"))
+        violations.add("The first transcript did not replace a stable selection");
+    }
+
+    for (boolean initialKnown : new boolean[] { true, false })
+    {
+      try (Editor editor = new Editor(test, original, 3, 5))
+      {
+        editor.usePrivateConnection(initialKnown);
+        if (!editor.run.contextJson.isEmpty())
+          throw new AssertionError("A private session retained context");
+        test.runOnMainSync(() -> {
+          editor.view.setSelection(6, 8);
+          editor.voice.cancelForSelectionChange(6, 8, -1, -1);
+        });
+        editor.run.onResponse(response(finalJson("第一条听写")));
+        editor.complete();
+        if (!editor.text().equals(original))
+          violations.add("A private first transcript followed the moved selection, initialKnown=" + initialKnown);
+      }
+    }
+    if (!violations.isEmpty()) throw new AssertionError("First selection handling: " + violations);
   }
 
   private static void checkPeerCloseAfterSession(Instrumentation test) throws Exception
@@ -932,11 +1002,16 @@ public final class DoubaoRegressionTest
 
     Editor(Instrumentation test, String prefix) throws Exception
     {
+      this(test, prefix, prefix.length(), prefix.length());
+    }
+
+    Editor(Instrumentation test, String prefix, int start, int end) throws Exception
+    {
       this.test = test;
       test.runOnMainSync(() -> {
         view = new EditText(test.getTargetContext());
         view.setText(prefix);
-        view.setSelection(view.length());
+        view.setSelection(start, end);
         EditorInfo info = new EditorInfo();
         InputConnection connection = view.onCreateInputConnection(info);
         currentConnection = connection;
@@ -961,12 +1036,29 @@ public final class DoubaoRegressionTest
 
     void usePrivateConnection() throws Exception
     {
+      usePrivateConnection(true);
+    }
+
+    void usePrivateConnection(boolean initialKnown) throws Exception
+    {
       test.runOnMainSync(() -> {
         EditorInfo info = new EditorInfo();
         info.inputType = InputType.TYPE_CLASS_TEXT;
         info.imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING;
+        info.initialSelStart = initialKnown ? view.getSelectionStart() : -1;
+        info.initialSelEnd = initialKnown ? view.getSelectionEnd() : -1;
         voice.setEditorInfo(info);
         currentConnection = new InputConnectionWrapper(currentConnection, false) {
+          @Override public CharSequence getTextBeforeCursor(int length, int flags)
+          {
+            throw new AssertionError("Private text before the cursor was queried");
+          }
+
+          @Override public CharSequence getTextAfterCursor(int length, int flags)
+          {
+            throw new AssertionError("Private text after the cursor was queried");
+          }
+
           @Override public SurroundingText getSurroundingText(int before, int after, int flags)
           {
             throw new AssertionError("Private editor selection was queried during dictation");
