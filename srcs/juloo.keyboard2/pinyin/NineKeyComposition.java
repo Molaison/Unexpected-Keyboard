@@ -389,14 +389,22 @@ public final class NineKeyComposition implements ChineseComposition
     String letters = lettersFor(keys.charAt(keys.length() - 1));
     List<Path> next = new ArrayList<>();
     for (Path p : previous)
+    {
+      // The native decoder can keep the prefix shared by siblings of this path.
+      boolean reset = true;
       for (int i = 0; i < letters.length(); i++)
       {
         String s = p.spelling + letters.charAt(i);
         if (s.length() <= constraint.length() && !constraint.startsWith(s)) continue;
         if (s.length() > constraint.length() && !s.startsWith(constraint)) continue;
-        Path extension = scorePath(p, s, null);
-        if (extension != null) next.add(extension);
+        Path extension = scorePath(p, s, null, reset);
+        if (extension != null)
+        {
+          next.add(extension);
+          reset = false;
+        }
       }
+    }
     Collections.sort(next, PATH_ORDER);
     if (next.size() > BEAM) next.subList(BEAM, next.size()).clear();
     cache.put(keys, next);
@@ -408,12 +416,12 @@ public final class NineKeyComposition implements ChineseComposition
     return key >= '2' && key <= '9' ? LETTERS[key - '0'] : String.valueOf(key);
   }
 
-  private Path scorePath(Path prefix, String spelling, NineKeyLexicon.Entry ending)
+  private Path scorePath(Path prefix, String spelling, NineKeyLexicon.Entry ending, boolean reset)
   {
     int[] costs = extendPhoneticCosts(spelling, prefix.phoneticCosts);
     int cost = beamCost(spelling, costs);
     if (cost == IMPOSSIBLE) return null;
-    decoder.reset();
+    if (reset) decoder.reset();
     int count = decoder.search(spelling);
     String first = count == 0 ? "" : decoder.getCandidate(0);
     if (ending != null)
@@ -447,7 +455,7 @@ public final class NineKeyComposition implements ChineseComposition
       {
         String spelling = path.spelling + letters.charAt(i);
         if (!spellings.add(spelling)) continue;
-        Path extension = scorePath(path, spelling, null);
+        Path extension = scorePath(path, spelling, null, true);
         if (extension != null) next.add(extension);
       }
     addIndexedWordPaths(keys, next, spellings);
@@ -494,7 +502,7 @@ public final class NineKeyComposition implements ChineseComposition
       Path prefix = prefixes.get(i);
       String spelling = prefix.spelling + word.spelling;
       if (!spellings.add(spelling)) continue;
-      Path path = scorePath(prefix, spelling, word);
+      Path path = scorePath(prefix, spelling, word, true);
       if (path != null) next.add(path);
     }
   }
