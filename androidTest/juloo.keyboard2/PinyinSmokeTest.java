@@ -225,9 +225,7 @@ public final class PinyinSmokeTest extends Instrumentation
       if (onMain(() -> ((View)field(candidatesView(), "preedit")).isLongClickable()))
         throw new AssertionError("Idle mode label exposes a reading action without readings");
       englishSuggestionChecks();
-      if (!onMain(() -> candidatesView().isShown()
-          && findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard)) != null))
-        throw new AssertionError("Clipboard toolbar is not discoverable while idle");
+      onMain(() -> { assertNoCandidateTools(candidatesView()); return null; });
       int idlePinyinHeight = onMain(() -> candidatesView().getHeight());
       float idleKeyY = onMain(() -> keyPoint("n", false)[1]);
       type("nihao");
@@ -415,7 +413,7 @@ public final class PinyinSmokeTest extends Instrumentation
     ClipboardHistoryService service = onMain(() -> ClipboardHistoryService.get_service(getTargetContext()));
     onMain(() -> { ClipboardHistoryService.set_history_enabled(true); service.clear_history_and_current();
       getTargetContext().getSharedPreferences("pinned_clipboards", 0).edit().clear().commit(); return null; });
-    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard))));
+    openClipboardFromMode();
     await("clipboard capture", () -> clipboard() != null && clipboard().isShown());
     screenshot("clipboard-empty.png");
     onMain(() -> { service.add_clip("The meeting has moved to 3:30 PM. I will send the notes afterwards.");
@@ -425,7 +423,7 @@ public final class PinyinSmokeTest extends Instrumentation
     tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
     onMain(() -> { prefs.edit().putString("theme", "soft_dark").apply(); return null; });
     focus(activity.plain);
-    tap(onMain(() -> findDescription(candidatesView(), getTargetContext().getString(R.string.ux_clipboard))));
+    openClipboardFromMode();
     await("dark clipboard capture", () -> clipboard() != null && clipboard().isShown());
     screenshot("clipboard-dark.png");
     tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
@@ -687,24 +685,38 @@ public final class PinyinSmokeTest extends Instrumentation
     checkLongExpandedCandidate();
   }
 
+  private void assertNoCandidateTools(View panel)
+  {
+    int[] labels = { R.string.ux_clipboard, R.string.ux_candidate_switch_full,
+        R.string.ux_candidate_switch_nine };
+    for (int label : labels)
+    {
+      String description = panel.getContext().getString(label);
+      View control = findDescription(panel, description);
+      if (control != null && control.isShown())
+        throw new AssertionError("Persistent tool in candidate strip: " + description);
+    }
+  }
+
+  private void openClipboardFromMode() throws Exception
+  {
+    tap(onMain(() -> (View)field(candidatesView(), "preedit")));
+    choosePinyinMenuItem(getTargetContext().getString(R.string.ux_clipboard));
+  }
+
   private void checkPinyinToolbar() throws Exception
   {
     View panel = onMain(this::candidatesView);
     TextView preedit = onMain(() -> (TextView)field(panel, "preedit"));
-    View layoutSwitch = onMain(() -> (View)field(panel, "readings"));
-    String clipboardLabel = panel.getContext().getString(R.string.ux_clipboard);
-    View clipboard = onMain(() -> findDescription(panel, clipboardLabel));
     int panelHeight = onMain(panel::getHeight);
     float keyY = onMain(() -> keyPoint("n", false)[1]);
-    if (clipboard == null || !onMain(() -> layoutSwitch.isShown() && clipboard.isShown()))
-      throw new AssertionError("Idle input tools are not available");
     screenshot("pinyin-toolbar-idle.png");
+    onMain(() -> { assertNoCandidateTools(panel); return null; });
 
     type("nihao");
     screenshot("pinyin-toolbar-composing.png");
     int available = onMain(() -> {
-      if (layoutSwitch.isShown() || clipboard.isShown())
-        throw new AssertionError("Tool buttons still visible while composing");
+      assertNoCandidateTools(panel);
       int width = assertReadableToolbarText(preedit, "nihao");
       if (panel.getHeight() != panelHeight || Math.abs(keyPoint("n", false)[1] - keyY) > 1f)
         throw new AssertionError("Composing resized the keyboard");
@@ -715,19 +727,25 @@ public final class PinyinSmokeTest extends Instrumentation
     if (!onMain(() -> activity.plain.hasFocus()
         && !((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing()))
       throw new AssertionError("Tapping preedit did not commit raw spelling in the editor");
-    await("idle tools return after committing", () -> layoutSwitch.isShown() && clipboard.isShown());
-    passed("preedit has " + available + "px, tools hide during typing and return after committing");
+    onMain(() -> { assertNoCandidateTools(panel); return null; });
+    passed("preedit has " + available + "px and tools stay out of the idle, typing and post-commit rows");
 
     clear();
-    tap(layoutSwitch);
-    await("toolbar switches to nine-key", () -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
+    openClipboardFromMode();
+    await("idle mode menu opens clipboard", () -> clipboard() != null && clipboard().isShown());
+    tap(onMain(() -> findText(clipboard(), getTargetContext().getString(R.string.ux_keyboard))));
+    View idleMode = onMain(() -> (View)field(candidatesView(), "preedit"));
+    tap(idleMode);
+    screenshot("pinyin-toolbar-idle-menu.png");
+    choosePinyinMenuItem(panel.getContext().getString(R.string.ux_candidate_layout_nine));
+    await("mode menu switches to nine-key", () -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey());
     nineKeys("6464");
     screenshot("pinyin-toolbar-ambiguous.png");
     String current = onMain(() -> {
       String value = activity.plain.getText().toString();
       String displayed = preedit.getText().toString();
-      if (value.length() < 4 || !displayed.replace(" ", "").equals(value) || !preedit.isLongClickable()
-          || layoutSwitch.isShown() || clipboard.isShown())
+      assertNoCandidateTools(panel);
+      if (value.length() < 4 || !displayed.replace(" ", "").equals(value) || !preedit.isLongClickable())
         throw new AssertionError("The ambiguous reading did not reach the toolbar");
       assertReadableToolbarText(preedit, displayed);
       return displayed;
@@ -849,14 +867,14 @@ public final class PinyinSmokeTest extends Instrumentation
         latin.set_candidates(((KeyEventHandler)Config.globalConfig().handler)._suggestions);
         return null;
       });
-      await("clipboard hides only when the English candidate is rendered", () -> {
+      await("English candidate is rendered without toolbar controls", () -> {
         View panel = candidatesView();
         View candidate = findText(panel, "the");
-        View clipboard = findDescription(panel, getTargetContext().getString(R.string.ux_clipboard));
-        return candidate != null && candidate.isShown() && clipboard != null && !clipboard.isShown();
+        assertNoCandidateTools(panel);
+        return candidate != null && candidate.isShown();
       });
       screenshot("pinyin-toolbar-english.png");
-      passed("a visible English candidate replaces the clipboard action while typing");
+      passed("English suggestions appear without toolbar controls");
     }
     finally
     {
@@ -1360,7 +1378,14 @@ public final class PinyinSmokeTest extends Instrumentation
       float[] point = onMain(() -> keyPoint("shift", false));
       swipe(point[0], point[1], point[2], point[3]);
     }
-    else tap(onMain(() -> (android.view.View)field(candidatesView(), "readings")));
+    else
+    {
+      View mode = onMain(() -> (View)field(candidatesView(), "preedit"));
+      if (onMain(() -> ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isComposing()))
+        longPressPreedit(mode);
+      else tap(mode);
+      choosePinyinMenuItem(getTargetContext().getString(R.string.ux_candidate_layout_full));
+    }
     await("nine-key layout switch", () ->
       ((KeyEventHandler)Config.globalConfig().handler)._pinyin.isNineKey() == enabled);
   }
@@ -1771,7 +1796,7 @@ public final class PinyinSmokeTest extends Instrumentation
       View keys = keyboard();
       return Math.max(new KeyboardUi(keys.getContext()).dp(280), ((View)keys.getParent()).getHeight());
     });
-    tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
+    openClipboardFromMode();
     await("clipboard panel", () -> clipboard()!=null && clipboard().isShown());
     await("clipboard preserves its requested height", () -> clipboard().getHeight() == clipboardHeight);
     String optionsLabel = onMain(() -> clipboard().getContext().getString(R.string.ux_clipboard_options));
@@ -1857,7 +1882,7 @@ public final class PinyinSmokeTest extends Instrumentation
     screenshot("nine-key-dark.png");
     key("space");
     text(activity.plain, "你好");
-    tap(onMain(() -> findDescription(candidatesView(),getTargetContext().getString(R.string.ux_clipboard))));
+    openClipboardFromMode();
     await("dark clipboard panel", () -> clipboard().isShown());
     screenshot("clipboard-dark.png");
     tap(onMain(() -> findText(clipboard(),getTargetContext().getString(R.string.ux_keyboard))));

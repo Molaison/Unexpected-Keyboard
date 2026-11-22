@@ -2,7 +2,6 @@ package juloo.keyboard2.pinyin;
 
 import android.content.Context;
 import android.content.res.Configuration;
-import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -16,7 +15,6 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.ArrayAdapter;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
-import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ListPopupWindow;
 import android.widget.PopupWindow;
@@ -25,6 +23,7 @@ import android.widget.TextView;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import juloo.keyboard2.Config;
 import juloo.keyboard2.DirectBootAwarePreferences;
@@ -32,7 +31,7 @@ import juloo.keyboard2.KeyboardUi;
 import juloo.keyboard2.R;
 import juloo.keyboard2.suggestions.CandidatesView;
 
-/** Idle tools, readable preedit, and browsable candidates. */
+/** Mode options, readable preedit, and browsable candidates. */
 public final class PinyinCandidatesView extends LinearLayout
 {
   private static final int CANDIDATE_TEXT_SP = 20;
@@ -56,9 +55,7 @@ public final class PinyinCandidatesView extends LinearLayout
   private final FrameLayout candidateRow;
   private final LinearLayout row;
   private final TextView voiceStatus;
-  private final ImageButton clipboard;
   private final TextView preedit;
-  private final TextView readings;
   private final TextView more;
   private final HorizontalScrollView candidateScroll;
   private final LinearLayout items;
@@ -88,18 +85,6 @@ public final class PinyinCandidatesView extends LinearLayout
     setPadding(ui.dp(6), 0, ui.dp(6), 0);
     header = new LinearLayout(context);
     header.setGravity(Gravity.CENTER_VERTICAL);
-    clipboard = new ImageButton(context);
-    clipboard.setImageResource(R.drawable.ic_clipboard_paste);
-    clipboard.setColorFilter(ui.text, PorterDuff.Mode.SRC_IN);
-    clipboard.setContentDescription(context.getString(R.string.ux_clipboard));
-    clipboard.setBackground(ui.round(ui.background, 10));
-    clipboard.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
-    clipboard.setMinimumWidth(ui.dp(CONTROL_DP));
-    clipboard.setMinimumHeight(ui.dp(CONTROL_DP));
-    clipboard.setOnClickListener(v -> {
-      if (listener != null) listener.onClipboard();
-    });
-    header.addView(clipboard, new LayoutParams(ui.dp(CONTROL_DP), LayoutParams.MATCH_PARENT));
     preedit = ui.label("", 15, false);
     preedit.setSingleLine(true);
     preedit.setEllipsize(TextUtils.TruncateAt.START);
@@ -107,10 +92,14 @@ public final class PinyinCandidatesView extends LinearLayout
     preedit.setGravity(Gravity.CENTER_VERTICAL);
     preedit.setPadding(ui.dp(10), 0, ui.dp(6), 0);
     preedit.setFocusable(false);
-    preedit.setOnClickListener(v -> { if (listener != null && !previousComposition.isEmpty()) listener.onCommitRaw(); });
+    preedit.setOnClickListener(v -> {
+      if (listener == null) return;
+      if (previousComposition.isEmpty()) showOptions(true);
+      else listener.onCommitRaw();
+    });
     preedit.setOnLongClickListener(v -> {
       if (!chinese || previousComposition.isEmpty()) return false;
-      showCompositionOptions();
+      showOptions(false);
       return true;
     });
     preedit.setLongClickable(false);
@@ -118,18 +107,13 @@ public final class PinyinCandidatesView extends LinearLayout
       @Override public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info)
       {
         super.onInitializeAccessibilityNodeInfo(host, info);
-        if (!host.isLongClickable()) return;
-        AccessibilityNodeInfo.AccessibilityAction action = AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK;
-        info.removeAction(action);
-        info.addAction(new AccessibilityNodeInfo.AccessibilityAction(action.getId(),
-            getContext().getString(R.string.ux_candidate_options)));
+        if (host.isClickable() && previousComposition.isEmpty())
+          labelAction(info, AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK, R.string.ux_keyboard_options);
+        if (host.isLongClickable())
+          labelAction(info, AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK, R.string.ux_candidate_options);
       }
     });
     header.addView(preedit, new LayoutParams(0, LayoutParams.MATCH_PARENT, 1));
-    readings = ui.button("26", () -> { if (listener != null) listener.onLayoutSwitch(); });
-    readings.setTextSize(14);
-    readings.setSingleLine(true);
-    header.addView(readings);
     addView(header, new LayoutParams(LayoutParams.MATCH_PARENT, ui.dp(CONTROL_DP)));
 
     row = new LinearLayout(context);
@@ -172,16 +156,26 @@ public final class PinyinCandidatesView extends LinearLayout
     addView(candidateRow, new LayoutParams(LayoutParams.MATCH_PARENT, candidateRowHeight));
   }
 
-  private void showCompositionOptions()
+  private void labelAction(AccessibilityNodeInfo info,
+      AccessibilityNodeInfo.AccessibilityAction action, int label)
+  {
+    info.removeAction(action);
+    info.addAction(new AccessibilityNodeInfo.AccessibilityAction(action.getId(), getContext().getString(label)));
+  }
+
+  private void showOptions(boolean idle)
   {
     dismissReadingMenu();
     ListPopupWindow menu = new ListPopupWindow(getContext());
     readingMenu = menu;
-    List<String> choices = spellingOptions;
+    List<String> choices = idle ? Collections.emptyList() : spellingOptions;
     String composition = previousComposition;
+    boolean wasChinese = chinese;
     boolean wasNineKey = nineKey;
     List<String> labels = new ArrayList<>(choices);
-    labels.add(0, getContext().getString(nineKey ? R.string.ux_candidate_layout_full : R.string.ux_candidate_layout_nine));
+    if (wasChinese)
+      labels.add(0, getContext().getString(wasNineKey ? R.string.ux_candidate_layout_full : R.string.ux_candidate_layout_nine));
+    if (idle) labels.add(getContext().getString(R.string.ux_clipboard));
     menu.setAnchorView(preedit);
     menu.setWidth(Math.min(ui.dp(180), availableWidth(getWidth())));
     // Keep the editor's input focus while the user chooses a reading.
@@ -198,9 +192,11 @@ public final class PinyinCandidatesView extends LinearLayout
     });
     menu.setOnItemClickListener((parent, view, choice, id) -> {
       menu.dismiss();
-      if (listener == null || !composition.equals(previousComposition) || wasNineKey != nineKey) return;
+      if (listener == null || !composition.equals(previousComposition) || wasChinese != chinese
+          || wasNineKey != nineKey) return;
       expanded = false;
-      if (choice == 0) listener.onLayoutSwitch();
+      if (idle && choice == labels.size() - 1) listener.onClipboard();
+      else if (choice == 0) listener.onLayoutSwitch();
       else
       {
         int index = spellingOptions.indexOf(choices.get(choice - 1));
@@ -282,7 +278,15 @@ public final class PinyinCandidatesView extends LinearLayout
       voiceStatus.setText(message);
       dismissReadingMenu();
     }
+    updatePreeditActions();
     requestLayout();
+  }
+
+  private void updatePreeditActions()
+  {
+    boolean available = voiceStatus.getVisibility() != VISIBLE;
+    preedit.setClickable(available);
+    preedit.setLongClickable(available && chinese && !previousComposition.isEmpty());
   }
 
   public void setSpellingOptions(List<String> options)
@@ -323,7 +327,11 @@ public final class PinyinCandidatesView extends LinearLayout
 
   public void setState(boolean chinese, String composition, List<String> candidates, boolean hasMore)
   {
+    boolean nextNineKey = DirectBootAwarePreferences.get_shared_preferences(getContext())
+        .getBoolean("chinese_nine_key", false);
+    if (chinese != this.chinese || nineKey != nextNineKey) dismissReadingMenu();
     this.chinese = chinese;
+    nineKey = nextNineKey;
     this.hasMore = hasMore;
     boolean changed = !composition.equals(previousComposition);
     if (changed || !chinese) dismissReadingMenu();
@@ -334,13 +342,9 @@ public final class PinyinCandidatesView extends LinearLayout
         ? getContext().getString(chinese ? R.string.pinyin_mode_chinese : R.string.pinyin_mode_english)
         : composition);
     preedit.setTextColor(composition.isEmpty() ? ui.secondary : ui.accent);
-    preedit.setClickable(!composition.isEmpty());
     preedit.setContentDescription(composition.isEmpty()
       ? getContext().getString(chinese ? R.string.pinyin_mode_chinese : R.string.pinyin_mode_english)
       : getContext().getString(R.string.pinyin_commit_raw, composition));
-    nineKey = DirectBootAwarePreferences.get_shared_preferences(getContext())
-        .getBoolean("chinese_nine_key", false);
-    preedit.setLongClickable(chinese && !composition.isEmpty());
     if (chinese && latinCandidates != null) latinCandidates.setVisibility(GONE);
     // The candidate strip is a reserved row. Only its contents change, so
     // every keystroke has the same keyboard origin and cannot move the editor.
@@ -361,6 +365,7 @@ public final class PinyinCandidatesView extends LinearLayout
     }
     previousComposition = composition;
     previousCandidates = new ArrayList<>(candidates);
+    updatePreeditActions();
     candidateScroll.post(() -> candidateScroll.scrollTo(scroll, 0));
     if (!chinese) expanded = false;
     renderExpanded();
@@ -406,33 +411,12 @@ public final class PinyinCandidatesView extends LinearLayout
         + view.getPaddingLeft() + view.getPaddingRight());
   }
 
-  private void measureToolbarControls(int width)
-  {
-    boolean showingLatin = !chinese && latinCandidates != null
-        && latinCandidates.getVisibility() == VISIBLE && latinCandidates.hasCandidates();
-    boolean idle = previousComposition.isEmpty() && voiceStatus.getVisibility() != VISIBLE && !showingLatin;
-    clipboard.setVisibility(idle ? VISIBLE : GONE);
-    readings.setVisibility(idle && chinese ? VISIBLE : GONE);
-    if (!idle || !chinese) return;
-    String layoutLabel = getContext().getString(nineKey
-        ? R.string.ux_candidate_layout_nine : R.string.ux_candidate_layout_full);
-    int actionsWidth = width - ui.dp(CONTROL_DP) - paddedTextWidth(preedit, "nihao");
-    if (paddedTextWidth(readings, layoutLabel) > actionsWidth)
-      layoutLabel = nineKey ? "9" : "26";
-    if (!TextUtils.equals(readings.getText(), layoutLabel)) readings.setText(layoutLabel);
-    int switchAction = nineKey ? R.string.ux_candidate_switch_full : R.string.ux_candidate_switch_nine;
-    readings.setContentDescription(getContext().getString(switchAction));
-  }
-
   private int compactHeaderWidth(int width)
   {
     Configuration config = getResources().getConfiguration();
     if (config.orientation != Configuration.ORIENTATION_LANDSCAPE || config.screenHeightDp > 480)
       return 0;
-    int compactLayoutWidth = Math.max(paddedTextWidth(readings, "26"), paddedTextWidth(readings, "9"));
-    int controlsWidth = ui.dp(CONTROL_DP)
-        + paddedTextWidth(preedit, "nihao") + compactLayoutWidth;
-    int headerWidth = Math.max(width / 3, controlsWidth);
+    int headerWidth = Math.max(width / 3, paddedTextWidth(preedit, "nihao"));
     // Keep space for a candidate as well as the paging and collapse actions.
     return width - headerWidth >= 4 * ui.dp(CONTROL_DP) ? headerWidth : 0;
   }
@@ -470,7 +454,6 @@ public final class PinyinCandidatesView extends LinearLayout
     int availableWidth = availableWidth(width);
     int compactWidth = compactHeaderWidth(availableWidth);
     configureLayout(compactWidth);
-    measureToolbarControls(compactWidth > 0 ? compactWidth : availableWidth);
     if (expanded)
     {
       int control = ui.dp(CONTROL_DP);

@@ -87,12 +87,6 @@ public class CandidatesView extends LinearLayout
     _lang_name_view.setVisibility(dict_vis);
   }
 
-  public boolean hasCandidates()
-  {
-    for (String item : _items) if (item != null) return true;
-    return false;
-  }
-
   void clear_candidates()
   {
     for (int i = 0; i < _item_views.length; i++)

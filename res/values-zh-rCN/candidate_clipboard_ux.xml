@@ -3,6 +3,7 @@
   <string name="ux_candidate_spellings">读音 ▾</string>
   <string name="ux_candidate_spellings_description">选择拼音读音</string>
   <string name="ux_candidate_options">拼音选项</string>
+  <string name="ux_keyboard_options">键盘选项</string>
   <string name="ux_candidate_layout_nine">9键</string>
   <string name="ux_candidate_layout_full">26键</string>
   <string name="ux_candidate_switch_full">切换为中文26键</string>
