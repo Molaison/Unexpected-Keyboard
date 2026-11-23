@@ -19,16 +19,11 @@ final class AppRelease
   final String version;
   final int versionCode;
   final String url;
-  final long bytes;
-  final String sha256;
-
-  private AppRelease(String tag, int versionCode, String url, long bytes, String digest)
+  private AppRelease(String tag, int versionCode, String url)
   {
     this.version = tag.substring(1);
     this.versionCode = versionCode;
     this.url = url;
-    this.bytes = bytes;
-    this.sha256 = digest.substring("sha256:".length());
   }
 
   static AppRelease newerThan(String metadata, long installedVersion) throws IOException
@@ -56,7 +51,7 @@ final class AppRelease
             || !url.equals(asset.get("browser_download_url").getAsString())
             || !DIGEST.matcher(digest).matches() || size <= 0 || size > MAX_APK_BYTES)
           throw new IOException("Invalid APK in GitHub release");
-        newer = new AppRelease(tag, versionCode, url, size, digest);
+        newer = new AppRelease(tag, versionCode, url);
       }
       return newer;
     }

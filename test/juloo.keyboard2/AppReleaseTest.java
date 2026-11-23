@@ -4,12 +4,8 @@ import static org.junit.Assert.*;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 import okhttp3.OkHttpClient;
 import okhttp3.Protocol;
 import okhttp3.Response;
@@ -24,8 +20,6 @@ public class AppReleaseTest
       "{\"tag_name\":\"v2.1.2\",\"draft\":false,\"prerelease\":false,\"assets\":[" +
       "{\"name\":\"" + ASSET + "\",\"state\":\"uploaded\",\"size\":3," +
       "\"digest\":\"sha256:" + SHA256 + "\",\"browser_download_url\":\"" + URL + "\"}]}";
-
-  @Rule public TemporaryFolder files = new TemporaryFolder();
 
   @Test public void onlyOffersNewStableVersions() throws IOException
   {
@@ -48,30 +42,23 @@ public class AppReleaseTest
     assertThrows(IOException.class, () -> AppRelease.newerThan(release.toString(), 57));
   }
 
-  @Test public void readsLatestReleaseAndChecksDownloadBytes() throws IOException
+  @Test public void readsLatestReleaseFromTheFork() throws IOException
   {
     OkHttpClient valid = new OkHttpClient.Builder().addInterceptor(chain -> {
-      String url = chain.request().url().toString();
-      assertTrue(AppRelease.LATEST.equals(url) || URL.equals(url));
-      return reply(chain.request(), 200, AppRelease.LATEST.equals(url) ? METADATA : "abc");
+      assertEquals(AppRelease.LATEST, chain.request().url().toString());
+      return reply(chain.request(), 200, METADATA);
     }).build();
-    AppRelease release = AppRelease.newerThan(AppUpdates.latestMetadata(valid), 57);
-    File directory = files.newFolder();
-    File apk = AppUpdates.downloadApk(valid, release, directory);
-    assertArrayEquals("abc".getBytes(StandardCharsets.UTF_8), java.nio.file.Files.readAllBytes(apk.toPath()));
+    assertEquals(URL, AppRelease.newerThan(AppUpdates.latestMetadata(valid), 57).url);
   }
 
-  @Test public void doesNotLeaveFailedDownloadInCache() throws IOException
+  @Test public void handlesNoReleaseAndRejectsHttpErrors() throws IOException
   {
-    AppRelease release = AppRelease.newerThan(METADATA, 57);
-    File directory = files.newFolder();
-    for (String payload : new String[]{"ab", "abd", "abcd"})
-    {
-      OkHttpClient corrupt = new OkHttpClient.Builder().addInterceptor(chain ->
-          reply(chain.request(), 200, payload)).build();
-      assertThrows(IOException.class, () -> AppUpdates.downloadApk(corrupt, release, directory));
-      assertEquals(0, directory.list().length);
-    }
+    OkHttpClient empty = new OkHttpClient.Builder().addInterceptor(chain ->
+        reply(chain.request(), 404, "")).build();
+    assertEquals("", AppUpdates.latestMetadata(empty));
+    OkHttpClient rateLimited = new OkHttpClient.Builder().addInterceptor(chain ->
+        reply(chain.request(), 403, "rate limit")).build();
+    assertThrows(IOException.class, () -> AppUpdates.latestMetadata(rateLimited));
   }
 
   private static Response reply(okhttp3.Request request, int status, String body)

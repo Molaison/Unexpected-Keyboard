@@ -86,13 +86,6 @@ public class LauncherActivity extends Activity implements Handler.Callback
   }
 
   @Override
-  protected void onActivityResult(int requestCode, int resultCode, Intent data)
-  {
-    super.onActivityResult(requestCode, resultCode, data);
-    updates.onActivityResult(requestCode);
-  }
-
-  @Override
   protected void onStop()
   {
     started = false;
