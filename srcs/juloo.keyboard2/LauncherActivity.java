@@ -32,6 +32,7 @@ public class LauncherActivity extends Activity implements Handler.Callback
   private boolean selected;
   private boolean gesturesExpanded;
   private boolean started;
+  private AppUpdates updates;
 
   @Override
   public void onCreate(Bundle savedInstanceState)
@@ -41,6 +42,7 @@ public class LauncherActivity extends Activity implements Handler.Callback
     getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
         | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     setContentView(R.layout.launcher_activity);
+    updates = new AppUpdates(this, findViewById(R.id.launcher_update));
     _tryhere_text = findViewById(R.id.launcher_tryhere_text);
     _tryhere_area = findViewById(R.id.launcher_tryhere_area);
     if (VERSION.SDK_INT >= 28)
@@ -66,6 +68,28 @@ public class LauncherActivity extends Activity implements Handler.Callback
   {
     super.onResume();
     refreshSetupState();
+    updates.onResume();
+  }
+
+  @Override
+  protected void onPause()
+  {
+    updates.onPause();
+    super.onPause();
+  }
+
+  @Override
+  protected void onDestroy()
+  {
+    updates.close();
+    super.onDestroy();
+  }
+
+  @Override
+  protected void onActivityResult(int requestCode, int resultCode, Intent data)
+  {
+    super.onActivityResult(requestCode, resultCode, data);
+    updates.onActivityResult(requestCode);
   }
 
   @Override

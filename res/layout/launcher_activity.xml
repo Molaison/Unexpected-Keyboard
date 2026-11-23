@@ -45,6 +45,8 @@
     <TextView style="@style/LauncherLink" android:text="@string/launcher_customize" android:onClick="launch_settings"/>
     <TextView style="@style/LauncherLink" android:text="@string/launcher_dictionary_label" android:onClick="launch_dictionaries_activity"/>
     <TextView style="@style/LauncherBody" android:text="@string/launcher_dictionary_hint" android:textSize="14sp"/>
+    <Button android:id="@+id/launcher_update" style="@style/LauncherLink"
+        android:textAllCaps="false" android:text="@string/update_check"/>
     <TextView style="@style/LauncherSection" android:layout_marginTop="28dp" android:text="@string/launcher_support_title"/>
     <TextView style="@style/LauncherBody" android:layout_marginTop="8dp" android:text="@string/launcher_sourcecode" android:textSize="14sp"/>
     <TextView style="@style/LauncherLink" android:text="@string/launcher_repo_url" android:autoLink="web" android:linksClickable="true" android:textSize="14sp"/>

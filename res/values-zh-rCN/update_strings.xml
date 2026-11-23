@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="update_check">检查更新</string>
+  <string name="update_checking">正在检查更新…</string>
+  <string name="update_available">更新到 %1$s</string>
+  <string name="update_current">已是最新版本</string>
+  <string name="update_downloading">正在下载更新…</string>
+  <string name="update_install">安装更新</string>
+  <string name="update_failed">暂时无法获取更新，请重试。</string>
+  <string name="update_permission_hint">请允许此应用安装更新。</string>
+</resources>

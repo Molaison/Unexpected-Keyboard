@@ -124,6 +124,14 @@ adb uninstall juloo.keyboard2.debug
 ./gradlew installDebug
 ```
 
+## Publishing a Doubao update
+
+Increase both Android version fields and sign the release APK with the same
+certificate as the previous release. Publish it on the fork's GitHub Releases
+under a stable `vMAJOR.MINOR.PATCH` tag. Name the APK asset
+`Unexpected-Keyboard-Doubao-<versionCode>.apk`, using the version code inside
+the APK. The in-app updater reads the latest stable release and its asset digest.
+
 ## Specifying a debug signing certificate on Github Actions
 
 It's possible to specify the signing certificate that the automated build

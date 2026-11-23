@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="update_check">Check for updates</string>
+  <string name="update_checking">Checking for updates…</string>
+  <string name="update_available">Update to %1$s</string>
+  <string name="update_current">You’re up to date</string>
+  <string name="update_downloading">Downloading update…</string>
+  <string name="update_install">Install update</string>
+  <string name="update_failed">Couldn’t get the update. Try again.</string>
+  <string name="update_permission_hint">Allow installs from this app to continue.</string>
+</resources>

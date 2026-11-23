@@ -40,6 +40,10 @@ Improve the application translations [using Weblate](https://hosted.weblate.org/
 
 ## 中文全拼与豆包语音
 
+从 [GitHub Releases](https://github.com/Molaison/Unexpected-Keyboard/releases/latest)
+下载豆包版 APK。打开应用首页时会自动检查新版本，也可以点「检查更新」。
+发现新版后，点版本按钮即可下载并进入 Android 的安装确认。
+
 本分支在豆包语音输入的基础上提供 **26 键中文全拼**。常规文本框默认使用
 中文，从 **Ctrl 键向左上角滑动**即可切换中英。拼音和候选共用紧凑的一行，
 空闲时隐藏；候选可以横向滚动并继续加载。支持声母简拼、全拼混输、常见
