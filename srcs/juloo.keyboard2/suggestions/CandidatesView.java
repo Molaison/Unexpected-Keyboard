@@ -15,17 +15,8 @@ import juloo.keyboard2.R;
 
 public class CandidatesView extends LinearLayout
 {
-  static final int NUM_CANDIDATES = 4;
-
-  /** Candidates currently visible. Entries can be [null] when there are less
-      than [NUM_CANDIDATES] suggestions.
-      - Entries at indexes [0] to [2] are word suggestions.
-      - Entry at index [3] is the emoji suggestion. */
-  String[] _items = new String[NUM_CANDIDATES];
-
-  /** Text views showing the candidates in [_items]. Text views visibility is
-      set to [GONE] when there are less than [NUM_CANDIDATES] suggestions. */
-  TextView[] _item_views = new TextView[NUM_CANDIDATES];
+  private final String[] _items = new String[Suggestions.MAX_COUNT];
+  private final TextView[] _item_views = new TextView[Suggestions.MAX_COUNT];
 
   public CandidatesView(Context context, AttributeSet attrs)
   {
@@ -39,17 +30,13 @@ public class CandidatesView extends LinearLayout
     setup_item_view(0, R.id.candidates_middle);
     setup_item_view(1, R.id.candidates_right);
     setup_item_view(2, R.id.candidates_left);
-    setup_item_view(3, R.id.candidates_emoji);
   }
 
   public void set_candidates(Suggestions s)
   {
-    int s_count = s.count;
-    for (int i = 0; i < Suggestions.MAX_COUNT; i++)
-      _items[i] = (i < s_count) ? s.suggestions[i] : null;
-    _items[3] = s.emoji_suggestion;
     for (int i = 0; i < _item_views.length; i++)
     {
+      _items[i] = i < s.count ? s.suggestions[i] : null;
       TextView v = _item_views[i];
       if (_items[i] != null)
       {
@@ -89,9 +76,8 @@ public class CandidatesView extends LinearLayout
     setLayoutParams(p);
     // Match the size of labels on the keyboard.
     float text_size = row_height * config.characterSize * config.labelTextSize;
-    for (int i = 0; i < NUM_CANDIDATES; i++)
+    for (TextView v : _item_views)
     {
-      TextView v = _item_views[i];
       // Set text size and enable auto size if supported.
       if (VERSION.SDK_INT < 26)
         v.setTextSize(TypedValue.COMPLEX_UNIT_PX, text_size);

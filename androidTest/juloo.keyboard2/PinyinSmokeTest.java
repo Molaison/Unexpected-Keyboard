@@ -929,7 +929,12 @@ public final class PinyinSmokeTest extends Instrumentation
       onMain(() -> {
         juloo.keyboard2.suggestions.CandidatesView latin = (juloo.keyboard2.suggestions.CandidatesView)
             field(candidatesView(), "latinCandidates");
-        latin.set_candidates(((KeyEventHandler)Config.globalConfig().handler)._suggestions);
+        juloo.keyboard2.suggestions.Suggestions suggestions =
+            ((KeyEventHandler)Config.globalConfig().handler)._suggestions;
+        String savedEmoji = suggestions.emoji_suggestion;
+        suggestions.emoji_suggestion = "🐱";
+        try { latin.set_candidates(suggestions); }
+        finally { suggestions.emoji_suggestion = savedEmoji; }
         return null;
       });
       await("English candidate is rendered without toolbar controls", () -> {
@@ -939,7 +944,11 @@ public final class PinyinSmokeTest extends Instrumentation
         return candidate != null && candidate.isShown();
       });
       screenshot("pinyin-toolbar-english.png");
-      passed("English suggestions appear without toolbar controls");
+      if (onMain(() -> {
+        View emoji = findText(candidatesView(), "🐱");
+        return emoji != null && emoji.isShown();
+      })) throw new AssertionError("Emoji icon occupies the English candidate row");
+      passed("English words are shown even when the dictionary also suggests an emoji");
     }
     finally
     {

@@ -21,14 +21,6 @@
     <item name="android:textColor">?attr/colorLabel</item>
     <item name="android:maxLines">1</item>
   </style>
-  <style name="candidates_emoji">
-    <item name="android:layout_width">@dimen/candidates_emoji_width</item>
-    <item name="android:layout_height">@dimen/candidates_emoji_width</item>
-    <item name="android:layout_weight">0</item>
-    <item name="android:layout_marginStart">@dimen/candidates_gap</item>
-    <item name="android:padding">@dimen/candidates_suggestions_padding</item>
-    <item name="android:gravity">center</item>
-  </style>
   <!-- Emoji pane -->
   <style name="emojiTypeButton">
     <item name="android:padding">1px</item>
